@@ -118,7 +118,7 @@ export default function TranslationProgress() {
       {/* Action buttons */}
       <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
         {(isIdle || isCancelled) && (
-          <button className="btn btn-primary" onClick={startTranslation} disabled={totalFields === 0 && isIdle}>
+          <button className="btn btn-primary" onClick={startTranslation}>
             <Play size={14} />
             {isCancelled || isDone ? t.restart : t.startTranslation}
           </button>
