@@ -1,0 +1,195 @@
+import { create } from 'zustand';
+import type { Locale } from './i18n/translations';
+import type {
+  CharacterCard,
+  ProxySettings,
+  ConnectionStatus,
+  TranslationConfig,
+  TranslationField,
+  LogEntry,
+  LogFilter,
+  FieldGroup,
+  FieldGroupConfig,
+} from './types/card';
+import { DEFAULT_FIELD_GROUPS } from './utils/cardFields';
+
+/* ─── localStorage helpers ─── */
+const LS = {
+  get: <T>(key: string, fallback: T): T => {
+    try {
+      const val = localStorage.getItem(key);
+      return val ? JSON.parse(val) : fallback;
+    } catch {
+      return fallback;
+    }
+  },
+  set: (key: string, value: unknown) => {
+    localStorage.setItem(key, JSON.stringify(value));
+  },
+};
+
+/* ─── Translation State ─── */
+type TranslationPhase = 'idle' | 'translating' | 'paused' | 'done' | 'cancelled';
+
+interface AppState {
+  // Card
+  card: CharacterCard | null;
+  cardFileName: string;
+  setCard: (card: CharacterCard, fileName: string) => void;
+  clearCard: () => void;
+
+  // Proxy config
+  proxy: ProxySettings;
+  setProxy: (partial: Partial<ProxySettings>) => void;
+  connectionStatus: ConnectionStatus;
+  setConnectionStatus: (s: ConnectionStatus) => void;
+
+  // Translation config
+  translationConfig: TranslationConfig;
+  setTranslationConfig: (partial: Partial<TranslationConfig>) => void;
+  toggleFieldGroup: (id: FieldGroup) => void;
+
+  // Translation state
+  fields: TranslationField[];
+  setFields: (fields: TranslationField[]) => void;
+  updateField: (path: string, update: Partial<TranslationField>) => void;
+  phase: TranslationPhase;
+  setPhase: (p: TranslationPhase) => void;
+  currentFieldIndex: number;
+  setCurrentFieldIndex: (i: number) => void;
+  startTime: number | null;
+  setStartTime: (t: number | null) => void;
+
+  // Logs
+  logs: LogEntry[];
+  logFilter: LogFilter;
+  setLogFilter: (f: LogFilter) => void;
+  addLog: (level: LogEntry['level'], message: string) => void;
+  clearLogs: () => void;
+
+  // Toasts
+  toasts: { id: string; level: 'error' | 'success' | 'info'; message: string }[];
+  addToast: (level: 'error' | 'success' | 'info', message: string) => void;
+  removeToast: (id: string) => void;
+
+  // UI
+  locale: Locale;
+  setLocale: (l: Locale) => void;
+  activeTab: string;
+  setActiveTab: (t: string) => void;
+  sidebarCollapsed: boolean;
+  toggleSidebar: () => void;
+}
+
+export const useStore = create<AppState>((set) => ({
+  // ─── Card ───
+  card: null,
+  cardFileName: '',
+  setCard: (card, fileName) => set({ card, cardFileName: fileName }),
+  clearCard: () => set({ card: null, cardFileName: '', fields: [], phase: 'idle', logs: [] }),
+
+  // ─── Proxy ───
+  proxy: {
+    provider: LS.get('st-translator-provider', 'openai'),
+    proxyUrl: LS.get('st-translator-proxy-url', 'https://api.openai.com/v1'),
+    apiKey: LS.get('st-translator-api-key', ''),
+    model: LS.get('st-translator-model', 'gpt-4o-mini'),
+    maxTokens: LS.get('st-translator-advanced-settings', { maxTokens: 4096 }).maxTokens ?? 4096,
+    temperature: LS.get('st-translator-advanced-settings', { temperature: 0.3 }).temperature ?? 0.3,
+    requestDelay: LS.get('st-translator-advanced-settings', { requestDelay: 500 }).requestDelay ?? 500,
+    retryDelay: LS.get('st-translator-advanced-settings', { retryDelay: 1000 }).retryDelay ?? 1000,
+    requestTimeout: LS.get('st-translator-advanced-settings', { requestTimeout: 60000 }).requestTimeout ?? 60000,
+    maxRetries: LS.get('st-translator-advanced-settings', { maxRetries: 3 }).maxRetries ?? 3,
+    minResponseRatio: LS.get('st-translator-advanced-settings', { minResponseRatio: 0.15 }).minResponseRatio ?? 0.15,
+    systemPromptPrefix: LS.get('st-translator-advanced-settings', { systemPromptPrefix: '' }).systemPromptPrefix ?? '',
+  },
+  setProxy: (partial) => {
+    set((s) => {
+      const next = { ...s.proxy, ...partial };
+      // Persist
+      LS.set('st-translator-provider', next.provider);
+      LS.set('st-translator-proxy-url', next.proxyUrl);
+      LS.set('st-translator-api-key', next.apiKey);
+      LS.set('st-translator-model', next.model);
+      LS.set('st-translator-advanced-settings', {
+        maxTokens: next.maxTokens,
+        temperature: next.temperature,
+        requestDelay: next.requestDelay,
+        retryDelay: next.retryDelay,
+        requestTimeout: next.requestTimeout,
+        maxRetries: next.maxRetries,
+        minResponseRatio: next.minResponseRatio,
+        systemPromptPrefix: next.systemPromptPrefix,
+      });
+      return { proxy: next };
+    });
+  },
+  connectionStatus: 'untested',
+  setConnectionStatus: (s) => set({ connectionStatus: s }),
+
+  // ─── Translation Config ───
+  translationConfig: {
+    targetLanguage: 'Tiếng Việt',
+    mode: 'field',
+    lorebookStrategy: 'single',
+    lorebookBatchSize: 5,
+    fieldGroups: [...DEFAULT_FIELD_GROUPS],
+  },
+  setTranslationConfig: (partial) =>
+    set((s) => ({ translationConfig: { ...s.translationConfig, ...partial } })),
+  toggleFieldGroup: (id) =>
+    set((s) => ({
+      translationConfig: {
+        ...s.translationConfig,
+        fieldGroups: s.translationConfig.fieldGroups.map((g: FieldGroupConfig) =>
+          g.id === id ? { ...g, enabled: !g.enabled } : g
+        ),
+      },
+    })),
+
+  // ─── Translation State ───
+  fields: [],
+  setFields: (fields) => set({ fields }),
+  updateField: (path, update) =>
+    set((s) => ({
+      fields: s.fields.map((f) => (f.path === path ? { ...f, ...update } : f)),
+    })),
+  phase: 'idle',
+  setPhase: (p) => set({ phase: p }),
+  currentFieldIndex: 0,
+  setCurrentFieldIndex: (i) => set({ currentFieldIndex: i }),
+  startTime: null,
+  setStartTime: (t) => set({ startTime: t }),
+
+  // ─── Logs ───
+  logs: [],
+  logFilter: 'all',
+  setLogFilter: (f) => set({ logFilter: f }),
+  addLog: (level, message) =>
+    set((s) => ({
+      logs: [...s.logs, { id: crypto.randomUUID(), timestamp: Date.now(), level, message }],
+    })),
+  clearLogs: () => set({ logs: [] }),
+
+  // ─── Toasts ───
+  toasts: [],
+  addToast: (level, message) => {
+    const id = crypto.randomUUID();
+    set((s) => ({ toasts: [...s.toasts, { id, level, message }] }));
+    setTimeout(() => {
+      set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }));
+    }, 5000);
+  },
+  removeToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
+
+  // ─── UI ───
+  locale: (LS.get('st-translator-locale', 'en') as Locale) || 'en',
+  setLocale: (l) => {
+    LS.set('st-translator-locale', l);
+    set({ locale: l });
+  },
+  activeTab: 'core',
+  setActiveTab: (t) => set({ activeTab: t }),
+  sidebarCollapsed: false,
+  toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
+}));

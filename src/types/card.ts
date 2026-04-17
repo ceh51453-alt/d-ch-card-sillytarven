@@ -1,0 +1,188 @@
+/* ─── SillyTavern Character Card Types ─── */
+
+export interface CharacterBookEntry {
+  id?: number;
+  keys: string[];
+  secondary_keys?: string[];
+  comment: string;
+  content: string;
+  constant?: boolean;
+  selective?: boolean;
+  insertion_order?: number;
+  enabled?: boolean;
+  position?: string;
+  use_regex?: boolean;
+  extensions?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface CharacterBook {
+  name?: string;
+  description?: string;
+  scan_depth?: number;
+  token_budget?: number;
+  recursive_scanning?: boolean;
+  extensions?: Record<string, unknown>;
+  entries: CharacterBookEntry[];
+  [key: string]: unknown;
+}
+
+export interface RegexScript {
+  id?: string | number;
+  scriptName: string;
+  findRegex: string;
+  replaceString: string;
+  trimStrings?: string[];
+  placement?: string[];
+  disabled?: boolean;
+  markdownOnly?: boolean;
+  promptOnly?: boolean;
+  runOnEdit?: boolean;
+  substituteRegex?: boolean;
+  minDepth?: number;
+  maxDepth?: number;
+  [key: string]: unknown;
+}
+
+export interface DepthPrompt {
+  prompt: string;
+  depth?: number;
+  role?: string;
+  [key: string]: unknown;
+}
+
+export interface CardExtensions {
+  depth_prompt?: DepthPrompt;
+  regex_scripts?: RegexScript[];
+  world?: string;
+  tavern_helper?: unknown;
+  cm_manager?: unknown;
+  [key: string]: unknown;
+}
+
+export interface CardData {
+  name?: string;
+  description?: string;
+  personality?: string;
+  scenario?: string;
+  first_mes?: string;
+  mes_example?: string;
+  creator_notes?: string;
+  system_prompt?: string;
+  system_prompts?: string;
+  post_history_instructions?: string;
+  alternate_greetings?: string[];
+  group_only_greetings?: string[];
+  character_book?: CharacterBook;
+  extensions?: CardExtensions;
+  tags?: string[];
+  creator?: string;
+  character_version?: string;
+  [key: string]: unknown;
+}
+
+export interface CharacterCard {
+  // Root level fields
+  name?: string;
+  description?: string;
+  personality?: string;
+  scenario?: string;
+  first_mes?: string;
+  mes_example?: string;
+  creatorcomment?: string;
+  avatar?: string;
+  spec?: string;
+  spec_version?: string;
+  create_date?: string;
+  talkativeness?: string | number;
+  fav?: boolean | string;
+  tags?: string[];
+  data?: CardData;
+  [key: string]: unknown;
+}
+
+/* ─── Translation Types ─── */
+
+export type TranslationStatus = 'pending' | 'translating' | 'done' | 'error' | 'skipped';
+
+export interface TranslationField {
+  /** Unique path, e.g. "data.character_book.entries[2].content" */
+  path: string;
+  /** Human-readable label */
+  label: string;
+  /** Group this field belongs to */
+  group: FieldGroup;
+  /** Original text */
+  original: string;
+  /** Translated text */
+  translated: string;
+  /** Current status */
+  status: TranslationStatus;
+  /** Error message if failed */
+  error?: string;
+  /** Retry count */
+  retries: number;
+}
+
+export type FieldGroup =
+  | 'core'
+  | 'messages'
+  | 'system'
+  | 'creator'
+  | 'lorebook'
+  | 'lorebook_keys'
+  | 'regex'
+  | 'depth_prompt';
+
+export interface FieldGroupConfig {
+  id: FieldGroup;
+  label: string;
+  description: string;
+  enabled: boolean;
+}
+
+/* ─── Provider / Proxy Types ─── */
+
+export type AIProvider = 'openai' | 'anthropic' | 'google' | 'custom';
+
+export interface ProxySettings {
+  provider: AIProvider;
+  proxyUrl: string;
+  apiKey: string;
+  model: string;
+  maxTokens: number;
+  temperature: number;
+  requestDelay: number;
+  retryDelay: number;
+  requestTimeout: number;
+  maxRetries: number;
+  minResponseRatio: number;
+  systemPromptPrefix: string;
+}
+
+export type ConnectionStatus = 'untested' | 'connected' | 'failed';
+
+/* ─── Translation Config ─── */
+
+export type TranslationMode = 'field' | 'batch';
+export type LorebookStrategy = 'single' | 'batch';
+
+export interface TranslationConfig {
+  targetLanguage: string;
+  mode: TranslationMode;
+  lorebookStrategy: LorebookStrategy;
+  lorebookBatchSize: number;
+  fieldGroups: FieldGroupConfig[];
+}
+
+/* ─── Log Entry ─── */
+
+export type LogLevel = 'success' | 'error' | 'warning' | 'info' | 'active' | 'retry';
+export type LogFilter = 'all' | LogLevel;
+
+export interface LogEntry {
+  id: string;
+  timestamp: number;
+  level: LogLevel;
+  message: string;
+}

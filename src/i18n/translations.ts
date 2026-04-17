@@ -1,0 +1,265 @@
+export type Locale = 'en' | 'vi';
+
+export type TranslationKeys = typeof en;
+
+const en = {
+  // App
+  appTitle: 'ST Card Translator',
+  appSubtitle: 'SillyTavern Character Card',
+  appFooter: 'Translate SillyTavern cards to any language',
+  uiLanguage: 'UI Language',
+
+  // Empty state
+  noCardTitle: 'No Card Loaded',
+  noCardDesc: 'Upload a SillyTavern character card JSON file using the sidebar panel to get started. Configure your API settings first for best results.',
+  stepConfigureApi: 'Configure API',
+  stepUploadCard: 'Upload Card',
+  stepTranslate: 'Translate',
+  stepExport: 'Export',
+
+  // Proxy Config
+  apiConfiguration: 'API Configuration',
+  aiProvider: 'AI Provider',
+  apiBaseUrl: 'API Base URL',
+  apiKey: 'API Key',
+  model: 'Model',
+  testConnection: 'Test Connection',
+  testing: 'Testing...',
+  connected: 'Connected',
+  failed: 'Failed',
+  notTested: 'Not tested',
+  advancedSettings: 'Advanced Settings',
+  maxTokensPerRequest: 'Max Tokens per Request',
+  temperature: 'Temperature',
+  delayBetweenRequests: 'Delay Between Requests (ms)',
+  delayBetweenRequestsHint: 'Wait between consecutive translation requests',
+  retryDelay: 'Retry Delay (ms)',
+  retryDelayHint: 'Base delay before retrying a failed request (exponential backoff applied)',
+  requestTimeout: 'Request Timeout (ms)',
+  requestTimeoutHint: 'Abort request after this time. Default: 60000ms (1 min). Set higher for slow models.',
+  maxRetriesOnFailure: 'Max Retries on Failure',
+  minResponseLengthRatio: 'Min Response Length Ratio',
+  minResponseLengthRatioHint: 'Auto-retry if translated text is shorter than this % of original. 0 = disabled. 15% recommended.',
+  systemPromptPrefix: 'System Prompt Prefix (optional)',
+  systemPromptPrefixPlaceholder: 'Additional instructions to prepend to translation prompt...',
+
+  // File Upload
+  characterCard: 'Character Card',
+  dragDropCard: 'Drag & drop a card JSON',
+  orClickBrowse: 'or click to browse',
+  cardLoaded: 'Card Loaded',
+  clearCard: 'Clear',
+  lorebookEntries: 'Lorebook entries',
+  altGreetings: 'Alt greetings',
+  regexScripts: 'Regex scripts',
+  depthPrompt: 'Depth prompt',
+  specVersion: 'Spec',
+
+  // Translation Config
+  translationSettings: 'Translation Settings',
+  targetLanguage: 'Target Language',
+  fieldsToTranslate: 'Fields to Translate',
+  translationMode: 'Translation Mode',
+  fieldByField: 'Field by field',
+  fieldByFieldDesc: 'Safe, easy to debug',
+  batchMode: 'Batch mode',
+  batchModeDesc: 'Faster, groups small fields',
+  lorebookStrategy: 'Lorebook Strategy',
+  individualEntries: 'Individual entries',
+  individualEntriesDesc: 'Most accurate',
+  batchEntries: 'Batch',
+  batchEntriesDesc: 'Faster for large lorebooks',
+  entriesPerBatch: 'Entries per batch',
+
+  // Translation Progress
+  translation: 'Translation',
+  eta: 'ETA',
+  tokens: 'tokens',
+  fields: 'fields',
+  done: 'Done',
+  remaining: 'Remaining',
+  startTranslation: 'Start Translation',
+  restart: 'Restart',
+  pause: 'Pause',
+  resume: 'Resume',
+  cancel: 'Cancel',
+  retranslateAll: 'Re-translate All',
+  clear: 'Clear',
+
+  // Log Filter
+  all: 'All',
+  error: 'Error',
+  retry: 'Retry',
+  warn: 'Warn',
+  active: 'Active',
+  info: 'Info',
+
+  // Field Editor
+  fieldEditor: 'Field Editor',
+  field: 'Field',
+  original: 'Original',
+  translated: 'Translated',
+  status: 'Status',
+  actions: 'Actions',
+  retranslate: 'Re-translate',
+  noFieldsInGroup: 'No fields in this group',
+
+  // Card Preview
+  cardPreview: 'Card Preview',
+
+  // Export
+  exportTranslated: 'Export Translated Card',
+  downloadJson: 'Download JSON',
+  exportWarning: 'Some fields have errors or are not translated yet.',
+  fieldsTranslated: 'fields translated',
+
+  // Field Groups
+  groupCore: 'Core Fields',
+  groupCoreDesc: 'name, description, personality, scenario',
+  groupMessages: 'Messages',
+  groupMessagesDesc: 'first_mes, alternate_greetings, mes_example',
+  groupSystem: 'System Prompts',
+  groupSystemDesc: 'system_prompt, post_history_instructions',
+  groupCreator: 'Creator Notes',
+  groupCreatorDesc: 'creator_notes, creatorcomment',
+  groupLorebook: 'Lorebook Entries',
+  groupLorebookDesc: 'character_book entries content + comment',
+  groupLorebookKeys: 'Lorebook Keys',
+  groupLorebookKeysDesc: 'character_book entries keywords',
+  groupRegex: 'Regex Scripts',
+  groupRegexDesc: 'replaceString, scriptName',
+  groupDepthPrompt: 'Depth Prompt',
+  groupDepthPromptDesc: 'extensions.depth_prompt.prompt',
+};
+
+const vi: TranslationKeys = {
+  // App
+  appTitle: 'ST Card Translator',
+  appSubtitle: 'Dịch thẻ nhân vật SillyTavern',
+  appFooter: 'Dịch thẻ nhân vật SillyTavern sang mọi ngôn ngữ',
+  uiLanguage: 'Ngôn ngữ giao diện',
+
+  // Empty state
+  noCardTitle: 'Chưa có thẻ nhân vật',
+  noCardDesc: 'Tải lên file JSON thẻ nhân vật SillyTavern từ thanh bên để bắt đầu. Cấu hình API trước để có kết quả tốt nhất.',
+  stepConfigureApi: 'Cấu hình API',
+  stepUploadCard: 'Tải thẻ lên',
+  stepTranslate: 'Dịch',
+  stepExport: 'Xuất file',
+
+  // Proxy Config
+  apiConfiguration: 'Cấu hình API',
+  aiProvider: 'Nhà cung cấp AI',
+  apiBaseUrl: 'URL API cơ sở',
+  apiKey: 'API Key',
+  model: 'Mô hình',
+  testConnection: 'Kiểm tra kết nối',
+  testing: 'Đang kiểm tra...',
+  connected: 'Đã kết nối',
+  failed: 'Thất bại',
+  notTested: 'Chưa kiểm tra',
+  advancedSettings: 'Cài đặt nâng cao',
+  maxTokensPerRequest: 'Số token tối đa mỗi yêu cầu',
+  temperature: 'Nhiệt độ (Temperature)',
+  delayBetweenRequests: 'Độ trễ giữa các yêu cầu (ms)',
+  delayBetweenRequestsHint: 'Thời gian chờ giữa các lần gửi yêu cầu dịch',
+  retryDelay: 'Độ trễ thử lại (ms)',
+  retryDelayHint: 'Thời gian chờ cơ bản trước khi thử lại yêu cầu thất bại (tăng dần theo cấp số nhân)',
+  requestTimeout: 'Thời gian chờ yêu cầu (ms)',
+  requestTimeoutHint: 'Hủy yêu cầu sau thời gian này. Mặc định: 60000ms (1 phút). Tăng cho model chậm.',
+  maxRetriesOnFailure: 'Số lần thử lại tối đa',
+  minResponseLengthRatio: 'Tỷ lệ độ dài phản hồi tối thiểu',
+  minResponseLengthRatioHint: 'Tự động thử lại nếu bản dịch ngắn hơn % này so với bản gốc. 0 = tắt. 15% được khuyến nghị.',
+  systemPromptPrefix: 'Tiền tố System Prompt (tùy chọn)',
+  systemPromptPrefixPlaceholder: 'Hướng dẫn bổ sung thêm vào đầu prompt dịch...',
+
+  // File Upload
+  characterCard: 'Thẻ nhân vật',
+  dragDropCard: 'Kéo thả file JSON thẻ nhân vật',
+  orClickBrowse: 'hoặc nhấn để chọn file',
+  cardLoaded: 'Đã tải thẻ',
+  clearCard: 'Xóa',
+  lorebookEntries: 'Mục lorebook',
+  altGreetings: 'Lời chào phụ',
+  regexScripts: 'Script regex',
+  depthPrompt: 'Depth prompt',
+  specVersion: 'Phiên bản spec',
+
+  // Translation Config
+  translationSettings: 'Cài đặt dịch',
+  targetLanguage: 'Ngôn ngữ đích',
+  fieldsToTranslate: 'Trường cần dịch',
+  translationMode: 'Chế độ dịch',
+  fieldByField: 'Từng trường một',
+  fieldByFieldDesc: 'An toàn, dễ debug',
+  batchMode: 'Chế độ hàng loạt',
+  batchModeDesc: 'Nhanh hơn, gộp trường nhỏ',
+  lorebookStrategy: 'Chiến lược Lorebook',
+  individualEntries: 'Từng mục riêng lẻ',
+  individualEntriesDesc: 'Chính xác nhất',
+  batchEntries: 'Hàng loạt',
+  batchEntriesDesc: 'Nhanh hơn cho lorebook lớn',
+  entriesPerBatch: 'Số mục mỗi đợt',
+
+  // Translation Progress
+  translation: 'Dịch thuật',
+  eta: 'Thời gian còn lại',
+  tokens: 'token',
+  fields: 'trường',
+  done: 'Xong',
+  remaining: 'Còn lại',
+  startTranslation: 'Bắt đầu dịch',
+  restart: 'Dịch lại',
+  pause: 'Tạm dừng',
+  resume: 'Tiếp tục',
+  cancel: 'Hủy',
+  retranslateAll: 'Dịch lại tất cả',
+  clear: 'Xóa',
+
+  // Log Filter
+  all: 'Tất cả',
+  error: 'Lỗi',
+  retry: 'Thử lại',
+  warn: 'Cảnh báo',
+  active: 'Đang chạy',
+  info: 'Thông tin',
+
+  // Field Editor
+  fieldEditor: 'Chỉnh sửa trường',
+  field: 'Trường',
+  original: 'Bản gốc',
+  translated: 'Bản dịch',
+  status: 'Trạng thái',
+  actions: 'Hành động',
+  retranslate: 'Dịch lại',
+  noFieldsInGroup: 'Không có trường nào trong nhóm này',
+
+  // Card Preview
+  cardPreview: 'Xem trước thẻ',
+
+  // Export
+  exportTranslated: 'Xuất thẻ đã dịch',
+  downloadJson: 'Tải xuống JSON',
+  exportWarning: 'Một số trường có lỗi hoặc chưa được dịch.',
+  fieldsTranslated: 'trường đã dịch',
+
+  // Field Groups
+  groupCore: 'Trường cốt lõi',
+  groupCoreDesc: 'tên, mô tả, tính cách, kịch bản',
+  groupMessages: 'Tin nhắn',
+  groupMessagesDesc: 'lời chào đầu, lời chào phụ, ví dụ hội thoại',
+  groupSystem: 'System Prompt',
+  groupSystemDesc: 'system_prompt, hướng dẫn sau lịch sử',
+  groupCreator: 'Ghi chú tác giả',
+  groupCreatorDesc: 'ghi chú tác giả, bình luận',
+  groupLorebook: 'Mục Lorebook',
+  groupLorebookDesc: 'nội dung + bình luận các mục character_book',
+  groupLorebookKeys: 'Từ khóa Lorebook',
+  groupLorebookKeysDesc: 'từ khóa các mục character_book',
+  groupRegex: 'Script Regex',
+  groupRegexDesc: 'chuỗi thay thế, tên script',
+  groupDepthPrompt: 'Depth Prompt',
+  groupDepthPromptDesc: 'extensions.depth_prompt.prompt',
+};
+
+export const translations: Record<Locale, TranslationKeys> = { en, vi };
