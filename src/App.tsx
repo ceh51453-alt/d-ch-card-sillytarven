@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import ProxyConfig from './components/ProxyConfig';
 import FileUpload from './components/FileUpload';
 import TranslateConfig from './components/TranslateConfig';
@@ -11,8 +12,12 @@ import type { Locale } from './i18n/translations';
 import { Languages, X, Globe } from 'lucide-react';
 
 export default function App() {
-  const { toasts, removeToast, card, locale, setLocale } = useStore();
+  const { toasts, removeToast, card, locale, setLocale, loadStateFromIDB } = useStore();
   const t = useT();
+
+  useEffect(() => {
+    loadStateFromIDB();
+  }, [loadStateFromIDB]);
 
   return (
     <div className="app-layout">

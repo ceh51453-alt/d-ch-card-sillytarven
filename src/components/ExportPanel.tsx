@@ -1,10 +1,11 @@
 import { useStore } from '../store';
 import { useTranslation } from '../hooks/useTranslation';
 import { useT } from '../i18n/useLocale';
-import { Download, AlertTriangle } from 'lucide-react';
+import { Download, AlertTriangle, Image as ImageIcon } from 'lucide-react';
+import { embedCharaToPNG } from '../utils/pngHandler';
 
 export default function ExportPanel() {
-  const { card, fields, cardFileName, translationConfig, phase } = useStore();
+  const { card, fields, cardFileName, originalImage, translationConfig, phase } = useStore();
   const { getExportCard } = useTranslation();
   const t = useT();
 
@@ -43,6 +44,29 @@ export default function ExportPanel() {
     URL.revokeObjectURL(url);
   };
 
+  const handleExportPng = async () => {
+    if (!originalImage) return;
+    const exportCard = getExportCard();
+    if (!exportCard) return;
+
+    try {
+      const json = JSON.stringify(exportCard);
+      const dataUrl = await embedCharaToPNG(originalImage, json);
+      
+      const baseName = cardFileName.replace(/\.(json|png)$/i, '');
+      const langSuffix = translationConfig.targetLanguage === 'Tiếng Việt' ? 'vi' : 'translated';
+      const fileName = `${baseName}_${langSuffix}.png`;
+
+      const a = document.createElement('a');
+      a.href = dataUrl;
+      a.download = fileName;
+      a.click();
+    } catch (e) {
+      console.error('Failed to export PNG:', e);
+      alert('Failed to export PNG');
+    }
+  };
+
   return (
     <div className="card fade-in" style={{ padding: '20px' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
@@ -74,15 +98,29 @@ export default function ExportPanel() {
         </div>
       )}
 
-      <button
-        className="btn btn-primary"
-        onClick={handleExport}
-        disabled={phase === 'translating' || doneCount === 0}
-        style={{ width: '100%' }}
-      >
-        <Download size={16} />
-        {t.downloadJson}
-      </button>
+      <div style={{ display: 'flex', gap: '8px', flexDirection: 'column' }}>
+        <button
+          className="btn btn-primary"
+          onClick={handleExport}
+          disabled={phase === 'translating' || doneCount === 0}
+          style={{ width: '100%' }}
+        >
+          <Download size={16} />
+          {t.downloadJson}
+        </button>
+
+        {originalImage && (
+          <button
+            className="btn btn-secondary"
+            onClick={handleExportPng}
+            disabled={phase === 'translating' || doneCount === 0}
+            style={{ width: '100%', background: 'var(--bg-secondary)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}
+          >
+            <ImageIcon size={16} />
+            {t.downloadPng || 'Download PNG'}
+          </button>
+        )}
+      </div>
     </div>
   );
 }

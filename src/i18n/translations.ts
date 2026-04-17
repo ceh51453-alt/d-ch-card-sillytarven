@@ -45,7 +45,7 @@ const en = {
 
   // File Upload
   characterCard: 'Character Card',
-  dragDropCard: 'Drag & drop a card JSON',
+  dragDropCard: 'Drag & drop a card JSON/PNG',
   orClickBrowse: 'or click to browse',
   cardLoaded: 'Card Loaded',
   clearCard: 'Clear',
@@ -70,6 +70,9 @@ const en = {
   batchEntries: 'Batch',
   batchEntriesDesc: 'Faster for large lorebooks',
   entriesPerBatch: 'Entries per batch',
+  customSchema: 'Custom Format Schema',
+  customSchemaDesc: 'Optional: Provide a JSON schema, MVU rules, or Zod format. The AI will strictly follow this structure.',
+  uploadJson: 'Upload JSON',
 
   // Translation Progress
   translation: 'Translation',
@@ -109,8 +112,9 @@ const en = {
 
   // Export
   exportTranslated: 'Export Translated Card',
+  exportWarning: 'Some fields failed to translate or are still pending.',
   downloadJson: 'Download JSON',
-  exportWarning: 'Some fields have errors or are not translated yet.',
+  downloadPng: 'Download PNG',
   fieldsTranslated: 'fields translated',
 
   // Field Groups
@@ -175,7 +179,7 @@ const vi: TranslationKeys = {
 
   // File Upload
   characterCard: 'Thẻ nhân vật',
-  dragDropCard: 'Kéo thả file JSON thẻ nhân vật',
+  dragDropCard: 'Kéo thả file JSON/PNG thẻ nhân vật',
   orClickBrowse: 'hoặc nhấn để chọn file',
   cardLoaded: 'Đã tải thẻ',
   clearCard: 'Xóa',
@@ -200,6 +204,9 @@ const vi: TranslationKeys = {
   batchEntries: 'Hàng loạt',
   batchEntriesDesc: 'Nhanh hơn cho lorebook lớn',
   entriesPerBatch: 'Số mục mỗi đợt',
+  customSchema: 'Schema / Định dạng tùy chỉnh',
+  customSchemaDesc: 'Tùy chọn: Nhập JSON schema, quy tắc MVU, hoặc định dạng Zod. AI sẽ tuân thủ nghiêm ngặt cấu trúc này.',
+  uploadJson: 'Tải lên JSON',
 
   // Translation Progress
   translation: 'Dịch thuật',
@@ -240,7 +247,8 @@ const vi: TranslationKeys = {
   // Export
   exportTranslated: 'Xuất thẻ đã dịch',
   downloadJson: 'Tải xuống JSON',
-  exportWarning: 'Một số trường có lỗi hoặc chưa được dịch.',
+  downloadPng: 'Tải xuống ảnh PNG',
+  exportWarning: 'Một số trường bị lỗi dịch hoặc chưa hoàn thành.',
   fieldsTranslated: 'trường đã dịch',
 
   // Field Groups

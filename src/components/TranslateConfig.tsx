@@ -2,7 +2,7 @@ import { useStore } from '../store';
 import { useT } from '../i18n/useLocale';
 import { TARGET_LANGUAGES } from '../utils/cardFields';
 import type { TranslationMode, LorebookStrategy, FieldGroupConfig, FieldGroup } from '../types/card';
-import { Languages, Settings2 } from 'lucide-react';
+import { Languages, Settings2, FileJson } from 'lucide-react';
 
 /** Map field group IDs to i18n keys */
 function useGroupLabels() {
@@ -154,6 +154,45 @@ export default function TranslateConfig() {
                 )}
               </div>
             )}
+
+            {/* Custom Schema */}
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                <label className="label" style={{ marginBottom: 0 }}>{t.customSchema || 'Custom Format Schema'}</label>
+                <label style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', color: 'var(--accent-primary)', fontWeight: 600 }}>
+                  <FileJson size={14} />
+                  {t.uploadJson || 'Upload JSON'}
+                  <input
+                    type="file"
+                    accept=".json,.txt"
+                    style={{ display: 'none' }}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      const reader = new FileReader();
+                      reader.onload = (evt) => {
+                        try {
+                          const content = evt.target?.result as string;
+                          const parsed = JSON.parse(content);
+                          setTranslationConfig({ customSchema: JSON.stringify(parsed, null, 2) });
+                        } catch (err) {
+                          setTranslationConfig({ customSchema: evt.target?.result as string });
+                        }
+                      };
+                      reader.readAsText(file);
+                      e.target.value = '';
+                    }}
+                  />
+                </label>
+              </div>
+              <textarea
+                className="input"
+                style={{ width: '100%', minHeight: '80px', fontFamily: 'monospace', fontSize: '0.8rem', resize: 'vertical' }}
+                placeholder={t.customSchemaDesc || "Optional: Provide a JSON schema, MVU rules, or Zod format. The AI will strictly follow this structure."}
+                value={translationConfig.customSchema || ''}
+                onChange={(e) => setTranslationConfig({ customSchema: e.target.value })}
+              />
+            </div>
           </>
         )}
       </div>

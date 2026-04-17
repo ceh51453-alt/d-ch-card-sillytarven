@@ -30,7 +30,7 @@ export default function FileUpload() {
 
   const { getRootProps, getInputProps, isDragActive, isDragAccept } = useDropzone({
     onDrop,
-    accept: { 'application/json': ['.json'] },
+    accept: { 'application/json': ['.json'], 'image/png': ['.png'] },
     multiple: false,
   });
 

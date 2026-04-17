@@ -173,6 +173,7 @@ export interface TranslationConfig {
   lorebookStrategy: LorebookStrategy;
   lorebookBatchSize: number;
   fieldGroups: FieldGroupConfig[];
+  customSchema?: string;
 }
 
 /* ─── Log Entry ─── */

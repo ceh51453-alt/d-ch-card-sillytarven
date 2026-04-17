@@ -61,6 +61,7 @@ export function useTranslation() {
           field.label,
           store.proxy,
           store.translationConfig.targetLanguage,
+          store.translationConfig.customSchema,
           abortRef.current?.signal
         );
 
@@ -143,6 +144,7 @@ export function useTranslation() {
         field.label,
         store.proxy,
         store.translationConfig.targetLanguage,
+        store.translationConfig.customSchema,
         controller.signal
       );
       store.updateField(path, { status: 'done', translated });

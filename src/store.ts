@@ -12,6 +12,7 @@ import type {
   FieldGroupConfig,
 } from './types/card';
 import { DEFAULT_FIELD_GROUPS } from './utils/cardFields';
+import { IDB } from './utils/idb';
 
 /* ─── localStorage helpers ─── */
 const LS = {
@@ -35,8 +36,10 @@ interface AppState {
   // Card
   card: CharacterCard | null;
   cardFileName: string;
-  setCard: (card: CharacterCard, fileName: string) => void;
+  originalImage: string | null;
+  setCard: (card: CharacterCard, fileName: string, originalImage?: string | null) => void;
   clearCard: () => void;
+  loadStateFromIDB: () => Promise<void>;
 
   // Proxy config
   proxy: ProxySettings;
@@ -82,11 +85,28 @@ interface AppState {
 }
 
 export const useStore = create<AppState>((set) => ({
-  // ─── Card ───
   card: null,
   cardFileName: '',
-  setCard: (card, fileName) => set({ card, cardFileName: fileName }),
-  clearCard: () => set({ card: null, cardFileName: '', fields: [], phase: 'idle', logs: [] }),
+  originalImage: null,
+  setCard: (card, fileName, originalImage = null) => {
+    set({ card, cardFileName: fileName, originalImage });
+    IDB.set('st-translator-card-data', { card, cardFileName: fileName, originalImage });
+  },
+  clearCard: () => {
+    set({ card: null, cardFileName: '', originalImage: null, fields: [], phase: 'idle', logs: [] });
+    IDB.remove('st-translator-card-data');
+    IDB.remove('st-translator-fields-data');
+  },
+  loadStateFromIDB: async () => {
+    const cardData = await IDB.get<{card: CharacterCard, cardFileName: string, originalImage: string | null} | null>('st-translator-card-data', null);
+    if (cardData) {
+      set({ card: cardData.card, cardFileName: cardData.cardFileName, originalImage: cardData.originalImage });
+    }
+    const fieldsData = await IDB.get<{fields: TranslationField[], phase: TranslationPhase} | null>('st-translator-fields-data', null);
+    if (fieldsData) {
+      set({ fields: fieldsData.fields, phase: fieldsData.phase });
+    }
+  },
 
   // ─── Proxy ───
   proxy: {
@@ -134,6 +154,7 @@ export const useStore = create<AppState>((set) => ({
     lorebookStrategy: 'single',
     lorebookBatchSize: 5,
     fieldGroups: [...DEFAULT_FIELD_GROUPS],
+    customSchema: '',
   },
   setTranslationConfig: (partial) =>
     set((s) => ({ translationConfig: { ...s.translationConfig, ...partial } })),
@@ -149,13 +170,24 @@ export const useStore = create<AppState>((set) => ({
 
   // ─── Translation State ───
   fields: [],
-  setFields: (fields) => set({ fields }),
+  setFields: (fields) => {
+    set({ fields });
+    set((s) => {
+      IDB.set('st-translator-fields-data', { fields: s.fields, phase: s.phase });
+      return s;
+    });
+  },
   updateField: (path, update) =>
-    set((s) => ({
-      fields: s.fields.map((f) => (f.path === path ? { ...f, ...update } : f)),
-    })),
+    set((s) => {
+      const nextFields = s.fields.map((f) => (f.path === path ? { ...f, ...update } : f));
+      IDB.set('st-translator-fields-data', { fields: nextFields, phase: s.phase });
+      return { fields: nextFields };
+    }),
   phase: 'idle',
-  setPhase: (p) => set({ phase: p }),
+  setPhase: (p) => set((s) => {
+    IDB.set('st-translator-fields-data', { fields: s.fields, phase: p });
+    return { phase: p };
+  }),
   currentFieldIndex: 0,
   setCurrentFieldIndex: (i) => set({ currentFieldIndex: i }),
   startTime: null,

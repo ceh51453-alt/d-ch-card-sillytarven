@@ -18,8 +18,12 @@ function buildTranslationMessages(
   text: string,
   fieldName: string,
   targetLang: string,
-  systemPromptPrefix: string
+  systemPromptPrefix: string,
+  customSchema?: string
 ) {
+  const schemaInstructions = customSchema
+    ? `\n\nCARD SCHEMA / GLOSSARY:\nHere is the schema or variable definitions for this character. Please mentally translate these variables into the target language to establish a consistent vocabulary, and apply this vocabulary strictly when translating the text below. Maintain any variable names, JSON keys, or special formats:\n${customSchema}\n`
+    : '';
   const systemPrompt = `${systemPromptPrefix ? systemPromptPrefix + '\n\n' : ''}You are a professional translator specializing in translating to ${targetLang}.
 You are translating content from a SillyTavern AI character card (roleplay fiction).
 
@@ -31,7 +35,11 @@ STRICT RULES:
 5. Keep proper nouns (character names, place names) consistent throughout.
 6. For lorebook keys (keywords): translate naturally but keep them short and comma-separated.
 7. If the text is already in ${targetLang} or is code/HTML only, return it unchanged.
-8. Maintain the same tone and style of the original text.`;
+8. Maintain the same tone and style of the original text.
+9. Translate Chinese to Vietnamese. DO NOT translate English text (leave English text exactly as is).
+10. Variables and keys MUST NOT contain spaces. Use underscores instead of spaces (e.g., 'Tình_Yêu' instead of 'Tình Yêu').
+11. Your translation must fully comply with MVU (Model-View-Update) structure rules.
+12. For Japanese proper nouns (names, places, etc.), you MUST transliterate them into standard Romaji.${schemaInstructions}`;
 
   return {
     system: systemPrompt,
@@ -239,6 +247,7 @@ export async function translateText(
   fieldName: string,
   config: ProxySettings,
   targetLang: string,
+  customSchema?: string,
   signal?: AbortSignal
 ): Promise<string> {
   if (!text || text.trim() === '') return '';
@@ -247,7 +256,7 @@ export async function translateText(
   const translatedChunks: string[] = [];
 
   for (const chunk of chunks) {
-    const { system, user } = buildTranslationMessages(chunk, fieldName, targetLang, config.systemPromptPrefix);
+    const { system, user } = buildTranslationMessages(chunk, fieldName, targetLang, config.systemPromptPrefix, customSchema);
 
     let lastError: Error | null = null;
 

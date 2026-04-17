@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 import { useStore } from '../store';
 import { validateCard, getCardSummary } from '../utils/cardFields';
+import { extractCharaFromPNG } from '../utils/pngHandler';
 import type { CharacterCard } from '../types/card';
 
 export function useCardParser() {
@@ -8,13 +9,30 @@ export function useCardParser() {
 
   const parseCardFile = useCallback(
     async (file: File) => {
-      if (!file.name.endsWith('.json')) {
-        addToast('error', 'Only .json files are accepted');
+      const isPng = file.name.toLowerCase().endsWith('.png');
+      const isJson = file.name.toLowerCase().endsWith('.json');
+
+      if (!isJson && !isPng) {
+        addToast('error', 'Only .json and .png files are accepted');
         return null;
       }
 
       try {
-        const text = await file.text();
+        let text = '';
+        let dataUrl: string | null = null;
+        if (isPng) {
+          try {
+            const extracted = await extractCharaFromPNG(file);
+            text = extracted.json;
+            dataUrl = extracted.dataUrl;
+          } catch (e) {
+            addToast('error', 'Failed to extract character data from PNG');
+            return null;
+          }
+        } else {
+          text = await file.text();
+        }
+
         const json = JSON.parse(text);
         const validation = validateCard(json);
 
@@ -25,7 +43,7 @@ export function useCardParser() {
 
         const card = json as CharacterCard;
         const summary = getCardSummary(card);
-        setCard(card, file.name);
+        setCard(card, file.name, dataUrl);
         addToast('success', `Loaded: ${summary.name} (${summary.lorebookCount} lorebook entries)`);
         return card;
       } catch (err) {
