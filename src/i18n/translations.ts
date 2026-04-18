@@ -42,6 +42,7 @@ const en = {
   minResponseLengthRatioHint: 'Auto-retry if translated text is shorter than this % of original. 0 = disabled. 15% recommended.',
   systemPromptPrefix: 'System Prompt Prefix (optional)',
   systemPromptPrefixPlaceholder: 'Additional instructions to prepend to translation prompt...',
+  resetDefaults: 'Reset to Defaults',
 
   // File Upload
   characterCard: 'Character Card',
@@ -70,6 +71,8 @@ const en = {
   batchEntries: 'Batch',
   batchEntriesDesc: 'Faster for large lorebooks',
   entriesPerBatch: 'Entries per batch',
+  concurrentBatches: 'Concurrent batches',
+  concurrentBatchesHint: 'Number of batch requests to send in parallel. Higher = faster but uses more API quota.',
   customSchema: 'Custom Format Schema',
   customSchemaDesc: 'Optional: Provide a JSON schema, MVU rules, or Zod format. The AI will strictly follow this structure.',
   uploadJson: 'Upload JSON',
@@ -82,12 +85,15 @@ const en = {
   done: 'Done',
   remaining: 'Remaining',
   startTranslation: 'Start Translation',
+  continueTranslation: 'Continue Translation',
   restart: 'Restart',
   pause: 'Pause',
   resume: 'Resume',
   cancel: 'Cancel',
   retranslateAll: 'Re-translate All',
   clear: 'Clear',
+  skipped: 'Skipped',
+  skipAlreadyTranslated: 'Skip fields already in target language',
 
   // Log Filter
   all: 'All',
@@ -176,6 +182,7 @@ const vi: TranslationKeys = {
   minResponseLengthRatioHint: 'Tự động thử lại nếu bản dịch ngắn hơn % này so với bản gốc. 0 = tắt. 15% được khuyến nghị.',
   systemPromptPrefix: 'Tiền tố System Prompt (tùy chọn)',
   systemPromptPrefixPlaceholder: 'Hướng dẫn bổ sung thêm vào đầu prompt dịch...',
+  resetDefaults: 'Khôi phục mặc định',
 
   // File Upload
   characterCard: 'Thẻ nhân vật',
@@ -204,6 +211,8 @@ const vi: TranslationKeys = {
   batchEntries: 'Hàng loạt',
   batchEntriesDesc: 'Nhanh hơn cho lorebook lớn',
   entriesPerBatch: 'Số mục mỗi đợt',
+  concurrentBatches: 'Số batch gửi song song',
+  concurrentBatchesHint: 'Số batch gửi cùng lúc. Cao hơn = nhanh hơn nhưng tốn quota API.',
   customSchema: 'Schema / Định dạng tùy chỉnh',
   customSchemaDesc: 'Tùy chọn: Nhập JSON schema, quy tắc MVU, hoặc định dạng Zod. AI sẽ tuân thủ nghiêm ngặt cấu trúc này.',
   uploadJson: 'Tải lên JSON',
@@ -216,12 +225,15 @@ const vi: TranslationKeys = {
   done: 'Xong',
   remaining: 'Còn lại',
   startTranslation: 'Bắt đầu dịch',
+  continueTranslation: 'Dịch tiếp',
   restart: 'Dịch lại',
   pause: 'Tạm dừng',
   resume: 'Tiếp tục',
   cancel: 'Hủy',
   retranslateAll: 'Dịch lại tất cả',
   clear: 'Xóa',
+  skipped: 'Bỏ qua',
+  skipAlreadyTranslated: 'Bỏ qua trường đã đúng ngôn ngữ đích',
 
   // Log Filter
   all: 'Tất cả',

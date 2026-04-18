@@ -114,7 +114,7 @@ export const useStore = create<AppState>((set) => ({
     proxyUrl: LS.get('st-translator-proxy-url', 'https://api.openai.com/v1'),
     apiKey: LS.get('st-translator-api-key', ''),
     model: LS.get('st-translator-model', 'gpt-4o-mini'),
-    maxTokens: LS.get('st-translator-advanced-settings', { maxTokens: 4096 }).maxTokens ?? 4096,
+    maxTokens: LS.get('st-translator-advanced-settings', { maxTokens: 65536 }).maxTokens ?? 65536,
     temperature: LS.get('st-translator-advanced-settings', { temperature: 0.3 }).temperature ?? 0.3,
     requestDelay: LS.get('st-translator-advanced-settings', { requestDelay: 500 }).requestDelay ?? 500,
     retryDelay: LS.get('st-translator-advanced-settings', { retryDelay: 1000 }).retryDelay ?? 1000,
@@ -149,10 +149,14 @@ export const useStore = create<AppState>((set) => ({
 
   // ─── Translation Config ───
   translationConfig: {
+    sourceLanguage: 'auto',
     targetLanguage: 'Tiếng Việt',
+    translationPrompt: '',
     mode: 'field',
     lorebookStrategy: 'single',
     lorebookBatchSize: 5,
+    concurrentBatches: 1,
+    skipAlreadyTranslated: true,
     fieldGroups: [...DEFAULT_FIELD_GROUPS],
     customSchema: '',
   },

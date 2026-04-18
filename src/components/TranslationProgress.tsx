@@ -19,7 +19,7 @@ import {
 
 export default function TranslationProgress() {
   const { fields, phase, logs, logFilter, startTime, card, clearLogs } = useStore();
-  const { startTranslation, pauseTranslation, resumeTranslation, cancelTranslation } = useTranslation();
+  const { startTranslation, continueTranslation, pauseTranslation, resumeTranslation, cancelTranslation } = useTranslation();
   const t = useT();
   const logEndRef = useRef<HTMLDivElement>(null);
 
@@ -33,14 +33,15 @@ export default function TranslationProgress() {
   const totalFields = fields.length;
   const doneFields = fields.filter((f) => f.status === 'done').length;
   const errorFields = fields.filter((f) => f.status === 'error').length;
-  const progress = totalFields > 0 ? (doneFields / totalFields) * 100 : 0;
+  const skippedFields = fields.filter((f) => f.status === 'skipped').length;
+  const progress = totalFields > 0 ? ((doneFields + skippedFields) / totalFields) * 100 : 0;
 
   // Estimated time remaining
   const getETA = () => {
     if (!startTime || doneFields === 0) return '--';
     const elapsed = Date.now() - startTime;
     const avgPerField = elapsed / doneFields;
-    const remaining = avgPerField * (totalFields - doneFields - errorFields);
+    const remaining = avgPerField * (totalFields - doneFields - errorFields - skippedFields);
     if (remaining < 60000) return `${Math.ceil(remaining / 1000)}s`;
     return `${Math.ceil(remaining / 60000)}m`;
   };
@@ -77,7 +78,7 @@ export default function TranslationProgress() {
         <div style={{ marginBottom: '12px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', marginBottom: '6px' }}>
             <span style={{ color: 'var(--text-secondary)' }}>
-              {doneFields} / {totalFields} {t.fields}
+              {doneFields + skippedFields} / {totalFields} {t.fields}
             </span>
             <span style={{ fontWeight: 600, color: 'var(--accent-primary)' }}>
               {progress.toFixed(0)}%
@@ -105,10 +106,13 @@ export default function TranslationProgress() {
           }}
         >
           <MiniStat icon={<CheckCircle2 size={12} />} value={doneFields} label={t.done} color="var(--accent-success)" />
+          {skippedFields > 0 && (
+            <MiniStat icon={<CheckCircle2 size={12} />} value={skippedFields} label={t.skipped} color="var(--accent-warning)" />
+          )}
           <MiniStat icon={<XCircle size={12} />} value={errorFields} label={t.error} color="var(--accent-danger)" />
           <MiniStat
             icon={<Loader2 size={12} />}
-            value={totalFields - doneFields - errorFields}
+            value={totalFields - doneFields - errorFields - skippedFields}
             label={t.remaining}
             color="var(--text-muted)"
           />
@@ -116,12 +120,23 @@ export default function TranslationProgress() {
       )}
 
       {/* Action buttons */}
-      <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
-        {(isIdle || isCancelled) && (
-          <button className="btn btn-primary" onClick={startTranslation}>
+      <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
+        {isIdle && (
+          <button className="btn btn-primary" onClick={() => startTranslation()}>
             <Play size={14} />
-            {isCancelled || isDone ? t.restart : t.startTranslation}
+            {t.startTranslation}
           </button>
+        )}
+        {(isCancelled || isDone) && (
+          <>
+            <button className="btn btn-primary" onClick={() => continueTranslation()}>
+              <Play size={14} />
+              {t.continueTranslation}
+            </button>
+            <button className="btn btn-secondary" onClick={() => startTranslation()}>
+              <RotateCcw size={14} /> {t.retranslateAll}
+            </button>
+          </>
         )}
         {isTranslating && (
           <button className="btn btn-secondary" onClick={pauseTranslation}>
@@ -136,11 +151,6 @@ export default function TranslationProgress() {
         {(isTranslating || isPaused) && (
           <button className="btn btn-danger" onClick={cancelTranslation}>
             <Square size={14} /> {t.cancel}
-          </button>
-        )}
-        {isDone && (
-          <button className="btn btn-secondary" onClick={startTranslation}>
-            <RotateCcw size={14} /> {t.retranslateAll}
           </button>
         )}
       </div>

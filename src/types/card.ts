@@ -168,10 +168,14 @@ export type TranslationMode = 'field' | 'batch';
 export type LorebookStrategy = 'single' | 'batch';
 
 export interface TranslationConfig {
+  sourceLanguage: string;
   targetLanguage: string;
+  translationPrompt: string;
   mode: TranslationMode;
   lorebookStrategy: LorebookStrategy;
   lorebookBatchSize: number;
+  concurrentBatches: number;
+  skipAlreadyTranslated: boolean;
   fieldGroups: FieldGroupConfig[];
   customSchema?: string;
 }

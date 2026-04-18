@@ -13,37 +13,57 @@ export class ApiError extends Error {
   }
 }
 
+/* ─── Default prompt template ─── */
+export function getDefaultTranslationPrompt(sourceLang: string, targetLang: string): string {
+  const sourceInfo = sourceLang && sourceLang !== 'auto'
+    ? `You are translating FROM ${sourceLang} TO ${targetLang}.`
+    : `You are translating content to ${targetLang}.`;
+
+  return `You are a professional translator specializing in translating to ${targetLang}.
+You are translating content from a SillyTavern AI character card (roleplay fiction).
+${sourceInfo}
+
+STRICT RULES:
+1. Return ONLY the translated text. Do NOT include the original text, do NOT show "original → translation" pairs, no explanations, no markdown wrapping.
+2. Preserve ALL formatting: HTML tags, markdown, newlines (\\n), special characters.
+3. Preserve ALL placeholders: {{char}}, {{user}}, {{original}}, <|im_start|>, <START>, etc.
+4. Preserve ALL code blocks, regex patterns, JSON structures inside the text.
+5. Keep proper nouns (character names, place names) consistent throughout.
+6. For lorebook keys (keywords): translate naturally but keep them short and comma-separated.
+7. Maintain the same tone and style of the original text.
+8. DO NOT translate text that is already in ${targetLang} (leave it exactly as is).
+9. Variables and keys MUST NOT contain spaces. Use underscores instead of spaces (e.g., 'Tình_Yêu' instead of 'Tình Yêu').
+10. Your translation must fully comply with MVU (Model-View-Update) structure rules.
+11. For Japanese proper nouns (names, places, etc.), you MUST transliterate them into standard Romaji.
+12. CRITICAL: The output must contain ONLY the translated text in ${targetLang}. Do NOT include source language text. Do NOT pair original text with translation. Do NOT use arrows (→) or colons (:) to show before/after.`;
+}
+
 /* ─── Build messages for translation ─── */
 function buildTranslationMessages(
   text: string,
   fieldName: string,
   targetLang: string,
   systemPromptPrefix: string,
+  sourceLang: string,
+  customPrompt?: string,
   customSchema?: string
 ) {
   const schemaInstructions = customSchema
     ? `\n\nCARD SCHEMA / GLOSSARY:\nHere is the schema or variable definitions for this character. Please mentally translate these variables into the target language to establish a consistent vocabulary, and apply this vocabulary strictly when translating the text below. Maintain any variable names, JSON keys, or special formats:\n${customSchema}\n`
     : '';
-  const systemPrompt = `${systemPromptPrefix ? systemPromptPrefix + '\n\n' : ''}You are a professional translator specializing in translating to ${targetLang}.
-You are translating content from a SillyTavern AI character card (roleplay fiction).
 
-STRICT RULES:
-1. Translate ONLY the text content. Return ONLY the translated text, no explanations, no markdown wrapping.
-2. Preserve ALL formatting: HTML tags, markdown, newlines (\\n), special characters.
-3. Preserve ALL placeholders: {{char}}, {{user}}, {{original}}, <|im_start|>, <START>, etc.
-4. Preserve ALL code blocks, regex patterns, JSON structures inside the text.
-5. Keep proper nouns (character names, place names) consistent throughout.
-6. For lorebook keys (keywords): translate naturally but keep them short and comma-separated.
-7. If the text is already in ${targetLang} or is code/HTML only, return it unchanged.
-8. Maintain the same tone and style of the original text.
-9. Translate Chinese to Vietnamese. DO NOT translate English text (leave English text exactly as is).
-10. Variables and keys MUST NOT contain spaces. Use underscores instead of spaces (e.g., 'Tình_Yêu' instead of 'Tình Yêu').
-11. Your translation must fully comply with MVU (Model-View-Update) structure rules.
-12. For Japanese proper nouns (names, places, etc.), you MUST transliterate them into standard Romaji.${schemaInstructions}`;
+  // Use custom prompt if provided, otherwise generate default
+  const basePrompt = customPrompt && customPrompt.trim()
+    ? customPrompt
+    : getDefaultTranslationPrompt(sourceLang, targetLang);
+
+  const systemPrompt = `${systemPromptPrefix ? systemPromptPrefix + '\n\n' : ''}${basePrompt}${schemaInstructions}`;
+
+  const sourceHint = sourceLang && sourceLang !== 'auto' ? ` (from ${sourceLang})` : '';
 
   return {
     system: systemPrompt,
-    user: `Translate the following "${fieldName}" field to ${targetLang}. Return ONLY the translation:\n\n${text}`,
+    user: `Translate the following "${fieldName}" field${sourceHint} to ${targetLang}. Return ONLY the pure translated text, without including any of the original text:\n\n${text}`,
   };
 }
 
@@ -241,12 +261,89 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+/* ─── Clean translation response ─── */
+// Strips patterns where AI returns "original → translation" instead of just translation
+function cleanTranslationResponse(original: string, translated: string): string {
+  let cleaned = translated;
+
+  // Pattern 1: Full text "original → translation" or "original -> translation"
+  // The AI sometimes returns "Chinese text → Vietnamese text"
+
+  // Check if the response contains the original text with an arrow separator
+  // Split by various arrow characters
+  const arrowSeparators = ['→', '➜', '➡', '⇒', '->'];
+  for (const sep of arrowSeparators) {
+    if (cleaned.includes(sep)) {
+      // Split by the separator and check if the left side looks like original text
+      const parts = cleaned.split(sep);
+      if (parts.length === 2) {
+        const leftTrimmed = parts[0].trim();
+        const rightTrimmed = parts[1].trim();
+        // If left side significantly overlaps with the original, take only the right side
+        if (leftTrimmed.length > 0 && rightTrimmed.length > 0) {
+          const overlapRatio = calculateOverlap(original, leftTrimmed);
+          if (overlapRatio > 0.3) {
+            cleaned = rightTrimmed;
+          }
+        }
+      } else if (parts.length > 2) {
+        // Multiple arrows - likely "line1_orig → line1_trans\nline2_orig → line2_trans"
+        // Process line by line
+        const lines = cleaned.split('\n');
+        const cleanedLines: string[] = [];
+        for (const line of lines) {
+          let processedLine = line;
+          for (const s of arrowSeparators) {
+            if (processedLine.includes(s)) {
+              const lineParts = processedLine.split(s);
+              if (lineParts.length === 2 && lineParts[1].trim().length > 0) {
+                processedLine = lineParts[1].trim();
+                break;
+              }
+            }
+          }
+          cleanedLines.push(processedLine);
+        }
+        cleaned = cleanedLines.join('\n');
+      }
+    }
+  }
+
+  // Pattern 2: Backtick-wrapped pairs like `original` → `translation`
+  cleaned = cleaned.replace(/`[^`]+`\s*[→➜➡⇒]\s*`([^`]+)`/g, '$1');
+  cleaned = cleaned.replace(/`[^`]+`\s*->\s*`([^`]+)`/g, '$1');
+
+  // Pattern 3: Remove any remaining backtick wrapping around the whole response
+  if (cleaned.startsWith('`') && cleaned.endsWith('`') && !original.startsWith('`')) {
+    cleaned = cleaned.slice(1, -1);
+  }
+  if (cleaned.startsWith("'") && cleaned.endsWith("'") && !original.startsWith("'")) {
+    cleaned = cleaned.slice(1, -1);
+  }
+
+  return cleaned.trim();
+}
+
+/* ─── Calculate character overlap ratio ─── */
+function calculateOverlap(a: string, b: string): number {
+  // Simple character-level overlap check
+  const aChars = new Set(a.split(''));
+  const bChars = new Set(b.split(''));
+  let overlap = 0;
+  for (const ch of bChars) {
+    if (aChars.has(ch)) overlap++;
+  }
+  return overlap / Math.max(aChars.size, 1);
+}
+
 /* ─── Main translate function with retry ─── */
 export async function translateText(
   text: string,
   fieldName: string,
   config: ProxySettings,
   targetLang: string,
+  sourceLang: string,
+  customPrompt?: string,
   customSchema?: string,
   signal?: AbortSignal
 ): Promise<string> {
@@ -256,7 +353,7 @@ export async function translateText(
   const translatedChunks: string[] = [];
 
   for (const chunk of chunks) {
-    const { system, user } = buildTranslationMessages(chunk, fieldName, targetLang, config.systemPromptPrefix, customSchema);
+    const { system, user } = buildTranslationMessages(chunk, fieldName, targetLang, config.systemPromptPrefix, sourceLang, customPrompt, customSchema);
 
     let lastError: Error | null = null;
 
@@ -266,7 +363,7 @@ export async function translateText(
 
         const controller = new AbortController();
         const timeout = config.requestTimeout || 60000;
-        const timeoutId = setTimeout(() => controller.abort(), timeout);
+        const timeoutId = setTimeout(() => controller.abort('Request timeout'), timeout);
 
         // Combine signals
         const combinedSignal = signal
@@ -280,16 +377,26 @@ export async function translateText(
         break;
       } catch (err) {
         lastError = err as Error;
+
+        // User cancelled — stop immediately
         if (signal?.aborted) throw err;
 
-        if (err instanceof ApiError && !err.retryable && attempt < config.maxRetries) {
-          throw err; // Non-retryable errors
+        // Detect timeout abort (from our controller) vs other errors
+        const errMsg = err instanceof Error ? err.message : String(err);
+        const isTimeout = errMsg.includes('timeout') || errMsg.includes('aborted');
+
+        if (err instanceof ApiError && !err.retryable) {
+          throw err; // Non-retryable API errors (401, etc.)
         }
 
+        // Retry on timeout or retryable errors
         if (attempt < config.maxRetries) {
           const baseDelay = config.retryDelay || 1000;
           const backoff = Math.min(baseDelay * Math.pow(2, attempt), 30000);
           await sleep(backoff);
+        } else if (isTimeout) {
+          // Final attempt was a timeout — throw a clear error
+          throw new ApiError(`Request timed out after ${(config.requestTimeout || 60000) / 1000}s`, undefined, true);
         }
       }
     }
@@ -297,7 +404,165 @@ export async function translateText(
     if (lastError) throw lastError;
   }
 
-  return translatedChunks.join('\n\n');
+  const rawResult = translatedChunks.join('\n\n');
+  return cleanTranslationResponse(text, rawResult);
+}
+
+/* ─── Batch translate multiple fields in one API call ─── */
+export async function translateBatch(
+  items: { text: string; fieldName: string }[],
+  config: ProxySettings,
+  targetLang: string,
+  sourceLang: string,
+  systemPromptPrefix: string,
+  customPrompt?: string,
+  customSchema?: string,
+  signal?: AbortSignal
+): Promise<string[]> {
+  if (items.length === 0) return [];
+  if (items.length === 1) {
+    const result = await translateText(items[0].text, items[0].fieldName, config, targetLang, sourceLang, customPrompt, customSchema, signal);
+    return [result];
+  }
+
+  // Build combined prompt with numbered sections
+  const DELIMITER = '===';
+  const combinedText = items
+    .map((item, i) => `${DELIMITER}${i + 1}${DELIMITER}\n${item.text}`)
+    .join('\n\n');
+
+  const schemaInstructions = customSchema
+    ? `\n\nCARD SCHEMA / GLOSSARY:\n${customSchema}\n`
+    : '';
+
+  const basePrompt = customPrompt && customPrompt.trim()
+    ? customPrompt
+    : getDefaultTranslationPrompt(sourceLang, targetLang);
+
+  const system = `${systemPromptPrefix ? systemPromptPrefix + '\n\n' : ''}${basePrompt}
+
+BATCH FORMAT:
+- The input contains ${items.length} numbered sections, each starting with ${DELIMITER}N${DELIMITER} (e.g., ${DELIMITER}1${DELIMITER}, ${DELIMITER}2${DELIMITER}).
+- You MUST return the same numbered delimiters with the translated text for each section.
+- Do NOT merge or skip any sections. Every section must be present in your output.${schemaInstructions}`;
+
+  const sourceHint = sourceLang && sourceLang !== 'auto' ? ` (from ${sourceLang})` : '';
+  const user = `Translate these ${items.length} sections${sourceHint} to ${targetLang}. Keep the ${DELIMITER}N${DELIMITER} delimiters. Return ONLY translations:\n\n${combinedText}`;
+
+  // Call provider
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt <= config.maxRetries; attempt++) {
+    try {
+      if (signal?.aborted) throw new Error('Cancelled');
+
+      const controller = new AbortController();
+      const timeout = (config.requestTimeout || 60000) * 2; // Double timeout for batch
+      const timeoutId = setTimeout(() => controller.abort('Batch request timeout'), timeout);
+
+      const combinedSignal = signal
+        ? AbortSignal.any([signal, controller.signal])
+        : controller.signal;
+
+      const rawResult = await callProvider(config, system, user, combinedSignal);
+      clearTimeout(timeoutId);
+
+      // Parse response by delimiters
+      const results = parseBatchResponse(rawResult, items.length);
+      return results;
+    } catch (err) {
+      lastError = err as Error;
+      if (signal?.aborted) throw err;
+      if (err instanceof ApiError && !err.retryable) throw err;
+
+      if (attempt < config.maxRetries) {
+        const baseDelay = config.retryDelay || 1000;
+        await sleep(Math.min(baseDelay * Math.pow(2, attempt), 30000));
+      }
+    }
+  }
+
+  if (lastError) throw lastError;
+  return items.map(() => ''); // Fallback
+}
+
+/* ─── Parse batch response into individual translations ─── */
+function parseBatchResponse(response: string, expectedCount: number): string[] {
+  const results: string[] = new Array(expectedCount).fill('');
+
+  // Strategy 1: Split by ===N=== delimiters (exact or with spaces)
+  const sectionRegex = /===\s*(\d+)\s*===/g;
+  const matches: { index: number; num: number; fullMatch: string }[] = [];
+  let match;
+
+  while ((match = sectionRegex.exec(response)) !== null) {
+    matches.push({ index: match.index, num: parseInt(match[1], 10), fullMatch: match[0] });
+  }
+
+  if (matches.length >= Math.min(expectedCount, 2)) {
+    for (let i = 0; i < matches.length; i++) {
+      const num = matches[i].num;
+      if (num < 1 || num > expectedCount) continue;
+
+      const startIdx = matches[i].index + matches[i].fullMatch.length;
+      const endIdx = i + 1 < matches.length ? matches[i + 1].index : response.length;
+      const text = response.slice(startIdx, endIdx).trim();
+      if (text) results[num - 1] = text;
+    }
+
+    // Check if we got most results
+    const filledCount = results.filter(r => r.trim()).length;
+    if (filledCount >= expectedCount * 0.5) return results;
+  }
+
+  // Strategy 2: Try ---N--- or [N] delimiters
+  const altRegex = /(?:---\s*(\d+)\s*---|^\[(\d+)\]\s*)/gm;
+  const altMatches: { index: number; num: number; fullMatch: string }[] = [];
+
+  while ((match = altRegex.exec(response)) !== null) {
+    const num = parseInt(match[1] || match[2], 10);
+    altMatches.push({ index: match.index, num, fullMatch: match[0] });
+  }
+
+  if (altMatches.length >= Math.min(expectedCount, 2)) {
+    for (let i = 0; i < altMatches.length; i++) {
+      const num = altMatches[i].num;
+      if (num < 1 || num > expectedCount) continue;
+
+      const startIdx = altMatches[i].index + altMatches[i].fullMatch.length;
+      const endIdx = i + 1 < altMatches.length ? altMatches[i + 1].index : response.length;
+      const text = response.slice(startIdx, endIdx).trim();
+      if (text) results[num - 1] = text;
+    }
+
+    const filledCount = results.filter(r => r.trim()).length;
+    if (filledCount >= expectedCount * 0.5) return results;
+  }
+
+  // Strategy 3: Line-by-line numbered patterns like "1. text" or "1: text"
+  const lines = response.split('\n');
+  const numberedLine = /^(\d+)[.:)\]]\s+(.+)/;
+  let foundNumbered = 0;
+  for (const line of lines) {
+    const m = line.trim().match(numberedLine);
+    if (m) {
+      const num = parseInt(m[1], 10);
+      if (num >= 1 && num <= expectedCount) {
+        if (!results[num - 1]) results[num - 1] = m[2].trim();
+        foundNumbered++;
+      }
+    }
+  }
+  if (foundNumbered >= expectedCount * 0.5) return results;
+
+  // Strategy 4: Split by double newlines as last resort
+  const parts = response.split(/\n\n+/).filter(p => p.trim());
+  for (let i = 0; i < Math.min(parts.length, expectedCount); i++) {
+    if (!results[i]) {
+      results[i] = parts[i].replace(/===\s*\d+\s*===/g, '').replace(/---\s*\d+\s*---/g, '').trim();
+    }
+  }
+
+  return results;
 }
 
 /* ─── Test connection ─── */
@@ -307,7 +572,8 @@ export async function testConnection(config: ProxySettings): Promise<{ ok: boole
       'Hello, this is a connection test.',
       'test',
       { ...config, maxRetries: 0 },
-      'English'
+      'English',
+      'auto'
     );
     if (result) {
       return { ok: true, message: `Connected! Response: "${result.slice(0, 60)}..."` };
@@ -339,6 +605,7 @@ export function getModelSuggestions(provider: AIProvider): string[] {
         // Claude via proxy
         'claude-sonnet-4-20250514', 'claude-3-5-sonnet-20241022',
         // Gemini via proxy
+        'gemini-3.1-pro-preview',
         'gemini-2.5-pro-preview-05-06', 'gemini-2.5-flash-preview-04-17',
       ];
     case 'anthropic':

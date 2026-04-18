@@ -12,7 +12,20 @@ export const DEFAULT_FIELD_GROUPS: FieldGroupConfig[] = [
   { id: 'depth_prompt', label: 'Depth Prompt', description: 'extensions.depth_prompt.prompt', enabled: true },
 ];
 
-/* ─── Target Language Options ─── */
+/* ─── Language Options ─── */
+export const SOURCE_LANGUAGES = [
+  { value: 'auto', label: '🔍 Auto Detect' },
+  { value: '中文', label: '🇨🇳 中文' },
+  { value: 'English', label: '🇺🇸 English' },
+  { value: '日本語', label: '🇯🇵 日本語' },
+  { value: '한국어', label: '🇰🇷 한국어' },
+  { value: 'Tiếng Việt', label: '🇻🇳 Tiếng Việt' },
+  { value: 'Français', label: '🇫🇷 Français' },
+  { value: 'Deutsch', label: '🇩🇪 Deutsch' },
+  { value: 'Español', label: '🇪🇸 Español' },
+  { value: 'Русский', label: '🇷🇺 Русский' },
+];
+
 export const TARGET_LANGUAGES = [
   { value: 'Tiếng Việt', label: '🇻🇳 Tiếng Việt' },
   { value: 'English', label: '🇺🇸 English' },
@@ -22,6 +35,7 @@ export const TARGET_LANGUAGES = [
   { value: 'Deutsch', label: '🇩🇪 Deutsch' },
   { value: 'Español', label: '🇪🇸 Español' },
   { value: '中文', label: '🇨🇳 中文' },
+  { value: 'Русский', label: '🇷🇺 Русский' },
 ];
 
 /* ─── Helper: Set nested value ─── */

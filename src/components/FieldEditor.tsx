@@ -102,6 +102,11 @@ export default function FieldEditor() {
                         <CheckCircle2 size={8} /> {t.done}
                       </span>
                     )}
+                    {field.status === 'skipped' && (
+                      <span className="badge badge-warning" style={{ fontSize: '0.65rem', background: 'var(--accent-warning)', color: '#fff', border: 'none' }}>
+                        <CheckCircle2 size={8} /> Bỏ qua
+                      </span>
+                    )}
                     {field.status === 'error' && (
                       <span className="badge badge-danger" style={{ fontSize: '0.65rem' }}>
                         <AlertTriangle size={8} /> {t.error}

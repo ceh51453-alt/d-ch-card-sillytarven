@@ -14,6 +14,7 @@ import {
   Loader2,
   Zap,
   CircleDot,
+  RotateCcw,
 } from 'lucide-react';
 
 const PROVIDERS: { value: AIProvider; label: string }[] = [
@@ -241,9 +242,9 @@ export default function ProxyConfig() {
                   className="input"
                   type="number"
                   min={256}
-                  max={32768}
+                  max={65536}
                   value={proxy.maxTokens}
-                  onChange={(e) => setProxy({ maxTokens: parseInt(e.target.value) || 4096 })}
+                  onChange={(e) => setProxy({ maxTokens: parseInt(e.target.value) || 65536 })}
                 />
               </div>
 
@@ -355,6 +356,34 @@ export default function ProxyConfig() {
                   placeholder={t.systemPromptPrefixPlaceholder}
                 />
               </div>
+
+              {/* Reset Defaults */}
+              <button
+                className="btn btn-ghost"
+                style={{
+                  width: '100%',
+                  marginTop: '4px',
+                  color: 'var(--accent-warning)',
+                  border: '1px dashed var(--border-subtle)',
+                  fontSize: '0.8rem',
+                  gap: '6px',
+                }}
+                onClick={() => {
+                  setProxy({
+                    maxTokens: 65536,
+                    temperature: 0.3,
+                    requestDelay: 500,
+                    retryDelay: 1000,
+                    requestTimeout: 60000,
+                    maxRetries: 3,
+                    minResponseRatio: 0.15,
+                    systemPromptPrefix: '',
+                  });
+                }}
+              >
+                <RotateCcw size={13} />
+                {t.resetDefaults}
+              </button>
             </div>
           )}
         </div>

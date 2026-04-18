@@ -1,6 +1,7 @@
 import { useStore } from '../store';
 import { useT } from '../i18n/useLocale';
-import { TARGET_LANGUAGES } from '../utils/cardFields';
+import { TARGET_LANGUAGES, SOURCE_LANGUAGES } from '../utils/cardFields';
+import { getDefaultTranslationPrompt } from '../utils/apiClient';
 import type { TranslationMode, LorebookStrategy, FieldGroupConfig, FieldGroup } from '../types/card';
 import { Languages, Settings2, FileJson } from 'lucide-react';
 
@@ -34,28 +35,52 @@ export default function TranslateConfig() {
         </span>
       </div>
       <div className="section-body" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-        {/* Target Language — ALWAYS visible */}
-        <div>
-          <label className="label">{t.targetLanguage}</label>
-          <select
-            className="input"
-            value={translationConfig.targetLanguage}
-            onChange={(e) => setTranslationConfig({ targetLanguage: e.target.value })}
-          >
-            {TARGET_LANGUAGES.map((l) => (
-              <option key={l.value} value={l.value}>{l.label}</option>
-            ))}
-            <option value="custom">Custom...</option>
-          </select>
-          {translationConfig.targetLanguage === 'custom' && (
-            <input
+        {/* Source & Target Languages */}
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <div style={{ flex: 1 }}>
+            <label className="label">Source Language</label>
+            <select
               className="input"
-              style={{ marginTop: '6px' }}
-              placeholder="Enter target language..."
-              onChange={(e) => setTranslationConfig({ targetLanguage: e.target.value || 'custom' })}
-            />
-          )}
+              value={translationConfig.sourceLanguage || 'auto'}
+              onChange={(e) => setTranslationConfig({ sourceLanguage: e.target.value })}
+            >
+              {SOURCE_LANGUAGES.map((l) => (
+                <option key={l.value} value={l.value}>{l.label}</option>
+              ))}
+            </select>
+          </div>
+          <div style={{ flex: 1 }}>
+            <label className="label">{t.targetLanguage}</label>
+            <select
+              className="input"
+              value={translationConfig.targetLanguage}
+              onChange={(e) => setTranslationConfig({ targetLanguage: e.target.value })}
+            >
+              {TARGET_LANGUAGES.map((l) => (
+                <option key={l.value} value={l.value}>{l.label}</option>
+              ))}
+              <option value="custom">Custom...</option>
+            </select>
+            {translationConfig.targetLanguage === 'custom' && (
+              <input
+                className="input"
+                style={{ marginTop: '6px' }}
+                placeholder="Enter target language..."
+                onChange={(e) => setTranslationConfig({ targetLanguage: e.target.value || 'custom' })}
+              />
+            )}
+          </div>
         </div>
+
+        {/* Skip already translated */}
+        <label className="checkbox-wrapper">
+          <input
+            type="checkbox"
+            checked={translationConfig.skipAlreadyTranslated}
+            onChange={(e) => setTranslationConfig({ skipAlreadyTranslated: e.target.checked })}
+          />
+          <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>{t.skipAlreadyTranslated}</span>
+        </label>
 
         {/* Fields & mode only shown when a card is loaded */}
         {card && (
@@ -140,16 +165,32 @@ export default function TranslateConfig() {
                   />
                 </div>
                 {translationConfig.lorebookStrategy === 'batch' && (
-                  <div style={{ marginTop: '8px' }}>
-                    <label className="label">{t.entriesPerBatch}</label>
-                    <input
-                      className="input"
-                      type="number"
-                      min={2}
-                      max={20}
-                      value={translationConfig.lorebookBatchSize}
-                      onChange={(e) => setTranslationConfig({ lorebookBatchSize: parseInt(e.target.value) || 5 })}
-                    />
+                  <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <div>
+                      <label className="label">{t.entriesPerBatch}</label>
+                      <input
+                        className="input"
+                        type="number"
+                        min={2}
+                        max={50}
+                        value={translationConfig.lorebookBatchSize}
+                        onChange={(e) => setTranslationConfig({ lorebookBatchSize: parseInt(e.target.value) || 5 })}
+                      />
+                    </div>
+                    <div>
+                      <label className="label">{t.concurrentBatches}</label>
+                      <input
+                        className="input"
+                        type="number"
+                        min={1}
+                        max={10}
+                        value={translationConfig.concurrentBatches}
+                        onChange={(e) => setTranslationConfig({ concurrentBatches: parseInt(e.target.value) || 1 })}
+                      />
+                      <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                        {t.concurrentBatchesHint}
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>
@@ -192,6 +233,39 @@ export default function TranslateConfig() {
                 value={translationConfig.customSchema || ''}
                 onChange={(e) => setTranslationConfig({ customSchema: e.target.value })}
               />
+            </div>
+
+            {/* Custom Translation Prompt */}
+            <div>
+              <label className="label" style={{ marginBottom: '6px', display: 'flex', justifyContent: 'space-between' }}>
+                <span>Custom Translation Prompt</span>
+                {translationConfig.translationPrompt && (
+                  <span 
+                    style={{ fontSize: '0.7rem', color: 'var(--accent-primary)', cursor: 'pointer' }}
+                    onClick={() => setTranslationConfig({ translationPrompt: '' })}
+                  >
+                    Reset to Default
+                  </span>
+                )}
+              </label>
+              <textarea
+                className="input"
+                style={{ width: '100%', minHeight: '120px', fontFamily: 'monospace', fontSize: '0.75rem', resize: 'vertical', whiteSpace: 'pre-wrap' }}
+                placeholder="Leave empty to use the default prompt..."
+                value={translationConfig.translationPrompt || getDefaultTranslationPrompt(translationConfig.sourceLanguage, translationConfig.targetLanguage)}
+                onChange={(e) => {
+                  // Only save if it differs from default
+                  const defaultPrompt = getDefaultTranslationPrompt(translationConfig.sourceLanguage, translationConfig.targetLanguage);
+                  if (e.target.value === defaultPrompt) {
+                    setTranslationConfig({ translationPrompt: '' });
+                  } else {
+                    setTranslationConfig({ translationPrompt: e.target.value });
+                  }
+                }}
+              />
+              <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: '4px', lineHeight: '1.4' }}>
+                You can fully customize the strict rules. The target language and source language info is already applied. Leave empty to use the built-in default.
+              </div>
             </div>
           </>
         )}
