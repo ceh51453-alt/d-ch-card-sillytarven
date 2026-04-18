@@ -36,30 +36,38 @@ export function detectLanguage(text: string): string {
   const clean = cleanText(text);
   if (clean.length < 5) return 'unknown';
 
-  // ── Priority 1: Vietnamese fingerprint ──
-  // If ANY Vietnamese-unique characters are found, it's Vietnamese.
-  // Vietnamese is the ONLY Latin-script language with ạ, ả, ắ, ặ, ẹ, ệ, ọ, etc.
-  const viUniqueMatches = clean.match(VI_UNIQUE_CHARS_G);
-  if (viUniqueMatches && viUniqueMatches.length >= 2) {
-    return 'Tiếng Việt';
-  }
-  // Also check broader diacritics with higher threshold
-  const viAllMatches = clean.match(VI_ALL_DIACRITICS_G);
-  if (viAllMatches && viAllMatches.length >= 5) {
-    // Check it's not French (French rarely has ơ, ư, ă)
-    const viExclusiveTest = /[ơưăĂƠƯ]/.test(clean);
-    if (viExclusiveTest) return 'Tiếng Việt';
-  }
-
-  // ── Priority 2: CJK-based languages ──
   const cjkMatches = clean.match(CJK_G);
   const kanaMatches = clean.match(KANA_G);
   const hangulMatches = clean.match(HANGUL_G);
+  const cyrillicMatches = clean.match(/[\u0400-\u04ff]/g);
 
   const cjkCount = cjkMatches?.length || 0;
   const kanaCount = kanaMatches?.length || 0;
   const hangulCount = hangulMatches?.length || 0;
+  const cyrillicCount = cyrillicMatches?.length || 0;
 
+  // ── Check for Vietnamese ──
+  const viUniqueMatches = clean.match(VI_UNIQUE_CHARS_G);
+  const viAllMatches = clean.match(VI_ALL_DIACRITICS_G);
+  
+  let isVietnamese = false;
+  if (viUniqueMatches && viUniqueMatches.length >= 2) {
+    isVietnamese = true;
+  } else if (viAllMatches && viAllMatches.length >= 5) {
+    const viExclusiveTest = /[ơưăĂƠƯ]/.test(clean);
+    if (viExclusiveTest) isVietnamese = true;
+  }
+
+  if (isVietnamese) {
+    // If it's Vietnamese BUT it also has a substantial amount of CJK/foreign text, it's mixed.
+    // Example: A lorebook entry with Chinese headers and Vietnamese content.
+    if (cjkCount >= 5 || kanaCount >= 3 || hangulCount >= 3 || cyrillicCount >= 5) {
+      return 'mixed';
+    }
+    return 'Tiếng Việt';
+  }
+
+  // ── Priority 2: CJK-based languages ──
   // Japanese: has kana OR mixed CJK+kana
   if (kanaCount > 0 && (kanaCount + cjkCount) > 3) return '日本語';
   // Korean
@@ -68,8 +76,7 @@ export function detectLanguage(text: string): string {
   if (cjkCount > 3 && kanaCount === 0 && hangulCount === 0) return '中文';
 
   // ── Priority 3: Cyrillic (Russian) ──
-  const cyrillicMatches = clean.match(/[\u0400-\u04ff]/g);
-  if (cyrillicMatches && cyrillicMatches.length > 3) return 'Русский';
+  if (cyrillicCount > 3) return 'Русский';
 
   // ── Priority 4: Other Latin-script languages ──
   // German: ä, ö, ü, ß
@@ -111,7 +118,7 @@ const LANG_LABEL_MAP: Record<string, string> = {
  */
 export function shouldSkipTranslation(text: string, targetLanguage: string, sourceLanguage: string = 'auto'): boolean {
   const detected = detectLanguage(text);
-  if (detected === 'unknown') return false; // Default to translate if we can't tell
+  if (detected === 'unknown' || detected === 'mixed') return false; // Default to translate if we can't tell or it's mixed
 
   const normalizedTarget = LANG_LABEL_MAP[targetLanguage] || targetLanguage;
   if (detected === normalizedTarget) return true; // Already target lang

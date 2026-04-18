@@ -22,9 +22,10 @@ export function useTranslation() {
     const newFields = extractTranslatableFields(store.card, enabledGroups);
 
     // In continue mode: preserve already-done fields from previous runs
+    let mergedFields = newFields;
     if (continueMode && store.fields.length > 0) {
       const existingMap = new Map(store.fields.map(f => [f.path, f]));
-      const mergedFields = newFields.map(nf => {
+      mergedFields = newFields.map(nf => {
         const existing = existingMap.get(nf.path);
         // Keep existing translation if done or skipped
         if (existing && (existing.status === 'done' || existing.status === 'skipped')) {
@@ -38,24 +39,25 @@ export function useTranslation() {
           mergedFields.push(ef);
         }
       }
-      store.setFields(mergedFields);
-      return mergedFields;
     }
 
     // Skip detection: mark fields already in target language or wrong source language
+    // Only apply to fields that aren't already done/skipped
     if (store.translationConfig.skipAlreadyTranslated) {
       const targetLang = store.translationConfig.targetLanguage;
       const sourceLang = store.translationConfig.sourceLanguage;
-      for (const f of newFields) {
-        if (f.original.length > 5 && shouldSkipTranslation(f.original, targetLang, sourceLang)) {
-          f.status = 'skipped';
-          f.translated = f.original; // Keep original since it's either correct or we don't want to translate it
+      for (const f of mergedFields) {
+        if (f.status === 'pending' || f.status === 'error') {
+          if (f.original.length > 5 && shouldSkipTranslation(f.original, targetLang, sourceLang)) {
+            f.status = 'skipped';
+            f.translated = f.original; // Keep original since it's either correct or we don't want to translate it
+          }
         }
       }
     }
 
-    store.setFields(newFields);
-    return newFields;
+    store.setFields(mergedFields);
+    return mergedFields;
   }, [store]);
 
   /* ─── Check pause/abort helpers ─── */
