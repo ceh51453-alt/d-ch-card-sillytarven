@@ -2,8 +2,8 @@ import { useStore } from '../store';
 import { useT } from '../i18n/useLocale';
 import { TARGET_LANGUAGES, SOURCE_LANGUAGES } from '../utils/cardFields';
 import { getDefaultTranslationPrompt } from '../utils/apiClient';
-import type { TranslationMode, LorebookStrategy, FieldGroupConfig, FieldGroup } from '../types/card';
-import { Languages, Settings2, FileJson } from 'lucide-react';
+import type { TranslationMode, LorebookStrategy, FieldGroupConfig, FieldGroup, GlossaryEntry } from '../types/card';
+import { Languages, Settings2, FileJson, BookOpen, Plus, Trash2, Download, Upload } from 'lucide-react';
 
 /** Map field group IDs to i18n keys */
 function useGroupLabels() {
@@ -22,9 +22,53 @@ function useGroupLabels() {
 }
 
 export default function TranslateConfig() {
-  const { translationConfig, setTranslationConfig, toggleFieldGroup, card } = useStore();
+  const { translationConfig, setTranslationConfig, toggleFieldGroup, card, locale } = useStore();
   const t = useT();
   const groupLabels = useGroupLabels();
+
+  const updateGlossaryEntry = (index: number, field: 'source' | 'target', value: string) => {
+    const updated = [...translationConfig.glossary];
+    updated[index] = { ...updated[index], [field]: value };
+    setTranslationConfig({ glossary: updated });
+  };
+
+  const addGlossaryEntry = () => {
+    setTranslationConfig({ glossary: [...translationConfig.glossary, { source: '', target: '' }] });
+  };
+
+  const removeGlossaryEntry = (index: number) => {
+    const updated = translationConfig.glossary.filter((_, i) => i !== index);
+    setTranslationConfig({ glossary: updated });
+  };
+
+  const exportGlossary = () => {
+    const json = JSON.stringify(translationConfig.glossary.filter(g => g.source.trim() || g.target.trim()), null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'glossary.json';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const importGlossary = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const imported = JSON.parse(evt.target?.result as string) as GlossaryEntry[];
+        if (Array.isArray(imported)) {
+          setTranslationConfig({ glossary: [...translationConfig.glossary, ...imported] });
+        }
+      } catch {
+        // silently fail
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
 
   return (
     <div className="section">
@@ -81,6 +125,99 @@ export default function TranslateConfig() {
           />
           <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>{t.skipAlreadyTranslated}</span>
         </label>
+
+        {/* ═══ Glossary / Terminology Database ═══ */}
+        <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '10px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+            <label className="label" style={{ marginBottom: 0, display: 'flex', alignItems: 'center', gap: '5px' }}>
+              <BookOpen size={13} />
+              {locale === 'vi' ? 'Bảng thuật ngữ' : 'Glossary'}
+              {translationConfig.glossary.filter(g => g.source.trim()).length > 0 && (
+                <span style={{
+                  fontSize: '0.6rem', padding: '1px 5px',
+                  background: 'rgba(124,106,240,0.1)', borderRadius: 'var(--radius-sm)',
+                  color: 'var(--accent-primary)', fontWeight: 600,
+                }}>
+                  {translationConfig.glossary.filter(g => g.source.trim()).length}
+                </span>
+              )}
+            </label>
+            <div style={{ display: 'flex', gap: '4px' }}>
+              <label style={{
+                cursor: 'pointer', padding: '2px 6px', fontSize: '0.65rem',
+                border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)',
+                color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '3px',
+              }}>
+                <Upload size={10} /> Import
+                <input type="file" accept=".json" style={{ display: 'none' }} onChange={importGlossary} />
+              </label>
+              {translationConfig.glossary.length > 0 && (
+                <button
+                  onClick={exportGlossary}
+                  style={{
+                    padding: '2px 6px', fontSize: '0.65rem', cursor: 'pointer',
+                    border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)',
+                    color: 'var(--text-muted)', background: 'transparent',
+                    display: 'flex', alignItems: 'center', gap: '3px',
+                  }}
+                >
+                  <Download size={10} /> Export
+                </button>
+              )}
+            </div>
+          </div>
+          <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginBottom: '6px' }}>
+            {locale === 'vi'
+              ? 'Thêm cặp thuật ngữ bắt buộc. AI sẽ dùng chính xác bản dịch này khi gặp từ gốc.'
+              : 'Add mandatory term pairs. The AI will use these exact translations when it encounters the source term.'}
+          </div>
+
+          {/* Glossary entries */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            {translationConfig.glossary.map((entry, idx) => (
+              <div key={idx} style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                <input
+                  className="input"
+                  placeholder={locale === 'vi' ? 'Từ gốc' : 'Source term'}
+                  value={entry.source}
+                  onChange={(e) => updateGlossaryEntry(idx, 'source', e.target.value)}
+                  style={{ flex: 1, fontSize: '0.78rem', padding: '4px 8px' }}
+                />
+                <span style={{ color: 'var(--text-muted)', fontSize: '0.7rem' }}>→</span>
+                <input
+                  className="input"
+                  placeholder={locale === 'vi' ? 'Bản dịch' : 'Translation'}
+                  value={entry.target}
+                  onChange={(e) => updateGlossaryEntry(idx, 'target', e.target.value)}
+                  style={{ flex: 1, fontSize: '0.78rem', padding: '4px 8px' }}
+                />
+                <button
+                  onClick={() => removeGlossaryEntry(idx)}
+                  style={{
+                    background: 'transparent', border: 'none', cursor: 'pointer',
+                    color: 'var(--accent-danger)', padding: '4px', flexShrink: 0,
+                  }}
+                >
+                  <Trash2 size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+          <button
+            onClick={addGlossaryEntry}
+            style={{
+              marginTop: '6px', width: '100%', padding: '5px',
+              border: '1px dashed var(--border-subtle)', borderRadius: 'var(--radius-sm)',
+              background: 'transparent', cursor: 'pointer',
+              color: 'var(--accent-primary)', fontSize: '0.7rem', fontWeight: 600,
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px',
+              transition: 'all 0.15s',
+            }}
+          >
+            <Plus size={12} />
+            {locale === 'vi' ? 'Thêm thuật ngữ' : 'Add Term'}
+          </button>
+        </div>
 
         {/* Fields & mode only shown when a card is loaded */}
         {card && (

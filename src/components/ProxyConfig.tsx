@@ -15,6 +15,7 @@ import {
   Zap,
   CircleDot,
   RotateCcw,
+  RefreshCw,
 } from 'lucide-react';
 
 const PROVIDERS: { value: AIProvider; label: string }[] = [
@@ -32,6 +33,7 @@ export default function ProxyConfig() {
   const [testing, setTesting] = useState(false);
   const [testMessage, setTestMessage] = useState('');
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [showKeyRotation, setShowKeyRotation] = useState(false);
 
   const suggestions = getModelSuggestions(proxy.provider);
 
@@ -132,6 +134,60 @@ export default function ProxyConfig() {
               {showKey ? <EyeOff size={14} /> : <Eye size={14} />}
             </button>
           </div>
+        </div>
+
+        {/* API Key Rotation */}
+        <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '8px' }}>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              cursor: 'pointer',
+              fontSize: '0.8rem',
+              color: 'var(--text-secondary)',
+              userSelect: 'none',
+            }}
+            onClick={() => setShowKeyRotation(!showKeyRotation)}
+          >
+            {showKeyRotation ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            <RefreshCw size={13} />
+            API Key Rotation
+            {proxy.apiKeys.filter(k => k.trim()).length > 0 && (
+              <span style={{
+                fontSize: '0.65rem',
+                padding: '1px 6px',
+                background: 'rgba(124,106,240,0.1)',
+                borderRadius: 'var(--radius-sm)',
+                color: 'var(--accent-primary)',
+                fontWeight: 600,
+              }}>
+                {proxy.apiKeys.filter(k => k.trim()).length + 1} keys
+              </span>
+            )}
+          </div>
+
+          {showKeyRotation && (
+            <div className="fade-in" style={{ marginTop: '8px' }}>
+              <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginBottom: '6px' }}>
+                {t.apiKey} pool — one per line. Auto-rotates on rate limit (429). Primary key above is always included.
+              </div>
+              <textarea
+                className="input input-mono"
+                rows={4}
+                value={proxy.apiKeys.join('\n')}
+                onChange={(e) => setProxy({ apiKeys: e.target.value.split('\n') })}
+                placeholder={`sk-key2...\nsk-key3...\nAIza...`}
+                style={{ fontSize: '0.75rem', resize: 'vertical' }}
+              />
+              <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)', marginTop: '3px' }}>
+                {proxy.apiKeys.filter(k => k.trim()).length === 0
+                  ? 'No extra keys. Using primary key only.'
+                  : `${proxy.apiKeys.filter(k => k.trim()).length} extra key(s) + 1 primary = ${proxy.apiKeys.filter(k => k.trim()).length + 1} keys in rotation`
+                }
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Model */}

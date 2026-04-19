@@ -149,6 +149,7 @@ export interface ProxySettings {
   provider: AIProvider;
   proxyUrl: string;
   apiKey: string;
+  apiKeys: string[]; // Multiple API keys for rotation
   model: string;
   maxTokens: number;
   temperature: number;
@@ -167,6 +168,13 @@ export type ConnectionStatus = 'untested' | 'connected' | 'failed';
 export type TranslationMode = 'field' | 'batch';
 export type LorebookStrategy = 'single' | 'batch';
 
+export type ExportKeyMode = 'merge' | 'translated_only' | 'original_only';
+
+export interface GlossaryEntry {
+  source: string;
+  target: string;
+}
+
 export interface TranslationConfig {
   sourceLanguage: string;
   targetLanguage: string;
@@ -178,6 +186,8 @@ export interface TranslationConfig {
   skipAlreadyTranslated: boolean;
   fieldGroups: FieldGroupConfig[];
   customSchema?: string;
+  exportKeyMode: ExportKeyMode; // How to handle lorebook keys on export
+  glossary: GlossaryEntry[]; // Terminology pairs for consistent translation
 }
 
 /* ─── Log Entry ─── */

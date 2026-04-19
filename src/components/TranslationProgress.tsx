@@ -19,7 +19,7 @@ import {
 
 export default function TranslationProgress() {
   const { fields, phase, logs, logFilter, startTime, card, clearLogs } = useStore();
-  const { startTranslation, continueTranslation, pauseTranslation, resumeTranslation, cancelTranslation } = useTranslation();
+  const { startTranslation, continueTranslation, pauseTranslation, resumeTranslation, cancelTranslation, retryAllErrors } = useTranslation();
   const t = useT();
   const logEndRef = useRef<HTMLDivElement>(null);
 
@@ -133,6 +133,16 @@ export default function TranslationProgress() {
               <Play size={14} />
               {t.continueTranslation}
             </button>
+            {errorFields > 0 && (
+              <button
+                className="btn btn-secondary"
+                onClick={retryAllErrors}
+                style={{ borderColor: 'var(--accent-danger)', color: 'var(--accent-danger)' }}
+              >
+                <RotateCcw size={14} />
+                Retry {errorFields} Error{errorFields > 1 ? 's' : ''}
+              </button>
+            )}
             <button className="btn btn-secondary" onClick={() => startTranslation()}>
               <RotateCcw size={14} /> {t.retranslateAll}
             </button>

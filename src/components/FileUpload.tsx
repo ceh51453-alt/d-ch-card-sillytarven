@@ -16,16 +16,25 @@ import {
 
 export default function FileUpload() {
   const { parseCardFile } = useCardParser();
-  const { card, cardFileName, clearCard } = useStore();
+  const { card, cardFileName, clearCard, loadTranslationCache, addLog } = useStore();
   const t = useT();
 
   const onDrop = useCallback(
-    (acceptedFiles: File[]) => {
+    async (acceptedFiles: File[]) => {
       if (acceptedFiles.length > 0) {
-        parseCardFile(acceptedFiles[0]);
+        const file = acceptedFiles[0];
+        parseCardFile(file);
+
+        // Try to restore cached translation progress for this file
+        setTimeout(async () => {
+          const restored = await loadTranslationCache(file.name);
+          if (restored) {
+            addLog('info', `♻️ Restored cached translation progress for "${file.name}"`);
+          }
+        }, 500); // Small delay to let parseCardFile complete
       }
     },
-    [parseCardFile]
+    [parseCardFile, loadTranslationCache, addLog]
   );
 
   const { getRootProps, getInputProps, isDragActive, isDragAccept } = useDropzone({

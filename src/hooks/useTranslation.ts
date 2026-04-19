@@ -78,6 +78,18 @@ export function useTranslation() {
     store.addLog('active', `Translating: ${field.label} (${field.original.length} chars)`);
 
     try {
+      // Contextual keyword translation: for lorebook keys, find the already-translated content
+      let contextHint: string | undefined;
+      if (field.group === 'lorebook_keys') {
+        const contentPath = field.path.replace('.keys', '.content');
+        const contentField = fields.find(f => f.path === contentPath);
+        if (contentField) {
+          // Use translated content if available, else original (truncated to save tokens)
+          const ctx = contentField.translated || contentField.original || '';
+          contextHint = ctx.slice(0, 1500);
+        }
+      }
+
       const translated = await translateText(
         field.original,
         field.label,
@@ -86,7 +98,9 @@ export function useTranslation() {
         store.translationConfig.sourceLanguage,
         store.translationConfig.translationPrompt,
         store.translationConfig.customSchema,
-        abortRef.current?.signal
+        abortRef.current?.signal,
+        contextHint,
+        store.translationConfig.glossary
       );
 
       // Min response length validation
@@ -140,7 +154,8 @@ export function useTranslation() {
         store.proxy.systemPromptPrefix,
         store.translationConfig.translationPrompt,
         store.translationConfig.customSchema,
-        abortRef.current?.signal
+        abortRef.current?.signal,
+        store.translationConfig.glossary
       );
 
       // Apply results — collect empties for fallback
@@ -163,13 +178,22 @@ export function useTranslation() {
           if (checkAbort()) throw new Error('Cancelled');
           try {
             store.updateField(ef.path, { status: 'translating' });
+            // Context hint for keyword fields in fallback
+            let ctxHint: string | undefined;
+            if (ef.group === 'lorebook_keys') {
+              const cp = ef.path.replace('.keys', '.content');
+              const cf = store.fields.find(f => f.path === cp);
+              if (cf) ctxHint = (cf.translated || cf.original || '').slice(0, 1500);
+            }
             const translated = await translateText(
               ef.original, ef.label, store.proxy,
               store.translationConfig.targetLanguage,
               store.translationConfig.sourceLanguage,
               store.translationConfig.translationPrompt,
               store.translationConfig.customSchema,
-              abortRef.current?.signal
+              abortRef.current?.signal,
+              ctxHint,
+              store.translationConfig.glossary
             );
             store.updateField(ef.path, { status: 'done', translated });
             doneCount++;
@@ -197,13 +221,22 @@ export function useTranslation() {
         if (checkAbort()) throw new Error('Cancelled');
         try {
           store.updateField(f.path, { status: 'translating' });
+          // Context hint for keyword fields in batch fallback
+          let ctxHint: string | undefined;
+          if (f.group === 'lorebook_keys') {
+            const cp = f.path.replace('.keys', '.content');
+            const cf = store.fields.find(fl => fl.path === cp);
+            if (cf) ctxHint = (cf.translated || cf.original || '').slice(0, 1500);
+          }
           const translated = await translateText(
             f.original, f.label, store.proxy,
             store.translationConfig.targetLanguage,
             store.translationConfig.sourceLanguage,
             store.translationConfig.translationPrompt,
             store.translationConfig.customSchema,
-            abortRef.current?.signal
+            abortRef.current?.signal,
+            ctxHint,
+            store.translationConfig.glossary
           );
           store.updateField(f.path, { status: 'done', translated });
         } catch (fallbackErr) {
@@ -335,6 +368,9 @@ export function useTranslation() {
           if (batchIdx < subBatches.length && store.proxy.requestDelay > 0) {
             await new Promise((r) => setTimeout(r, store.proxy.requestDelay));
           }
+
+          // Auto-save cache after each batch window
+          store.saveTranslationCache();
         }
 
         // Delay before next non-lorebook field
@@ -359,6 +395,9 @@ export function useTranslation() {
 
       i++;
 
+      // Auto-save translation cache every 10 fields
+      if (i % 10 === 0) store.saveTranslationCache();
+
       // Delay between requests
       if (i < fields.length && store.proxy.requestDelay > 0) {
         await new Promise((r) => setTimeout(r, store.proxy.requestDelay));
@@ -366,6 +405,7 @@ export function useTranslation() {
     }
 
     store.setPhase('done');
+    store.saveTranslationCache();
     const doneCount = store.fields.filter((f) => f.status === 'done').length;
     const failCount = store.fields.filter((f) => f.status === 'error').length;
     store.addLog('info', `Translation complete: ${doneCount} done, ${failCount} failed`);
@@ -375,6 +415,7 @@ export function useTranslation() {
   const pauseTranslation = useCallback(() => {
     pauseRef.current = true;
     store.setPhase('paused');
+    store.saveTranslationCache();
     store.addLog('warning', 'Translation paused');
   }, [store]);
 
@@ -399,6 +440,16 @@ export function useTranslation() {
     store.addLog('active', `Re-translating: ${field.label}`);
 
     try {
+      // Contextual keyword translation for retranslate
+      let contextHint: string | undefined;
+      if (field.group === 'lorebook_keys') {
+        const contentPath = field.path.replace('.keys', '.content');
+        const contentField = store.fields.find(f => f.path === contentPath);
+        if (contentField) {
+          contextHint = (contentField.translated || contentField.original || '').slice(0, 1500);
+        }
+      }
+
       const translated = await translateText(
         field.original,
         field.label,
@@ -407,7 +458,9 @@ export function useTranslation() {
         store.translationConfig.sourceLanguage,
         store.translationConfig.translationPrompt,
         store.translationConfig.customSchema,
-        controller.signal
+        controller.signal,
+        contextHint,
+        store.translationConfig.glossary
       );
       store.updateField(path, { status: 'done', translated });
       store.addLog('success', `Re-translated: ${field.label}`);
@@ -420,13 +473,73 @@ export function useTranslation() {
 
   const getExportCard = useCallback(() => {
     if (!store.card) return null;
-    return applyTranslationsToCard(store.card, store.fields);
+    return applyTranslationsToCard(store.card, store.fields, store.translationConfig.exportKeyMode);
   }, [store]);
 
   /** Continue translation — merge with existing done fields, only translate pending/error */
   const continueTranslation = useCallback(async () => {
     await startTranslation(true);
   }, [startTranslation]);
+
+  /** Retry all fields that are in 'error' status */
+  const retryAllErrors = useCallback(async () => {
+    const errorFields = store.fields.filter(f => f.status === 'error');
+    if (errorFields.length === 0) {
+      store.addToast('info', 'No error fields to retry');
+      return;
+    }
+
+    store.addLog('info', `♻️ Retrying ${errorFields.length} failed field(s)...`);
+    let successCount = 0;
+    let failCount = 0;
+
+    for (const field of errorFields) {
+      try {
+        store.updateField(field.path, { status: 'translating', error: undefined });
+
+        // Build context hint for lorebook keys
+        let contextHint: string | undefined;
+        if (field.group === 'lorebook_keys') {
+          const contentPath = field.path.replace('.keys', '.content');
+          const contentField = store.fields.find(f => f.path === contentPath);
+          if (contentField) {
+            contextHint = (contentField.translated || contentField.original || '').slice(0, 1500);
+          }
+        }
+
+        const translated = await translateText(
+          field.original,
+          field.label,
+          store.proxy,
+          store.translationConfig.targetLanguage,
+          store.translationConfig.sourceLanguage,
+          store.translationConfig.translationPrompt,
+          store.translationConfig.customSchema,
+          undefined,
+          contextHint,
+          store.translationConfig.glossary
+        );
+
+        store.updateField(field.path, { status: 'done', translated, retries: field.retries + 1 });
+        store.addLog('success', `✓ Retry OK: ${field.label}`);
+        successCount++;
+
+        // Delay between retries
+        if (store.proxy.requestDelay > 0) {
+          await new Promise(r => setTimeout(r, store.proxy.requestDelay));
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        store.updateField(field.path, { status: 'error', error: msg, retries: field.retries + 1 });
+        store.addLog('error', `✗ Retry failed: ${field.label} — ${msg}`);
+        failCount++;
+      }
+    }
+
+    store.saveTranslationCache();
+    store.addLog('info', `Retry complete: ${successCount} fixed, ${failCount} still failing`);
+    store.addToast(failCount === 0 ? 'success' : 'error', `Retry: ${successCount}/${errorFields.length} fixed`);
+  }, [store]);
 
   return {
     prepareFields,
@@ -436,6 +549,7 @@ export function useTranslation() {
     resumeTranslation,
     cancelTranslation,
     retranslateField,
+    retryAllErrors,
     getExportCard,
   };
 }

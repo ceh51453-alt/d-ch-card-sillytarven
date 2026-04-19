@@ -200,7 +200,8 @@ export function extractTranslatableFields(
 /* ─── Apply translations back to the card JSON ─── */
 export function applyTranslationsToCard(
   card: CharacterCard,
-  fields: TranslationField[]
+  fields: TranslationField[],
+  exportKeyMode: 'merge' | 'translated_only' | 'original_only' = 'merge'
 ): CharacterCard {
   // Deep clone
   const result = JSON.parse(JSON.stringify(card)) as Record<string, unknown>;
@@ -210,8 +211,25 @@ export function applyTranslationsToCard(
 
     // Special handling for lorebook keys (array of strings)
     if (field.path.endsWith('.keys')) {
-      const keys = field.translated.split(',').map(k => k.trim()).filter(Boolean);
-      setNestedValue(result, field.path, keys);
+      const translatedKeys = field.translated.split(',').map(k => k.trim()).filter(Boolean);
+      const originalKeys = field.original.split(',').map(k => k.trim()).filter(Boolean);
+
+      let finalKeys: string[];
+      switch (exportKeyMode) {
+        case 'translated_only':
+          finalKeys = translatedKeys;
+          break;
+        case 'original_only':
+          finalKeys = originalKeys;
+          break;
+        case 'merge':
+        default:
+          // MERGE: keep original keys + add translated keys (deduplicate)
+          // This ensures SillyTavern triggers work in BOTH original and translated languages
+          finalKeys = [...new Set([...originalKeys, ...translatedKeys])];
+          break;
+      }
+      setNestedValue(result, field.path, finalKeys);
     } else {
       setNestedValue(result, field.path, field.translated);
     }

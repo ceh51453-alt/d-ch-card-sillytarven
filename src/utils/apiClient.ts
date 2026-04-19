@@ -1,4 +1,4 @@
-import type { AIProvider, ProxySettings } from '../types/card';
+import type { AIProvider, ProxySettings, GlossaryEntry } from '../types/card';
 
 /* ─── Error types ─── */
 export class ApiError extends Error {
@@ -32,10 +32,16 @@ STRICT RULES:
 6. For lorebook keys (keywords): translate naturally but keep them short and comma-separated.
 7. Maintain the same tone and style of the original text.
 8. DO NOT translate text that is already in ${targetLang} (leave it exactly as is).
-9. Variables and keys MUST NOT contain spaces. Use underscores instead of spaces (e.g., 'Tình_Yêu' instead of 'Tình Yêu').
-10. Your translation must fully comply with MVU (Model-View-Update) structure rules.
+9. FORMATTING RULES for structured text:
+   - If text uses YAML-like structure (lines with "key:" format), keep underscores ONLY in the KEY part (before the colon). The VALUE part (after the colon) is normal text — do NOT add underscores.
+   - XML/HTML tag names and attributes: Keep exactly as-is (e.g., <Sabercharacter>, <user_setting>).
+   - Regular prose/narrative text: Write naturally WITHOUT underscores. Underscores are NOT needed in flowing text or dialogue.
+   - Variable placeholders like {{char}}, {{user}}, {{random}}: Keep exactly as-is, do NOT translate.
+   - Text inside angle brackets like <角色名>, <设定>: Keep the bracket structure, translate the content inside.
+10. Maintain consistent terminology. If you translate a term one way, use that same translation throughout.
 11. For Japanese proper nouns (names, places, etc.), you MUST transliterate them into standard Romaji.
-12. CRITICAL: The output must contain ONLY the translated text in ${targetLang}. Do NOT include source language text. Do NOT pair original text with translation. Do NOT use arrows (→) or colons (:) to show before/after.`;
+12. CRITICAL: The output must contain ONLY the translated text in ${targetLang}. Do NOT include source language text. Do NOT pair original text with translation. Do NOT use arrows (→) or colons (:) to show before/after.
+13. CRITICAL: You MUST translate the COMPLETE text. Do NOT stop early. Do NOT summarize or truncate. If the text is very long, translate ALL of it from start to finish.`;
 }
 
 /* ─── Build messages for translation ─── */
@@ -46,29 +52,71 @@ function buildTranslationMessages(
   systemPromptPrefix: string,
   sourceLang: string,
   customPrompt?: string,
-  customSchema?: string
+  customSchema?: string,
+  contextHint?: string,
+  glossary?: GlossaryEntry[]
 ) {
   const schemaInstructions = customSchema
     ? `\n\nCARD SCHEMA / GLOSSARY:\nHere is the schema or variable definitions for this character. Please mentally translate these variables into the target language to establish a consistent vocabulary, and apply this vocabulary strictly when translating the text below. Maintain any variable names, JSON keys, or special formats:\n${customSchema}\n`
     : '';
+
+  // Build glossary instructions
+  let glossaryInstructions = '';
+  if (glossary && glossary.length > 0) {
+    const terms = glossary
+      .filter(g => g.source.trim() && g.target.trim())
+      .map(g => `  "${g.source}" → "${g.target}"`)
+      .join('\n');
+    if (terms) {
+      glossaryInstructions = `\n\nMANDATORY TERMINOLOGY (use these translations exactly, no exceptions):\n${terms}\n`;
+    }
+  }
 
   // Use custom prompt if provided, otherwise generate default
   const basePrompt = customPrompt && customPrompt.trim()
     ? customPrompt
     : getDefaultTranslationPrompt(sourceLang, targetLang);
 
-  const systemPrompt = `${systemPromptPrefix ? systemPromptPrefix + '\n\n' : ''}${basePrompt}${schemaInstructions}`;
+  const systemPrompt = `${systemPromptPrefix ? systemPromptPrefix + '\n\n' : ''}${basePrompt}${schemaInstructions}${glossaryInstructions}`;
 
   const sourceHint = sourceLang && sourceLang !== 'auto' ? ` (from ${sourceLang})` : '';
 
+  // Contextual keyword translation: include content context for lorebook keys
+  let userMsg: string;
+  if (contextHint) {
+    userMsg = `Here is the entry content for context (use these terms consistently):\n"${contextHint}"\n\nBased on the terminology above, translate the following "${fieldName}" field${sourceHint} to ${targetLang}. Return ONLY comma-separated translated keywords. Keep them short and use the SAME terms that appear in the content:\n\n${text}`;
+  } else {
+    userMsg = `Translate the following "${fieldName}" field${sourceHint} to ${targetLang}. Return ONLY the pure translated text, without including any of the original text:\n\n${text}`;
+  }
+
   return {
     system: systemPrompt,
-    user: `Translate the following "${fieldName}" field${sourceHint} to ${targetLang}. Return ONLY the pure translated text, without including any of the original text:\n\n${text}`,
+    user: userMsg,
   };
 }
 
-/* ─── Chunk long text ─── */
-function chunkText(text: string, maxChars: number = 6000): string[] {
+/* ─── Detect CJK content ratio ─── */
+function getCJKRatio(text: string): number {
+  const cjkChars = (text.match(/[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u30ff\uac00-\ud7af]/g) || []).length;
+  return text.length > 0 ? cjkChars / text.length : 0;
+}
+
+/* ─── Chunk long text (CJK-aware) ─── */
+function chunkText(text: string, maxChars?: number): string[] {
+  // Auto-detect optimal chunk size based on content language
+  // CJK characters use ~2-3 tokens each, so we need smaller chunks
+  // to avoid hitting output token limits on Gemini/etc.
+  if (maxChars === undefined) {
+    const cjkRatio = getCJKRatio(text);
+    if (cjkRatio > 0.3) {
+      maxChars = 2000; // CJK-heavy: ~2000 chars ≈ 5000-6000 tokens output
+    } else if (cjkRatio > 0.1) {
+      maxChars = 3500; // Mixed content
+    } else {
+      maxChars = 6000; // Latin/Cyrillic text
+    }
+  }
+
   if (text.length <= maxChars) return [text];
 
   const chunks: string[] = [];
@@ -91,7 +139,13 @@ function chunkText(text: string, maxChars: number = 6000): string[] {
       splitIdx = remaining.lastIndexOf(' ', maxChars);
     }
     if (splitIdx < maxChars * 0.3) {
-      splitIdx = maxChars;
+      // Fallback to sentence-ending punctuation for CJK
+      const sentenceEnd = remaining.slice(0, maxChars).search(/[。！？；」』】）\n][^。！？；」』】）]*$/); 
+      if (sentenceEnd > maxChars * 0.3) {
+        splitIdx = sentenceEnd + 1;
+      } else {
+        splitIdx = maxChars;
+      }
     }
 
     chunks.push(remaining.slice(0, splitIdx));
@@ -237,22 +291,57 @@ async function callGemini(
   return content.trim();
 }
 
-/* ─── Route to correct provider ─── */
+/* ─── API Key Rotation ─── */
+let _keyIndex = 0;
+
+/** Get the next API key from rotation pool. Falls back to primary key. */
+function getRotatedKey(config: ProxySettings): string {
+  const pool = config.apiKeys.filter(k => k.trim());
+  if (pool.length === 0) return config.apiKey;
+
+  // Include primary key in the pool if not already there
+  const allKeys = [config.apiKey, ...pool].filter(Boolean);
+  const uniqueKeys = [...new Set(allKeys)];
+  if (uniqueKeys.length === 0) return config.apiKey;
+
+  const key = uniqueKeys[_keyIndex % uniqueKeys.length];
+  _keyIndex = (_keyIndex + 1) % uniqueKeys.length;
+  return key;
+}
+
+/** Force advance to next key (e.g. after rate limit) */
+function advanceKeyRotation() {
+  _keyIndex++;
+}
+
+/* ─── Route to correct provider (with key rotation) ─── */
 async function callProvider(
   config: ProxySettings,
   system: string,
   user: string,
   signal?: AbortSignal
 ): Promise<string> {
-  switch (config.provider) {
-    case 'anthropic':
-      return callAnthropic(config, system, user, signal);
-    case 'google':
-      return callGemini(config, system, user, signal);
-    case 'openai':
-    case 'custom':
-    default:
-      return callOpenAICompatible(config, system, user, signal);
+  // Create a config copy with rotated key
+  const activeKey = getRotatedKey(config);
+  const rotatedConfig = { ...config, apiKey: activeKey };
+
+  try {
+    switch (config.provider) {
+      case 'anthropic':
+        return await callAnthropic(rotatedConfig, system, user, signal);
+      case 'google':
+        return await callGemini(rotatedConfig, system, user, signal);
+      case 'openai':
+      case 'custom':
+      default:
+        return await callOpenAICompatible(rotatedConfig, system, user, signal);
+    }
+  } catch (err) {
+    // On rate limit, advance to next key for the retry
+    if (err instanceof ApiError && err.statusCode === 429) {
+      advanceKeyRotation();
+    }
+    throw err;
   }
 }
 
@@ -336,7 +425,7 @@ function calculateOverlap(a: string, b: string): number {
   return overlap / Math.max(aChars.size, 1);
 }
 
-/* ─── Main translate function with retry ─── */
+/* ─── Main translate function with retry + truncation detection ─── */
 export async function translateText(
   text: string,
   fieldName: string,
@@ -345,15 +434,21 @@ export async function translateText(
   sourceLang: string,
   customPrompt?: string,
   customSchema?: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  contextHint?: string,
+  glossary?: GlossaryEntry[]
 ): Promise<string> {
   if (!text || text.trim() === '') return '';
 
   const chunks = chunkText(text);
   const translatedChunks: string[] = [];
 
-  for (const chunk of chunks) {
-    const { system, user } = buildTranslationMessages(chunk, fieldName, targetLang, config.systemPromptPrefix, sourceLang, customPrompt, customSchema);
+  for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx++) {
+    const chunk = chunks[chunkIdx];
+    const { system, user } = buildTranslationMessages(
+      chunk, fieldName, targetLang, config.systemPromptPrefix,
+      sourceLang, customPrompt, customSchema, contextHint, glossary
+    );
 
     let lastError: Error | null = null;
 
@@ -362,7 +457,10 @@ export async function translateText(
         if (signal?.aborted) throw new Error('Cancelled');
 
         const controller = new AbortController();
-        const timeout = config.requestTimeout || 60000;
+        // Scale timeout for longer chunks
+        const baseTimeout = config.requestTimeout || 60000;
+        const chunkRatio = Math.max(1, chunk.length / 2000);
+        const timeout = Math.min(baseTimeout * chunkRatio, baseTimeout * 3);
         const timeoutId = setTimeout(() => controller.abort('Request timeout'), timeout);
 
         // Combine signals
@@ -370,8 +468,40 @@ export async function translateText(
           ? AbortSignal.any([signal, controller.signal])
           : controller.signal;
 
-        const result = await callProvider(config, system, user, combinedSignal);
+        let result = await callProvider(config, system, user, combinedSignal);
         clearTimeout(timeoutId);
+
+        // ─── Truncation detection & continuation ───
+        // If the response is suspiciously short relative to input, the model likely hit its output limit
+        const minRatio = config.minResponseRatio || 0.15;
+        if (chunk.length > 500 && result.length > 0) {
+          const responseRatio = result.length / chunk.length;
+          if (responseRatio < minRatio) {
+            // Likely truncated — attempt continuation
+            const continuationPrompt = `The previous translation was cut off. Continue translating from where you stopped. ` +
+              `The last translated text ended with: "${result.slice(-150)}"\n\n` +
+              `Continue translating the remaining original text below. Return ONLY the continuation, do NOT repeat what was already translated:\n\n` +
+              `${chunk.slice(Math.floor(chunk.length * Math.max(responseRatio - 0.05, 0.1)))}`;
+
+            try {
+              const contController = new AbortController();
+              const contTimeout = setTimeout(() => contController.abort('Continuation timeout'), timeout);
+              const contSignal = signal
+                ? AbortSignal.any([signal, contController.signal])
+                : contController.signal;
+
+              const continuation = await callProvider(config, system, continuationPrompt, contSignal);
+              clearTimeout(contTimeout);
+
+              if (continuation.trim()) {
+                result = result + '\n' + continuation;
+              }
+            } catch {
+              // Continuation failed — use what we have
+            }
+          }
+        }
+
         translatedChunks.push(result);
         lastError = null;
         break;
@@ -417,11 +547,12 @@ export async function translateBatch(
   systemPromptPrefix: string,
   customPrompt?: string,
   customSchema?: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  glossary?: GlossaryEntry[]
 ): Promise<string[]> {
   if (items.length === 0) return [];
   if (items.length === 1) {
-    const result = await translateText(items[0].text, items[0].fieldName, config, targetLang, sourceLang, customPrompt, customSchema, signal);
+    const result = await translateText(items[0].text, items[0].fieldName, config, targetLang, sourceLang, customPrompt, customSchema, signal, undefined, glossary);
     return [result];
   }
 
@@ -439,12 +570,22 @@ export async function translateBatch(
     ? customPrompt
     : getDefaultTranslationPrompt(sourceLang, targetLang);
 
+  // Build glossary block
+  let glossaryBlock = '';
+  if (glossary && glossary.length > 0) {
+    const terms = glossary
+      .filter(g => g.source.trim() && g.target.trim())
+      .map(g => `  "${g.source}" → "${g.target}"`)
+      .join('\n');
+    if (terms) glossaryBlock = `\n\nMANDATORY TERMINOLOGY:\n${terms}\n`;
+  }
+
   const system = `${systemPromptPrefix ? systemPromptPrefix + '\n\n' : ''}${basePrompt}
 
 BATCH FORMAT:
 - The input contains ${items.length} numbered sections, each starting with ${DELIMITER}N${DELIMITER} (e.g., ${DELIMITER}1${DELIMITER}, ${DELIMITER}2${DELIMITER}).
 - You MUST return the same numbered delimiters with the translated text for each section.
-- Do NOT merge or skip any sections. Every section must be present in your output.${schemaInstructions}`;
+- Do NOT merge or skip any sections. Every section must be present in your output.${schemaInstructions}${glossaryBlock}`;
 
   const sourceHint = sourceLang && sourceLang !== 'auto' ? ` (from ${sourceLang})` : '';
   const user = `Translate these ${items.length} sections${sourceHint} to ${targetLang}. Keep the ${DELIMITER}N${DELIMITER} delimiters. Return ONLY translations:\n\n${combinedText}`;

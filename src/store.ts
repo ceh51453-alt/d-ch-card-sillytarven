@@ -10,6 +10,8 @@ import type {
   LogFilter,
   FieldGroup,
   FieldGroupConfig,
+  ExportKeyMode,
+  GlossaryEntry,
 } from './types/card';
 import { DEFAULT_FIELD_GROUPS } from './utils/cardFields';
 import { IDB } from './utils/idb';
@@ -82,6 +84,10 @@ interface AppState {
   setActiveTab: (t: string) => void;
   sidebarCollapsed: boolean;
   toggleSidebar: () => void;
+
+  // Per-file translation cache
+  saveTranslationCache: () => void;
+  loadTranslationCache: (fileName: string) => Promise<boolean>;
 }
 
 export const useStore = create<AppState>((set) => ({
@@ -113,6 +119,7 @@ export const useStore = create<AppState>((set) => ({
     provider: LS.get('st-translator-provider', 'openai'),
     proxyUrl: LS.get('st-translator-proxy-url', 'https://api.openai.com/v1'),
     apiKey: LS.get('st-translator-api-key', ''),
+    apiKeys: LS.get('st-translator-api-keys', []),
     model: LS.get('st-translator-model', 'gpt-4o-mini'),
     maxTokens: LS.get('st-translator-advanced-settings', { maxTokens: 65536 }).maxTokens ?? 65536,
     temperature: LS.get('st-translator-advanced-settings', { temperature: 0.3 }).temperature ?? 0.3,
@@ -130,6 +137,7 @@ export const useStore = create<AppState>((set) => ({
       LS.set('st-translator-provider', next.provider);
       LS.set('st-translator-proxy-url', next.proxyUrl);
       LS.set('st-translator-api-key', next.apiKey);
+      LS.set('st-translator-api-keys', next.apiKeys);
       LS.set('st-translator-model', next.model);
       LS.set('st-translator-advanced-settings', {
         maxTokens: next.maxTokens,
@@ -159,9 +167,18 @@ export const useStore = create<AppState>((set) => ({
     skipAlreadyTranslated: true,
     fieldGroups: [...DEFAULT_FIELD_GROUPS],
     customSchema: '',
+    exportKeyMode: 'merge' as ExportKeyMode,
+    glossary: LS.get('st-translator-glossary', []) as GlossaryEntry[],
   },
   setTranslationConfig: (partial) =>
-    set((s) => ({ translationConfig: { ...s.translationConfig, ...partial } })),
+    set((s) => {
+      const next = { ...s.translationConfig, ...partial };
+      // Persist glossary separately
+      if ('glossary' in partial) {
+        LS.set('st-translator-glossary', next.glossary);
+      }
+      return { translationConfig: next };
+    }),
   toggleFieldGroup: (id) =>
     set((s) => ({
       translationConfig: {
@@ -228,4 +245,32 @@ export const useStore = create<AppState>((set) => ({
   setActiveTab: (t) => set({ activeTab: t }),
   sidebarCollapsed: false,
   toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
+
+  // ─── Per-file Translation Cache ───
+  saveTranslationCache: () => {
+    const s = useStore.getState();
+    if (!s.cardFileName || s.fields.length === 0) return;
+    const cacheKey = `st-cache-${s.cardFileName}`;
+    const cacheData = {
+      fields: s.fields,
+      phase: s.phase,
+      targetLang: s.translationConfig.targetLanguage,
+      savedAt: Date.now(),
+    };
+    IDB.set(cacheKey, cacheData);
+  },
+  loadTranslationCache: async (fileName: string): Promise<boolean> => {
+    const cacheKey = `st-cache-${fileName}`;
+    const cached = await IDB.get<{
+      fields: TranslationField[];
+      phase: TranslationPhase;
+      targetLang: string;
+      savedAt: number;
+    } | null>(cacheKey, null);
+    if (cached && cached.fields.length > 0) {
+      set({ fields: cached.fields, phase: cached.phase });
+      return true;
+    }
+    return false;
+  },
 }));
