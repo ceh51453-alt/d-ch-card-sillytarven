@@ -122,6 +122,8 @@ export interface TranslationField {
   error?: string;
   /** Retry count */
   retries: number;
+  /** Previous translation for updating/merging */
+  previousTranslation?: string;
 }
 
 export type FieldGroup =

@@ -15,8 +15,8 @@ import {
 } from 'lucide-react';
 
 export default function FileUpload() {
-  const { parseCardFile } = useCardParser();
-  const { card, cardFileName, clearCard, loadTranslationCache, addLog } = useStore();
+  const { parseCardFile, updateCardFromOriginal, clearCard } = useCardParser();
+  const { card, cardFileName, loadTranslationCache, addLog } = useStore();
   const t = useT();
 
   const onDrop = useCallback(
@@ -37,10 +37,27 @@ export default function FileUpload() {
     [parseCardFile, loadTranslationCache, addLog]
   );
 
+  const onUpdateDrop = useCallback(
+    async (acceptedFiles: File[]) => {
+      if (acceptedFiles.length > 0) {
+        const file = acceptedFiles[0];
+        await updateCardFromOriginal(file);
+      }
+    },
+    [updateCardFromOriginal]
+  );
+
   const { getRootProps, getInputProps, isDragActive, isDragAccept } = useDropzone({
     onDrop,
     accept: { 'application/json': ['.json'], 'image/png': ['.png'] },
     multiple: false,
+  });
+
+  const { getRootProps: getUpdateProps, getInputProps: getUpdateInputProps } = useDropzone({
+    onDrop: onUpdateDrop,
+    accept: { 'application/json': ['.json'], 'image/png': ['.png'] },
+    multiple: false,
+    noClick: false,
   });
 
   const summary = card ? getCardSummary(card) : null;
@@ -149,12 +166,21 @@ export default function FileUpload() {
               <StatItem icon={<Layers size={13} />} label={t.depthPrompt} value={summary?.hasDepthPrompt ? '✓' : '—'} />
             </div>
 
-            {/* Replace */}
-            <div {...getRootProps()} style={{ cursor: 'pointer' }}>
-              <input {...getInputProps()} />
-              <button className="btn btn-ghost btn-sm" style={{ width: '100%', fontSize: '0.75rem' }}>
-                <Upload size={12} /> {t.dragDropCard}
-              </button>
+            {/* Replace / Update Actions */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+              <div {...getRootProps()} style={{ cursor: 'pointer' }}>
+                <input {...getInputProps()} />
+                <button className="btn btn-ghost btn-sm" style={{ width: '100%', fontSize: '0.75rem', border: '1px dashed var(--border-subtle)' }} title="Replace current card completely">
+                  <Upload size={12} /> {t.dragDropCard}
+                </button>
+              </div>
+
+              <div {...getUpdateProps()} style={{ cursor: 'pointer' }}>
+                <input {...getUpdateInputProps()} />
+                <button className="btn btn-primary btn-sm" style={{ width: '100%', fontSize: '0.75rem' }} title="Update from a newer original card, keeping existing translations">
+                  <Upload size={12} /> Cập nhật bản gốc
+                </button>
+              </div>
             </div>
           </div>
         )}

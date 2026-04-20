@@ -54,7 +54,9 @@ function buildTranslationMessages(
   customPrompt?: string,
   customSchema?: string,
   contextHint?: string,
-  glossary?: GlossaryEntry[]
+  glossary?: GlossaryEntry[],
+  previousTranslationContext?: string,
+  previousTranslationToUpdate?: string
 ) {
   const schemaInstructions = customSchema
     ? `\n\nCARD SCHEMA / GLOSSARY:\nHere is the schema or variable definitions for this character. Please mentally translate these variables into the target language to establish a consistent vocabulary, and apply this vocabulary strictly when translating the text below. Maintain any variable names, JSON keys, or special formats:\n${customSchema}\n`
@@ -83,10 +85,27 @@ function buildTranslationMessages(
 
   // Contextual keyword translation: include content context for lorebook keys
   let userMsg: string;
-  if (contextHint) {
-    userMsg = `Here is the entry content for context (use these terms consistently):\n"${contextHint}"\n\nBased on the terminology above, translate the following "${fieldName}" field${sourceHint} to ${targetLang}. Return ONLY comma-separated translated keywords. Keep them short and use the SAME terms that appear in the content:\n\n${text}`;
+  let previousContextMsg = '';
+  
+  if (previousTranslationContext) {
+    previousContextMsg = `\n\n[IMPORTANT CONTEXT: You are translating part of a larger text. Here is the END of the PREVIOUS translated part so you can maintain flow, sentence structure, and terminology:\n"...${previousTranslationContext}"]`;
+  }
+
+  if (previousTranslationToUpdate && previousTranslationToUpdate.trim()) {
+    // This is the Update mode: the original text changed, so we want the AI to update the existing translation.
+    userMsg = `You are updating the translation of the "${fieldName}" field${sourceHint} to ${targetLang}.
+Some parts of the original text are NEW or CHANGED.
+Please translate the ENTIRE updated original text below, but REUSE the "PREVIOUS TRANSLATION" as much as possible for parts that haven't changed. This ensures consistency.
+
+--- PREVIOUS TRANSLATION ---
+${previousTranslationToUpdate}
+--- END PREVIOUS TRANSLATION ---
+
+Translate the following updated original text. Return ONLY the pure translated text, without including any of the original text:${previousContextMsg}\n\n${text}`;
+  } else if (contextHint) {
+    userMsg = `Here is the entry content for context (use these terms consistently):\n"${contextHint}"\n\nBased on the terminology above, translate the following "${fieldName}" field${sourceHint} to ${targetLang}. Return ONLY comma-separated translated keywords. Keep them short and use the SAME terms that appear in the content:${previousContextMsg}\n\n${text}`;
   } else {
-    userMsg = `Translate the following "${fieldName}" field${sourceHint} to ${targetLang}. Return ONLY the pure translated text, without including any of the original text:\n\n${text}`;
+    userMsg = `Translate the following "${fieldName}" field${sourceHint} to ${targetLang}. Return ONLY the pure translated text, without including any of the original text:${previousContextMsg}\n\n${text}`;
   }
 
   return {
@@ -102,18 +121,27 @@ function getCJKRatio(text: string): number {
 }
 
 /* ─── Chunk long text (CJK-aware) ─── */
-function chunkText(text: string, maxChars?: number): string[] {
+function chunkText(text: string, maxChars?: number, maxTokens?: number): string[] {
   // Auto-detect optimal chunk size based on content language
   // CJK characters use ~2-3 tokens each, so we need smaller chunks
   // to avoid hitting output token limits on Gemini/etc.
   if (maxChars === undefined) {
     const cjkRatio = getCJKRatio(text);
-    if (cjkRatio > 0.3) {
-      maxChars = 2000; // CJK-heavy: ~2000 chars ≈ 5000-6000 tokens output
-    } else if (cjkRatio > 0.1) {
-      maxChars = 3500; // Mixed content
+    
+    // If the proxy supports large output, maxTokens might be huge (e.g. 50,000 to unlimited)
+    // Roughly 1 token = 3-4 chars for English, 1-2 chars for CJK
+    if (maxTokens && maxTokens > 4000) {
+      if (cjkRatio > 0.3) maxChars = maxTokens; // e.g. 100k tokens -> 100k chars for CJK
+      else if (cjkRatio > 0.1) maxChars = maxTokens * 2;
+      else maxChars = maxTokens * 3; // e.g. 100k tokens -> 300k chars for Latin
     } else {
-      maxChars = 6000; // Latin/Cyrillic text
+      if (cjkRatio > 0.3) {
+        maxChars = 2000; // CJK-heavy: ~2000 chars ≈ 5000-6000 tokens output
+      } else if (cjkRatio > 0.1) {
+        maxChars = 3500; // Mixed content
+      } else {
+        maxChars = 6000; // Latin/Cyrillic text
+      }
     }
   }
 
@@ -436,18 +464,25 @@ export async function translateText(
   customSchema?: string,
   signal?: AbortSignal,
   contextHint?: string,
-  glossary?: GlossaryEntry[]
+  glossary?: GlossaryEntry[],
+  previousTranslationToUpdate?: string
 ): Promise<string> {
   if (!text || text.trim() === '') return '';
 
-  const chunks = chunkText(text);
+  const chunks = chunkText(text, undefined, config.maxTokens);
   const translatedChunks: string[] = [];
+  let previousTranslationContext = '';
 
   for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx++) {
     const chunk = chunks[chunkIdx];
+    // Pass previousTranslationToUpdate ONLY for the first chunk to avoid passing huge duplicate blocks,
+    // or pass it for all chunks? Actually, if chunked, the old translation is for the WHOLE text,
+    // so passing it per chunk might be weird. But for large context models, text isn't chunked.
+    // If it is chunked, AI might just figure it out.
     const { system, user } = buildTranslationMessages(
       chunk, fieldName, targetLang, config.systemPromptPrefix,
-      sourceLang, customPrompt, customSchema, contextHint, glossary
+      sourceLang, customPrompt, customSchema, contextHint, glossary, previousTranslationContext,
+      chunkIdx === 0 ? previousTranslationToUpdate : undefined
     );
 
     let lastError: Error | null = null;
@@ -503,6 +538,11 @@ export async function translateText(
         }
 
         translatedChunks.push(result);
+        
+        // Save the full translated content so far as context for the next chunk
+        // High input token limits allow us to send everything previously translated
+        previousTranslationContext = translatedChunks.join('\n\n');
+        
         lastError = null;
         break;
       } catch (err) {

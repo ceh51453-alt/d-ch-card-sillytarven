@@ -120,7 +120,8 @@ export function useTranslation() {
         store.translationConfig.customSchema,
         abortRef.current?.signal,
         contextHint,
-        store.translationConfig.glossary
+        store.translationConfig.glossary,
+        field.previousTranslation
       );
 
       // Post-process regex HTML: font swap + underscore display
@@ -218,7 +219,8 @@ export function useTranslation() {
               store.translationConfig.customSchema,
               abortRef.current?.signal,
               ctxHint,
-              store.translationConfig.glossary
+              store.translationConfig.glossary,
+              ef.previousTranslation
             );
             store.updateField(ef.path, { status: 'done', translated });
             doneCount++;
@@ -491,7 +493,8 @@ export function useTranslation() {
         store.translationConfig.customSchema,
         controller.signal,
         contextHint,
-        store.translationConfig.glossary
+        store.translationConfig.glossary,
+        field.previousTranslation
       );
 
       // Post-process regex HTML
@@ -560,7 +563,8 @@ export function useTranslation() {
           store.translationConfig.customSchema,
           undefined,
           contextHint,
-          store.translationConfig.glossary
+          store.translationConfig.glossary,
+          field.previousTranslation
         );
 
         store.updateField(field.path, { status: 'done', translated, retries: field.retries + 1 });
