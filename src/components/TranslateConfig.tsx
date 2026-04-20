@@ -4,6 +4,7 @@ import { TARGET_LANGUAGES, SOURCE_LANGUAGES } from '../utils/cardFields';
 import { getDefaultTranslationPrompt } from '../utils/apiClient';
 import type { TranslationMode, LorebookStrategy, FieldGroupConfig, FieldGroup, GlossaryEntry } from '../types/card';
 import { Languages, Settings2, FileJson, BookOpen, Plus, Trash2, Download, Upload } from 'lucide-react';
+import MvuSyncPanel from './MvuSyncPanel';
 
 /** Map field group IDs to i18n keys */
 function useGroupLabels() {
@@ -403,6 +404,11 @@ export default function TranslateConfig() {
               <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: '4px', lineHeight: '1.4' }}>
                 You can fully customize the strict rules. The target language and source language info is already applied. Leave empty to use the built-in default.
               </div>
+            </div>
+
+            {/* MVU Sync Panel (Chiến Lược B) */}
+            <div style={{ marginTop: '8px' }}>
+              <MvuSyncPanel />
             </div>
           </>
         )}

@@ -188,6 +188,8 @@ export interface TranslationConfig {
   customSchema?: string;
   exportKeyMode: ExportKeyMode; // How to handle lorebook keys on export
   glossary: GlossaryEntry[]; // Terminology pairs for consistent translation
+  enableMvuSync: boolean; // Enable Strategy B (Sync MVU Variables)
+  mvuDictionary: Record<string, string>; // Dictionary for Strategy B
 }
 
 /* ─── Log Entry ─── */

@@ -2,8 +2,22 @@ import { useCallback, useRef } from 'react';
 import { useStore } from '../store';
 import { translateText, translateBatch } from '../utils/apiClient';
 import { extractTranslatableFields, applyTranslationsToCard } from '../utils/cardFields';
+import { syncMvuVariables, postProcessRegexHtml } from '../utils/mvuSync';
 import { shouldSkipTranslation } from '../utils/langDetect';
 import type { FieldGroup, FieldGroupConfig, TranslationField } from '../types/card';
+
+/* ─── Prompt bổ sung dành riêng cho regex replaceString ─── */
+const REGEX_EXTRA_PROMPT = `
+
+ADDITIONAL RULES FOR HTML/REGEX CONTENT:
+14. FONT REPLACEMENT: Replace ALL Chinese/Japanese font names in CSS font-family with Vietnamese-compatible equivalents:
+    - 微软雅黑 / Microsoft YaHei → 'Segoe UI', Tahoma, sans-serif
+    - 黑体 / SimHei → 'Segoe UI', Arial, sans-serif  
+    - 宋体 / SimSun → 'Times New Roman', 'Noto Serif', serif
+    - 楷体 / KaiTi → 'Georgia', serif
+    - Any other Chinese/Japanese font → 'Segoe UI', sans-serif
+15. UNDERSCORE DISPLAY: When translating variable names or labels that use underscores (e.g. Ngoại_giao_đoàn), keep the underscores in data-var attributes and variable references, but in visible display text/labels show spaces instead of underscores (e.g. display "Ngoại giao đoàn" to the user).
+16. Keep all HTML structure, data-var attributes, class names, and id attributes intact. Only translate visible text content and apply font changes.`;
 
 export function useTranslation() {
   const store = useStore();
@@ -90,18 +104,29 @@ export function useTranslation() {
         }
       }
 
-      const translated = await translateText(
+      // Regex fields: append extra prompt for font + underscore handling
+      const isRegexField = field.group === 'regex' && field.path.includes('replaceString');
+      const effectivePrompt = isRegexField
+        ? (store.translationConfig.translationPrompt || '') + REGEX_EXTRA_PROMPT
+        : store.translationConfig.translationPrompt;
+
+      let translated = await translateText(
         field.original,
         field.label,
         store.proxy,
         store.translationConfig.targetLanguage,
         store.translationConfig.sourceLanguage,
-        store.translationConfig.translationPrompt,
+        effectivePrompt,
         store.translationConfig.customSchema,
         abortRef.current?.signal,
         contextHint,
         store.translationConfig.glossary
       );
+
+      // Post-process regex HTML: font swap + underscore display
+      if (isRegexField && translated) {
+        translated = postProcessRegexHtml(translated);
+      }
 
       // Min response length validation
       const ratio = store.proxy.minResponseRatio || 0;
@@ -450,18 +475,30 @@ export function useTranslation() {
         }
       }
 
-      const translated = await translateText(
+      // Regex fields: append extra prompt
+      const isRegexField = field.group === 'regex' && field.path.includes('replaceString');
+      const effectivePrompt = isRegexField
+        ? (store.translationConfig.translationPrompt || '') + REGEX_EXTRA_PROMPT
+        : store.translationConfig.translationPrompt;
+
+      let translated = await translateText(
         field.original,
         field.label,
         store.proxy,
         store.translationConfig.targetLanguage,
         store.translationConfig.sourceLanguage,
-        store.translationConfig.translationPrompt,
+        effectivePrompt,
         store.translationConfig.customSchema,
         controller.signal,
         contextHint,
         store.translationConfig.glossary
       );
+
+      // Post-process regex HTML
+      if (isRegexField && translated) {
+        translated = postProcessRegexHtml(translated);
+      }
+
       store.updateField(path, { status: 'done', translated });
       store.addLog('success', `Re-translated: ${field.label}`);
     } catch (err) {
@@ -473,7 +510,13 @@ export function useTranslation() {
 
   const getExportCard = useCallback(() => {
     if (!store.card) return null;
-    return applyTranslationsToCard(store.card, store.fields, store.translationConfig.exportKeyMode);
+    let exportCard = applyTranslationsToCard(store.card, store.fields, store.translationConfig.exportKeyMode);
+    
+    if (store.translationConfig.enableMvuSync && Object.keys(store.translationConfig.mvuDictionary).length > 0) {
+      exportCard = syncMvuVariables(exportCard, store.translationConfig.mvuDictionary);
+    }
+    
+    return exportCard;
   }, [store]);
 
   /** Continue translation — merge with existing done fields, only translate pending/error */

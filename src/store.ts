@@ -169,13 +169,17 @@ export const useStore = create<AppState>((set) => ({
     customSchema: '',
     exportKeyMode: 'merge' as ExportKeyMode,
     glossary: LS.get('st-translator-glossary', []) as GlossaryEntry[],
+    enableMvuSync: false,
+    mvuDictionary: LS.get('st-translator-mvu-dict', {}) as Record<string, string>,
   },
   setTranslationConfig: (partial) =>
     set((s) => {
       const next = { ...s.translationConfig, ...partial };
-      // Persist glossary separately
       if ('glossary' in partial) {
         LS.set('st-translator-glossary', next.glossary);
+      }
+      if ('mvuDictionary' in partial) {
+        LS.set('st-translator-mvu-dict', next.mvuDictionary);
       }
       return { translationConfig: next };
     }),
