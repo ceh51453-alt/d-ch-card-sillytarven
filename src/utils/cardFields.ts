@@ -134,36 +134,41 @@ export function extractTranslatableFields(
   addArrayField('data.group_only_greetings', 'data.group_only_greetings', 'messages', data.group_only_greetings);
 
   // Character book entries
-  if (data.character_book?.entries) {
-    data.character_book.entries.forEach((entry, i) => {
-      addField(
-        `data.character_book.entries[${i}].content`,
-        `lorebook[${i}].content`,
-        'lorebook',
-        entry.content
-      );
-      addField(
-        `data.character_book.entries[${i}].comment`,
-        `lorebook[${i}].comment`,
-        'lorebook',
-        entry.comment
-      );
-      // Keys as joined string
-      if (enabledGroups.includes('lorebook_keys') && Array.isArray(entry.keys) && entry.keys.length > 0) {
-        const keysText = entry.keys.join(', ');
-        if (keysText.trim()) {
-          fields.push({
-            path: `data.character_book.entries[${i}].keys`,
-            label: `lorebook[${i}].keys`,
-            group: 'lorebook_keys',
-            original: keysText,
-            translated: '',
-            status: 'pending',
-            retries: 0,
-          });
+  if (data.character_book) {
+    addField('data.character_book.name', 'lorebook.name', 'lorebook', data.character_book.name);
+    addField('data.character_book.description', 'lorebook.description', 'lorebook', data.character_book.description);
+
+    if (data.character_book.entries) {
+      data.character_book.entries.forEach((entry, i) => {
+        addField(
+          `data.character_book.entries[${i}].content`,
+          `lorebook[${i}].content`,
+          'lorebook',
+          entry.content
+        );
+        addField(
+          `data.character_book.entries[${i}].comment`,
+          `lorebook[${i}].comment`,
+          'lorebook',
+          entry.comment
+        );
+        // Keys as joined string
+        if (enabledGroups.includes('lorebook_keys') && Array.isArray(entry.keys) && entry.keys.length > 0) {
+          const keysText = entry.keys.join(', ');
+          if (keysText.trim()) {
+            fields.push({
+              path: `data.character_book.entries[${i}].keys`,
+              label: `lorebook[${i}].keys`,
+              group: 'lorebook_keys',
+              original: keysText,
+              translated: '',
+              status: 'pending',
+              retries: 0,
+            });
+          }
         }
-      }
-    });
+      });
+    }
   }
 
   // Depth prompt

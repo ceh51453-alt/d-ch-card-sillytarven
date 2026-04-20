@@ -119,13 +119,13 @@ export const embedCharaToPNG = async (originalDataUrl: string, newJson: string):
         chunks.push({type, data: dataBytes});
     }
     
-    // Remove existing chara chunk
+    // Remove existing chara and ccv3 chunks from any text type
     const filteredChunks = chunks.filter(c => {
-        if (c.type !== 'tEXt') return true;
-        let nullIdx = c.data.indexOf(0);
+        if (c.type !== 'tEXt' && c.type !== 'iTXt' && c.type !== 'zTXt') return true;
+        const nullIdx = c.data.indexOf(0);
         if (nullIdx !== -1) {
             const kw = decoder.decode(c.data.slice(0, nullIdx));
-            if (kw === 'chara') return false;
+            if (kw === 'chara' || kw === 'ccv3') return false;
         }
         return true;
     });
