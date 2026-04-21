@@ -101,7 +101,7 @@ export function useCardParser() {
         const { extractTranslatableFields } = await import('../utils/cardFields');
         
         // Extract all fields from the NEW card
-        const allGroups = ['core', 'messages', 'system', 'creator', 'lorebook', 'lorebook_keys', 'regex', 'depth_prompt'] as any;
+        const allGroups = ['core', 'messages', 'system', 'creator', 'lorebook', 'lorebook_keys', 'regex', 'depth_prompt', 'tavern_helper'] as any;
         const newFields = extractTranslatableFields(newCard, allGroups);
         
         // Merge strategy:

@@ -133,13 +133,15 @@ const en = {
   groupCreator: 'Creator Notes',
   groupCreatorDesc: 'creator_notes, creatorcomment',
   groupLorebook: 'Lorebook Entries',
-  groupLorebookDesc: 'character_book entries content + comment',
+  groupLorebookDesc: 'entries content + comment + name',
   groupLorebookKeys: 'Lorebook Keys',
-  groupLorebookKeysDesc: 'character_book entries keywords',
+  groupLorebookKeysDesc: 'entries keywords + secondary_keys',
   groupRegex: 'Regex Scripts',
-  groupRegexDesc: 'replaceString, scriptName',
+  groupRegexDesc: 'replaceString, scriptName, trimStrings',
   groupDepthPrompt: 'Depth Prompt',
   groupDepthPromptDesc: 'extensions.depth_prompt.prompt',
+  groupTavernHelper: 'TavernHelper Scripts',
+  groupTavernHelperDesc: 'JS-Slash-Runner / TavernHelper script content',
 };
 
 const vi: TranslationKeys = {
@@ -273,13 +275,15 @@ const vi: TranslationKeys = {
   groupCreator: 'Ghi chú tác giả',
   groupCreatorDesc: 'ghi chú tác giả, bình luận',
   groupLorebook: 'Mục Lorebook',
-  groupLorebookDesc: 'nội dung + bình luận các mục character_book',
+  groupLorebookDesc: 'nội dung + bình luận + tên các mục',
   groupLorebookKeys: 'Từ khóa Lorebook',
-  groupLorebookKeysDesc: 'từ khóa các mục character_book',
+  groupLorebookKeysDesc: 'từ khóa chính + từ khóa phụ',
   groupRegex: 'Script Regex',
-  groupRegexDesc: 'chuỗi thay thế, tên script',
+  groupRegexDesc: 'chuỗi thay thế, tên script, trimStrings',
   groupDepthPrompt: 'Depth Prompt',
   groupDepthPromptDesc: 'extensions.depth_prompt.prompt',
+  groupTavernHelper: 'Script TavernHelper',
+  groupTavernHelperDesc: 'nội dung script JS-Slash-Runner / TavernHelper',
 };
 
 export const translations: Record<Locale, TranslationKeys> = { en, vi };

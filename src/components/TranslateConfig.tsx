@@ -18,6 +18,7 @@ function useGroupLabels() {
     lorebook_keys: { label: t.groupLorebookKeys, desc: t.groupLorebookKeysDesc },
     regex: { label: t.groupRegex, desc: t.groupRegexDesc },
     depth_prompt: { label: t.groupDepthPrompt, desc: t.groupDepthPromptDesc },
+    tavern_helper: { label: t.groupTavernHelper, desc: t.groupTavernHelperDesc },
   };
   return map;
 }

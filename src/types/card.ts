@@ -6,6 +6,7 @@ export interface CharacterBookEntry {
   secondary_keys?: string[];
   comment: string;
   content: string;
+  name?: string;
   constant?: boolean;
   selective?: boolean;
   insertion_order?: number;
@@ -44,6 +45,13 @@ export interface RegexScript {
   [key: string]: unknown;
 }
 
+export interface TavernHelperScript {
+  name?: string;
+  content: string;
+  enabled?: boolean;
+  [key: string]: unknown;
+}
+
 export interface DepthPrompt {
   prompt: string;
   depth?: number;
@@ -55,7 +63,8 @@ export interface CardExtensions {
   depth_prompt?: DepthPrompt;
   regex_scripts?: RegexScript[];
   world?: string;
-  tavern_helper?: unknown;
+  tavern_helper?: { scripts?: TavernHelperScript[]; [key: string]: unknown };
+  TavernHelper_scripts?: TavernHelperScript[];
   cm_manager?: unknown;
   [key: string]: unknown;
 }
@@ -134,7 +143,8 @@ export type FieldGroup =
   | 'lorebook'
   | 'lorebook_keys'
   | 'regex'
-  | 'depth_prompt';
+  | 'depth_prompt'
+  | 'tavern_helper';
 
 export interface FieldGroupConfig {
   id: FieldGroup;

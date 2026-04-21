@@ -6,10 +6,11 @@ export const DEFAULT_FIELD_GROUPS: FieldGroupConfig[] = [
   { id: 'messages', label: 'Messages', description: 'first_mes, alternate_greetings, mes_example', enabled: true },
   { id: 'system', label: 'System Prompts', description: 'system_prompt, post_history_instructions', enabled: true },
   { id: 'creator', label: 'Creator Notes', description: 'creator_notes, creatorcomment', enabled: true },
-  { id: 'lorebook', label: 'Lorebook Entries', description: 'character_book entries content + comment', enabled: true },
-  { id: 'lorebook_keys', label: 'Lorebook Keys', description: 'character_book entries keywords', enabled: true },
-  { id: 'regex', label: 'Regex Scripts', description: 'replaceString, scriptName', enabled: true },
+  { id: 'lorebook', label: 'Lorebook Entries', description: 'character_book entries content + comment + name', enabled: true },
+  { id: 'lorebook_keys', label: 'Lorebook Keys', description: 'character_book entries keywords + secondary_keys', enabled: true },
+  { id: 'regex', label: 'Regex Scripts', description: 'replaceString, scriptName, trimStrings', enabled: true },
   { id: 'depth_prompt', label: 'Depth Prompt', description: 'extensions.depth_prompt.prompt', enabled: true },
+  { id: 'tavern_helper', label: 'TavernHelper Scripts', description: 'TavernHelper/JS-Slash-Runner script content', enabled: true },
 ];
 
 /* ─── Language Options ─── */
@@ -61,6 +62,32 @@ function isCodeOnly(text: string): boolean {
     .replace(/\s+/g, '')
     .trim();
   return stripped.length === 0;
+}
+
+/**
+ * Check if text has translatable natural-language content.
+ * Less aggressive than isCodeOnly — used for regex/TavernHelper content
+ * that may have text embedded inside HTML tags or mixed with code.
+ */
+function hasTranslatableText(text: string): boolean {
+  if (!text || typeof text !== 'string' || text.trim() === '') return false;
+  // Strip pure code patterns
+  let stripped = text
+    .replace(/<style[\s\S]*?<\/style>/gi, '')  // remove style blocks
+    .replace(/<script[\s\S]*?<\/script>/gi, '') // remove script blocks
+    .replace(/<[^>]+>/g, '')                     // remove HTML tags
+    .replace(/\{\{[^}]+\}\}/g, '')               // remove {{macros}}
+    .replace(/<\|[^|]+\|>/g, '')                 // remove <|special|> tokens
+    .replace(/\/\*[\s\S]*?\*\//g, '')            // remove /* comments */
+    .replace(/\/\/.*/g, '')                       // remove // comments
+    .replace(/[\{\}\[\]\(\);:,=<>!&|+\-*/%.#@~`"'\\]/g, '') // remove code symbols
+    .replace(/\s+/g, ' ')
+    .trim();
+  // If remaining text has CJK characters, Cyrillic, or >10 chars of Latin text, it's translatable
+  const hasCJK = /[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]/.test(stripped);
+  const hasCyrillic = /[\u0400-\u04ff]/.test(stripped);
+  const hasSubstantialLatin = stripped.replace(/[^a-zA-ZÀ-ÿ]/g, '').length > 10;
+  return hasCJK || hasCyrillic || hasSubstantialLatin || stripped.length > 20;
 }
 
 /* ─── Extract translatable fields from a card ─── */
@@ -140,6 +167,13 @@ export function extractTranslatableFields(
 
     if (data.character_book.entries) {
       data.character_book.entries.forEach((entry, i) => {
+        // Entry name (display name)
+        addField(
+          `data.character_book.entries[${i}].name`,
+          `lorebook[${i}].name`,
+          'lorebook',
+          entry.name
+        );
         addField(
           `data.character_book.entries[${i}].content`,
           `lorebook[${i}].content`,
@@ -152,7 +186,7 @@ export function extractTranslatableFields(
           'lorebook',
           entry.comment
         );
-        // Keys as joined string
+        // Primary keys as joined string
         if (enabledGroups.includes('lorebook_keys') && Array.isArray(entry.keys) && entry.keys.length > 0) {
           const keysText = entry.keys.join(', ');
           if (keysText.trim()) {
@@ -161,6 +195,21 @@ export function extractTranslatableFields(
               label: `lorebook[${i}].keys`,
               group: 'lorebook_keys',
               original: keysText,
+              translated: '',
+              status: 'pending',
+              retries: 0,
+            });
+          }
+        }
+        // Secondary keys as joined string
+        if (enabledGroups.includes('lorebook_keys') && Array.isArray(entry.secondary_keys) && entry.secondary_keys.length > 0) {
+          const secKeysText = entry.secondary_keys.join(', ');
+          if (secKeysText.trim()) {
+            fields.push({
+              path: `data.character_book.entries[${i}].secondary_keys`,
+              label: `lorebook[${i}].secondary_keys`,
+              group: 'lorebook_keys',
+              original: secKeysText,
               translated: '',
               status: 'pending',
               retries: 0,
@@ -181,7 +230,7 @@ export function extractTranslatableFields(
     );
   }
 
-  // Regex scripts
+  // Regex scripts — extract all translatable sub-fields
   if (data.extensions?.regex_scripts) {
     data.extensions.regex_scripts.forEach((script, i) => {
       addField(
@@ -190,12 +239,76 @@ export function extractTranslatableFields(
         'regex',
         script.scriptName
       );
-      addField(
-        `data.extensions.regex_scripts[${i}].replaceString`,
-        `regex[${i}].replaceString`,
-        'regex',
-        script.replaceString
-      );
+      // replaceString — use relaxed check for HTML with embedded text
+      if (enabledGroups.includes('regex') && typeof script.replaceString === 'string' && script.replaceString.trim() !== '') {
+        if (hasTranslatableText(script.replaceString)) {
+          fields.push({
+            path: `data.extensions.regex_scripts[${i}].replaceString`,
+            label: `regex[${i}].replaceString`,
+            group: 'regex',
+            original: script.replaceString,
+            translated: '',
+            status: 'pending',
+            retries: 0,
+          });
+        }
+      }
+      // trimStrings — array of strings to trim from output
+      if (enabledGroups.includes('regex') && Array.isArray(script.trimStrings)) {
+        script.trimStrings.forEach((trimStr, j) => {
+          if (typeof trimStr === 'string' && trimStr.trim() !== '' && hasTranslatableText(trimStr)) {
+            fields.push({
+              path: `data.extensions.regex_scripts[${i}].trimStrings[${j}]`,
+              label: `regex[${i}].trimStrings[${j}]`,
+              group: 'regex',
+              original: trimStr,
+              translated: '',
+              status: 'pending',
+              retries: 0,
+            });
+          }
+        });
+      }
+    });
+  }
+
+  // TavernHelper scripts (JS-Slash-Runner)
+  // New format: data.extensions.tavern_helper.scripts[]
+  const tavernHelper = data.extensions?.tavern_helper as { scripts?: { name?: string; content: string; enabled?: boolean }[] } | undefined;
+  if (tavernHelper?.scripts) {
+    tavernHelper.scripts.forEach((script, i) => {
+      if (enabledGroups.includes('tavern_helper') && typeof script.content === 'string' && script.content.trim() !== '') {
+        if (hasTranslatableText(script.content)) {
+          fields.push({
+            path: `data.extensions.tavern_helper.scripts[${i}].content`,
+            label: `tavernHelper[${i}].content${script.name ? ` (${script.name})` : ''}`,
+            group: 'tavern_helper',
+            original: script.content,
+            translated: '',
+            status: 'pending',
+            retries: 0,
+          });
+        }
+      }
+    });
+  }
+  // Legacy format: data.extensions.TavernHelper_scripts[]
+  const tavernHelperLegacy = data.extensions?.TavernHelper_scripts as { name?: string; content: string; enabled?: boolean }[] | undefined;
+  if (Array.isArray(tavernHelperLegacy)) {
+    tavernHelperLegacy.forEach((script, i) => {
+      if (enabledGroups.includes('tavern_helper') && typeof script.content === 'string' && script.content.trim() !== '') {
+        if (hasTranslatableText(script.content)) {
+          fields.push({
+            path: `data.extensions.TavernHelper_scripts[${i}].content`,
+            label: `tavernHelper_legacy[${i}].content${script.name ? ` (${script.name})` : ''}`,
+            group: 'tavern_helper',
+            original: script.content,
+            translated: '',
+            status: 'pending',
+            retries: 0,
+          });
+        }
+      }
     });
   }
 
@@ -214,8 +327,8 @@ export function applyTranslationsToCard(
   for (const field of fields) {
     if (field.status !== 'done' || !field.translated) continue;
 
-    // Special handling for lorebook keys (array of strings)
-    if (field.path.endsWith('.keys')) {
+    // Special handling for lorebook keys AND secondary_keys (array of strings)
+    if (field.path.endsWith('.keys') || field.path.endsWith('.secondary_keys')) {
       const translatedKeys = field.translated.split(',').map(k => k.trim()).filter(Boolean);
       const originalKeys = field.original.split(',').map(k => k.trim()).filter(Boolean);
 
@@ -274,6 +387,9 @@ export function getCardSummary(card: CharacterCard) {
   const regexCount = card.data?.extensions?.regex_scripts?.length ?? 0;
   const hasDepthPrompt = !!card.data?.extensions?.depth_prompt?.prompt;
   const spec = card.spec || 'unknown';
+  const tavernHelperCount = 
+    ((card.data?.extensions?.tavern_helper as any)?.scripts?.length ?? 0) + 
+    (Array.isArray(card.data?.extensions?.TavernHelper_scripts) ? (card.data.extensions!.TavernHelper_scripts as any[]).length : 0);
 
-  return { name, lorebookCount, altGreetingsCount, regexCount, hasDepthPrompt, spec };
+  return { name, lorebookCount, altGreetingsCount, regexCount, hasDepthPrompt, spec, tavernHelperCount };
 }

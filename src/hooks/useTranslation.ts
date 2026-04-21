@@ -19,6 +19,20 @@ ADDITIONAL RULES FOR HTML/REGEX CONTENT:
 15. UNDERSCORE DISPLAY: When translating variable names or labels that use underscores (e.g. Ngoại_giao_đoàn), keep the underscores in data-var attributes and variable references, but in visible display text/labels show spaces instead of underscores (e.g. display "Ngoại giao đoàn" to the user).
 16. Keep all HTML structure, data-var attributes, class names, and id attributes intact. Only translate visible text content and apply font changes.`;
 
+/* ─── Prompt bổ sung dành riêng cho TavernHelper scripts ─── */
+const TAVERN_HELPER_EXTRA_PROMPT = `
+
+ADDITIONAL RULES FOR JAVASCRIPT/TAVERNHELPER SCRIPT CONTENT:
+14. This is JavaScript code from a SillyTavern TavernHelper/JS-Slash-Runner plugin script.
+15. ONLY translate human-readable string literals (text inside quotes that is displayed to the user or used as labels/descriptions).
+16. DO NOT translate: variable names, function names, API calls, import paths, object keys, SillyTavern macros ({{...}}), CSS selectors, HTML tag names, event names, or any code logic.
+17. DO NOT translate strings that look like identifiers, keys, or technical values (e.g. "chat_message", "user_input", "enabled").
+18. Translate strings that are clearly user-facing text: UI labels, descriptions, error messages, tooltips, dialog text, placeholder text.
+19. Keep ALL code structure intact — same line breaks, same indentation, same semicolons/brackets.
+20. If a string contains mixed code and text (e.g. template literals with \${var}), translate only the text parts and preserve the code interpolations.
+21. Preserve font-family replacements as specified for Chinese/Japanese fonts.`;
+
+
 export function useTranslation() {
   const store = useStore();
   const abortRef = useRef<AbortController | null>(null);
@@ -95,7 +109,7 @@ export function useTranslation() {
       // Contextual keyword translation: for lorebook keys, find the already-translated content
       let contextHint: string | undefined;
       if (field.group === 'lorebook_keys') {
-        const contentPath = field.path.replace('.keys', '.content');
+        const contentPath = field.path.replace('.keys', '.content').replace('.secondary_keys', '.content');
         const contentField = fields.find(f => f.path === contentPath);
         if (contentField) {
           // Use translated content if available, else original (truncated to save tokens)
@@ -104,11 +118,16 @@ export function useTranslation() {
         }
       }
 
-      // Regex fields: append extra prompt for font + underscore handling
+      // Special prompts for regex and TavernHelper fields
       const isRegexField = field.group === 'regex' && field.path.includes('replaceString');
-      const effectivePrompt = isRegexField
-        ? (store.translationConfig.translationPrompt || '') + REGEX_EXTRA_PROMPT
-        : store.translationConfig.translationPrompt;
+      const isTavernHelperField = field.group === 'tavern_helper';
+      const isRegexTrimString = field.group === 'regex' && field.path.includes('trimStrings');
+      let effectivePrompt = store.translationConfig.translationPrompt;
+      if (isRegexField || isRegexTrimString) {
+        effectivePrompt = (effectivePrompt || '') + REGEX_EXTRA_PROMPT;
+      } else if (isTavernHelperField) {
+        effectivePrompt = (effectivePrompt || '') + TAVERN_HELPER_EXTRA_PROMPT;
+      }
 
       let translated = await translateText(
         field.original,
@@ -125,7 +144,11 @@ export function useTranslation() {
       );
 
       // Post-process regex HTML: font swap + underscore display
-      if (isRegexField && translated) {
+      if ((isRegexField || isRegexTrimString) && translated) {
+        translated = postProcessRegexHtml(translated);
+      }
+      // Post-process TavernHelper content that contains HTML
+      if (isTavernHelperField && translated && /<[a-z][^>]*>/i.test(translated)) {
         translated = postProcessRegexHtml(translated);
       }
 
@@ -470,18 +493,23 @@ export function useTranslation() {
       // Contextual keyword translation for retranslate
       let contextHint: string | undefined;
       if (field.group === 'lorebook_keys') {
-        const contentPath = field.path.replace('.keys', '.content');
+        const contentPath = field.path.replace('.keys', '.content').replace('.secondary_keys', '.content');
         const contentField = store.fields.find(f => f.path === contentPath);
         if (contentField) {
           contextHint = (contentField.translated || contentField.original || '').slice(0, 1500);
         }
       }
 
-      // Regex fields: append extra prompt
+      // Special prompts for regex and TavernHelper fields
       const isRegexField = field.group === 'regex' && field.path.includes('replaceString');
-      const effectivePrompt = isRegexField
-        ? (store.translationConfig.translationPrompt || '') + REGEX_EXTRA_PROMPT
-        : store.translationConfig.translationPrompt;
+      const isTavernHelperField = field.group === 'tavern_helper';
+      const isRegexTrimString = field.group === 'regex' && field.path.includes('trimStrings');
+      let effectivePrompt = store.translationConfig.translationPrompt;
+      if (isRegexField || isRegexTrimString) {
+        effectivePrompt = (effectivePrompt || '') + REGEX_EXTRA_PROMPT;
+      } else if (isTavernHelperField) {
+        effectivePrompt = (effectivePrompt || '') + TAVERN_HELPER_EXTRA_PROMPT;
+      }
 
       let translated = await translateText(
         field.original,
@@ -498,7 +526,11 @@ export function useTranslation() {
       );
 
       // Post-process regex HTML
-      if (isRegexField && translated) {
+      if ((isRegexField || isRegexTrimString) && translated) {
+        translated = postProcessRegexHtml(translated);
+      }
+      // Post-process TavernHelper content that contains HTML
+      if (isTavernHelperField && translated && /<[a-z][^>]*>/i.test(translated)) {
         translated = postProcessRegexHtml(translated);
       }
 

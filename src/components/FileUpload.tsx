@@ -11,6 +11,7 @@ import {
   MessageSquare,
   Code,
   Layers,
+  Puzzle,
   X,
 } from 'lucide-react';
 
@@ -164,6 +165,9 @@ export default function FileUpload() {
               <StatItem icon={<MessageSquare size={13} />} label={t.altGreetings} value={`${summary?.altGreetingsCount || 0}`} />
               <StatItem icon={<Code size={13} />} label={t.regexScripts} value={`${summary?.regexCount || 0}`} />
               <StatItem icon={<Layers size={13} />} label={t.depthPrompt} value={summary?.hasDepthPrompt ? '✓' : '—'} />
+              {(summary?.tavernHelperCount ?? 0) > 0 && (
+                <StatItem icon={<Puzzle size={13} />} label="TavernHelper" value={`${summary?.tavernHelperCount}`} />
+              )}
             </div>
 
             {/* Replace / Update Actions */}

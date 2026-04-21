@@ -6,7 +6,7 @@ import type { FieldGroup } from '../types/card';
 import { RotateCcw, AlertTriangle, CheckCircle2, Clock, ArrowLeftRight, BarChart3 } from 'lucide-react';
 
 const TAB_IDS: (FieldGroup | 'all')[] = [
-  'all', 'core', 'messages', 'lorebook', 'lorebook_keys', 'system', 'creator', 'regex', 'depth_prompt',
+  'all', 'core', 'messages', 'lorebook', 'lorebook_keys', 'system', 'creator', 'regex', 'depth_prompt', 'tavern_helper',
 ];
 
 function useTabLabels() {
@@ -21,6 +21,7 @@ function useTabLabels() {
     creator: 'Creator',
     regex: 'Regex',
     depth_prompt: 'Depth',
+    tavern_helper: 'TavernHelper',
   };
   return map;
 }
