@@ -136,25 +136,25 @@ function chunkText(text: string, maxChars?: number, maxTokens?: number): string[
       else maxChars = maxTokens * 3; // e.g. 100k tokens -> 300k chars for Latin
     } else {
       if (cjkRatio > 0.3) {
-        maxChars = 2000; // CJK-heavy: ~2000 chars ≈ 5000-6000 tokens output
+        maxChars = 10000; // CJK-heavy
       } else if (cjkRatio > 0.1) {
-        maxChars = 3500; // Mixed content
+        maxChars = 20000; // Mixed content
       } else {
-        maxChars = 6000; // Latin/Cyrillic text
+        maxChars = 30000; // Latin/Cyrillic text
       }
     }
   }
 
-  // ═══ HARD CAP: Never send more than 15K chars per chunk ═══
-  // The upstream proxy via Cloudflare has a strict ~100s timeout.
-  // We must keep chunks small enough to process within this window.
-  const HARD_CAP = 15000;
+  // ═══ HARD CAP: Set to 30K chars per chunk ═══
+  const HARD_CAP = 30000;
   maxChars = Math.min(maxChars, HARD_CAP);
 
   if (text.length <= maxChars) return [text];
 
   // Check if content is HTML (for smarter splitting)
   const isHtml = /<[a-z][^>]*>/i.test(text) && /<\/[a-z]+>/i.test(text);
+  // Check if content contains HTML tables (need special protection)
+  const hasTable = isHtml && /<table[\s>]/i.test(text);
 
   const chunks: string[] = [];
   let remaining = text;
@@ -169,20 +169,50 @@ function chunkText(text: string, maxChars?: number, maxTokens?: number): string[
 
     // ─── HTML-aware splitting: try to break at major block boundaries ───
     if (isHtml) {
-      // Try closing tags of major blocks: </div>, </section>, </article>, </table>, </ul>, </ol>
-      // Look backwards from maxChars to find a good split point
-      const htmlBlockEndRegex = /<\/(?:div|section|article|table|ul|ol|tr|li|p|h[1-6])>\s*/gi;
-      let bestHtmlSplit = -1;
-      let m;
-      while ((m = htmlBlockEndRegex.exec(remaining)) !== null) {
-        const endPos = m.index + m[0].length;
-        if (endPos <= maxChars && endPos > maxChars * 0.3) {
-          bestHtmlSplit = endPos;
+      // Only split at TOP-LEVEL block boundaries.
+      // NEVER split inside a <table>...</table> — inner elements like <tr>, <td>
+      // must stay together or the table structure breaks.
+      if (hasTable) {
+        // Table-safe splitting: only split at </table>, </div>, </section> boundaries
+        // Track table nesting to avoid splitting inside tables
+        const safeBlockEndRegex = /<\/(div|section|article|table|ul|ol|p|h[1-6])>\s*/gi;
+        let bestHtmlSplit = -1;
+        let m;
+        while ((m = safeBlockEndRegex.exec(remaining)) !== null) {
+          const endPos = m.index + m[0].length;
+          if (endPos > maxChars) break;
+          if (endPos <= maxChars && endPos > maxChars * 0.3) {
+            // Check if we're inside a <table> at this position
+            const textBefore = remaining.slice(0, endPos);
+            const tableOpens = (textBefore.match(/<table[\s>]/gi) || []).length;
+            const tableCloses = (textBefore.match(/<\/table>/gi) || []).length;
+            const insideTable = tableOpens > tableCloses;
+            
+            // Only accept this split point if we're NOT inside a table,
+            // OR if the closing tag itself is </table>
+            if (!insideTable || m[1].toLowerCase() === 'table') {
+              bestHtmlSplit = endPos;
+            }
+          }
         }
-        if (endPos > maxChars) break;
-      }
-      if (bestHtmlSplit > maxChars * 0.3) {
-        splitIdx = bestHtmlSplit;
+        if (bestHtmlSplit > maxChars * 0.3) {
+          splitIdx = bestHtmlSplit;
+        }
+      } else {
+        // No tables — safe to split at any block boundary including <tr>, <li> etc.
+        const htmlBlockEndRegex = /<\/(?:div|section|article|table|ul|ol|tr|li|p|h[1-6])>\s*/gi;
+        let bestHtmlSplit = -1;
+        let m;
+        while ((m = htmlBlockEndRegex.exec(remaining)) !== null) {
+          const endPos = m.index + m[0].length;
+          if (endPos <= maxChars && endPos > maxChars * 0.3) {
+            bestHtmlSplit = endPos;
+          }
+          if (endPos > maxChars) break;
+        }
+        if (bestHtmlSplit > maxChars * 0.3) {
+          splitIdx = bestHtmlSplit;
+        }
       }
     }
 
@@ -217,7 +247,8 @@ function chunkText(text: string, maxChars?: number, maxTokens?: number): string[
     }
 
     chunks.push(remaining.slice(0, splitIdx));
-    remaining = remaining.slice(splitIdx).trimStart();
+    // For HTML content, don't trim whitespace — it may be significant
+    remaining = isHtml ? remaining.slice(splitIdx) : remaining.slice(splitIdx).trimStart();
   }
 
   return chunks;
@@ -422,6 +453,18 @@ function sleep(ms: number): Promise<void> {
 // Strips patterns where AI returns "original → translation" instead of just translation
 function cleanTranslationResponse(original: string, translated: string): string {
   if (!translated || !translated.trim()) return translated;
+
+  // Skip aggressive cleaning for HTML content — arrows (→, ->) appear
+  // naturally in HTML/CSS/JS and cleaning would corrupt the output.
+  const isHtmlContent = /<[a-z][^>]*>/i.test(original) && /<\/[a-z]+>/i.test(original);
+  if (isHtmlContent) {
+    // For HTML content, only strip backtick wrapping (safe operation)
+    let cleaned = translated;
+    if (cleaned.startsWith('`') && cleaned.endsWith('`') && !original.startsWith('`')) {
+      cleaned = cleaned.slice(1, -1);
+    }
+    return cleaned.trim() || translated.trim();
+  }
 
   let cleaned = translated;
 
@@ -771,7 +814,12 @@ export async function translateText(
   // ═══ SEAM VERIFICATION — check chunk boundaries for coherence ═══
   const verifiedChunks = await verifySeams(translatedChunks, chunks, config, targetLang, signal);
 
-  const rawResult = verifiedChunks.join('\n\n');
+  // For HTML content, join without separator to avoid injecting text nodes
+  // that break <table>, <ul>, and other structural elements.
+  // For plain text, use \n\n to maintain paragraph separation.
+  const isHtmlContent = /<[a-z][^>]*>/i.test(text) && /<\/[a-z]+>/i.test(text);
+  const joiner = isHtmlContent ? '' : '\n\n';
+  const rawResult = verifiedChunks.join(joiner);
   return cleanTranslationResponse(text, rawResult);
 }
 
