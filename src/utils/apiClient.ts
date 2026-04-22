@@ -145,7 +145,16 @@ function chunkText(text: string, maxChars?: number, maxTokens?: number): string[
     }
   }
 
+  // ═══ HARD CAP: Never send more than 15K chars per chunk ═══
+  // The upstream proxy via Cloudflare has a strict ~100s timeout.
+  // We must keep chunks small enough to process within this window.
+  const HARD_CAP = 15000;
+  maxChars = Math.min(maxChars, HARD_CAP);
+
   if (text.length <= maxChars) return [text];
+
+  // Check if content is HTML (for smarter splitting)
+  const isHtml = /<[a-z][^>]*>/i.test(text) && /<\/[a-z]+>/i.test(text);
 
   const chunks: string[] = [];
   let remaining = text;
@@ -156,8 +165,32 @@ function chunkText(text: string, maxChars?: number, maxTokens?: number): string[
       break;
     }
 
-    // Try to split at paragraph break
-    let splitIdx = remaining.lastIndexOf('\n\n', maxChars);
+    let splitIdx = -1;
+
+    // ─── HTML-aware splitting: try to break at major block boundaries ───
+    if (isHtml) {
+      // Try closing tags of major blocks: </div>, </section>, </article>, </table>, </ul>, </ol>
+      // Look backwards from maxChars to find a good split point
+      const htmlBlockEndRegex = /<\/(?:div|section|article|table|ul|ol|tr|li|p|h[1-6])>\s*/gi;
+      let bestHtmlSplit = -1;
+      let m;
+      while ((m = htmlBlockEndRegex.exec(remaining)) !== null) {
+        const endPos = m.index + m[0].length;
+        if (endPos <= maxChars && endPos > maxChars * 0.3) {
+          bestHtmlSplit = endPos;
+        }
+        if (endPos > maxChars) break;
+      }
+      if (bestHtmlSplit > maxChars * 0.3) {
+        splitIdx = bestHtmlSplit;
+      }
+    }
+
+    // ─── Fallback: paragraph/newline/space splitting ───
+    if (splitIdx < maxChars * 0.3) {
+      // Try to split at paragraph break
+      splitIdx = remaining.lastIndexOf('\n\n', maxChars);
+    }
     if (splitIdx < maxChars * 0.3) {
       // Fallback to single newline
       splitIdx = remaining.lastIndexOf('\n', maxChars);
@@ -165,6 +198,13 @@ function chunkText(text: string, maxChars?: number, maxTokens?: number): string[
     if (splitIdx < maxChars * 0.3) {
       // Fallback to space
       splitIdx = remaining.lastIndexOf(' ', maxChars);
+    }
+    if (splitIdx < maxChars * 0.3) {
+      // Fallback to closing HTML tag anywhere
+      const closeTag = remaining.slice(0, maxChars).lastIndexOf('>');
+      if (closeTag > maxChars * 0.3) {
+        splitIdx = closeTag + 1;
+      }
     }
     if (splitIdx < maxChars * 0.3) {
       // Fallback to sentence-ending punctuation for CJK
@@ -381,6 +421,8 @@ function sleep(ms: number): Promise<void> {
 /* ─── Clean translation response ─── */
 // Strips patterns where AI returns "original → translation" instead of just translation
 function cleanTranslationResponse(original: string, translated: string): string {
+  if (!translated || !translated.trim()) return translated;
+
   let cleaned = translated;
 
   // Pattern 1: Full text "original → translation" or "original -> translation"
@@ -397,9 +439,10 @@ function cleanTranslationResponse(original: string, translated: string): string 
         const leftTrimmed = parts[0].trim();
         const rightTrimmed = parts[1].trim();
         // If left side significantly overlaps with the original, take only the right side
-        if (leftTrimmed.length > 0 && rightTrimmed.length > 0) {
+        // BUT only if the right side is substantial (at least 10% of the original length)
+        if (leftTrimmed.length > 0 && rightTrimmed.length > 0 && rightTrimmed.length >= original.length * 0.1) {
           const overlapRatio = calculateOverlap(original, leftTrimmed);
-          if (overlapRatio > 0.3) {
+          if (overlapRatio > 0.5) { // Raised threshold from 0.3 to 0.5 to be less aggressive
             cleaned = rightTrimmed;
           }
         }
@@ -438,7 +481,14 @@ function cleanTranslationResponse(original: string, translated: string): string 
     cleaned = cleaned.slice(1, -1);
   }
 
-  return cleaned.trim();
+  // SAFETY NET: If cleaning produced an empty result but the raw translation was not empty,
+  // return the raw translation instead — better to have unclean text than no text.
+  const result = cleaned.trim();
+  if (!result && translated.trim()) {
+    return translated.trim();
+  }
+
+  return result;
 }
 
 /* ─── Calculate character overlap ratio ─── */
@@ -453,7 +503,185 @@ function calculateOverlap(a: string, b: string): number {
   return overlap / Math.max(aChars.size, 1);
 }
 
-/* ─── Main translate function with retry + truncation detection ─── */
+/* ─── Translate a single chunk with retry + truncation detection ─── */
+async function translateChunk(
+  chunk: string,
+  chunkIdx: number,
+  totalChunks: number,
+  fieldName: string,
+  config: ProxySettings,
+  targetLang: string,
+  sourceLang: string,
+  systemPrompt: string,
+  userPrompt: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt <= config.maxRetries; attempt++) {
+    try {
+      if (signal?.aborted) throw new Error('Cancelled');
+
+      const controller = new AbortController();
+      const baseTimeout = config.requestTimeout || 60000;
+      const chunkRatio = Math.max(1, chunk.length / 2000);
+      const timeout = Math.min(baseTimeout * chunkRatio, baseTimeout * 3);
+      const timeoutId = setTimeout(() => controller.abort('Request timeout'), timeout);
+
+      const combinedSignal = signal
+        ? AbortSignal.any([signal, controller.signal])
+        : controller.signal;
+
+      let result = await callProvider(config, systemPrompt, userPrompt, combinedSignal);
+      clearTimeout(timeoutId);
+
+      // ─── Truncation detection & continuation ───
+      const minRatio = config.minResponseRatio || 0.15;
+      if (chunk.length > 500 && result.length > 0) {
+        const responseRatio = result.length / chunk.length;
+        if (responseRatio < minRatio) {
+          const continuationPrompt = `The previous translation was cut off. Continue translating from where you stopped. ` +
+            `The last translated text ended with: "${result.slice(-150)}"\n\n` +
+            `Continue translating the remaining original text below. Return ONLY the continuation, do NOT repeat what was already translated:\n\n` +
+            `${chunk.slice(Math.floor(chunk.length * Math.max(responseRatio - 0.05, 0.1)))}`;
+
+          try {
+            const contController = new AbortController();
+            const contTimeout = setTimeout(() => contController.abort('Continuation timeout'), timeout);
+            const contSignal = signal
+              ? AbortSignal.any([signal, contController.signal])
+              : contController.signal;
+
+            const continuation = await callProvider(config, systemPrompt, continuationPrompt, contSignal);
+            clearTimeout(contTimeout);
+
+            if (continuation.trim()) {
+              result = result + '\n' + continuation;
+            }
+          } catch {
+            // Continuation failed — use what we have
+          }
+        }
+      }
+
+      lastError = null;
+      return result;
+    } catch (err) {
+      lastError = err as Error;
+
+      if (signal?.aborted) throw err;
+
+      if (err instanceof ApiError && !err.retryable) {
+        throw err;
+      }
+
+      if (attempt < config.maxRetries) {
+        const baseDelay = config.retryDelay || 1000;
+        const backoff = Math.min(baseDelay * Math.pow(2, attempt), 30000);
+        await sleep(backoff);
+      }
+    }
+  }
+
+  if (lastError) throw lastError;
+  return '';
+}
+
+/* ─── Verify seam coherence between adjacent translated chunks ─── */
+async function verifySeams(
+  translatedChunks: string[],
+  originalChunks: string[],
+  config: ProxySettings,
+  targetLang: string,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  if (translatedChunks.length < 2) return translatedChunks;
+
+  // Only check seams — the tail of chunk[i] + head of chunk[i+1]
+  // Take ~300 chars from each side of the seam
+  const SEAM_CHARS = 300;
+  const seamIssues: { idx: number; tailOrig: string; headOrig: string; tailTrans: string; headTrans: string }[] = [];
+
+  for (let i = 0; i < translatedChunks.length - 1; i++) {
+    const tailTrans = translatedChunks[i].slice(-SEAM_CHARS);
+    const headTrans = translatedChunks[i + 1].slice(0, SEAM_CHARS);
+    const tailOrig = originalChunks[i].slice(-SEAM_CHARS);
+    const headOrig = originalChunks[i + 1].slice(0, SEAM_CHARS);
+    seamIssues.push({ idx: i, tailOrig, headOrig, tailTrans, headTrans });
+  }
+
+  // Build a single verification prompt for ALL seams
+  const seamDescriptions = seamIssues.map((s, i) =>
+    `=== SEAM ${i + 1} (between chunk ${s.idx + 1} and ${s.idx + 2}) ===\n` +
+    `Original tail: ${s.tailOrig}\n` +
+    `Original head: ${s.headOrig}\n` +
+    `Translated tail: ${s.tailTrans}\n` +
+    `Translated head: ${s.headTrans}`
+  ).join('\n\n');
+
+  const verifySystem = `You are a translation quality checker for ${targetLang}. ` +
+    `A large text was split into chunks and translated in parallel. ` +
+    `Check if the seam points (where chunks join) are coherent. ` +
+    `Look for: broken sentences, duplicated phrases, missing connectors, inconsistent terminology, or broken HTML tags at seam boundaries.\n` +
+    `If ALL seams are fine, respond with exactly: ALL_OK\n` +
+    `If issues exist, respond in this format for EACH problematic seam:\n` +
+    `SEAM <number>\nFIXED_TAIL: <corrected last ~100 chars of the preceding chunk>\nFIXED_HEAD: <corrected first ~100 chars of the following chunk>\n` +
+    `Only output fixes for seams that have real problems. Keep fixes minimal — only change what's needed at the boundary.`;
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort('Seam verify timeout'), (config.requestTimeout || 60000) * 2);
+    const combinedSignal = signal
+      ? AbortSignal.any([signal, controller.signal])
+      : controller.signal;
+
+    const verifyResult = await callProvider(config, verifySystem, seamDescriptions, combinedSignal);
+    clearTimeout(timeout);
+
+    if (verifyResult.trim() === 'ALL_OK') {
+      console.log('[verifySeams] All seams coherent ✓');
+      return translatedChunks;
+    }
+
+    // Parse fixes
+    const fixedChunks = [...translatedChunks];
+    const seamFixRegex = /SEAM\s+(\d+)\s*\n\s*FIXED_TAIL:\s*([\s\S]*?)\n\s*FIXED_HEAD:\s*([\s\S]*?)(?=\nSEAM|\n*$)/gi;
+    let match;
+    let fixCount = 0;
+    while ((match = seamFixRegex.exec(verifyResult)) !== null) {
+      const seamNum = parseInt(match[1], 10) - 1; // 0-indexed
+      const fixedTail = match[2].trim();
+      const fixedHead = match[3].trim();
+
+      if (seamNum >= 0 && seamNum < seamIssues.length) {
+        const s = seamIssues[seamNum];
+        // Replace the tail of chunk[s.idx]
+        if (fixedTail && fixedTail.length > 10) {
+          const existingTail = fixedChunks[s.idx].slice(-s.tailTrans.length);
+          if (existingTail === s.tailTrans) {
+            fixedChunks[s.idx] = fixedChunks[s.idx].slice(0, -s.tailTrans.length) + fixedTail;
+          }
+        }
+        // Replace the head of chunk[s.idx+1]
+        if (fixedHead && fixedHead.length > 10) {
+          const existingHead = fixedChunks[s.idx + 1].slice(0, s.headTrans.length);
+          if (existingHead === s.headTrans) {
+            fixedChunks[s.idx + 1] = fixedHead + fixedChunks[s.idx + 1].slice(s.headTrans.length);
+          }
+        }
+        fixCount++;
+      }
+    }
+    console.log(`[verifySeams] Fixed ${fixCount} seam(s)`);
+    return fixedChunks;
+  } catch (err) {
+    // Verification failed — return originals (non-critical)
+    console.warn('[verifySeams] Verification failed, using unverified seams:', err);
+    return translatedChunks;
+  }
+}
+
+/* ─── Main translate function with parallel chunks + seam verification ─── */
 export async function translateText(
   text: string,
   fieldName: string,
@@ -470,111 +698,80 @@ export async function translateText(
   if (!text || text.trim() === '') return '';
 
   const chunks = chunkText(text, undefined, config.maxTokens);
-  const translatedChunks: string[] = [];
-  let previousTranslationContext = '';
 
-  for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx++) {
-    const chunk = chunks[chunkIdx];
-    // Pass previousTranslationToUpdate ONLY for the first chunk to avoid passing huge duplicate blocks,
-    // or pass it for all chunks? Actually, if chunked, the old translation is for the WHOLE text,
-    // so passing it per chunk might be weird. But for large context models, text isn't chunked.
-    // If it is chunked, AI might just figure it out.
+  // ═══ SINGLE CHUNK — fast path (no parallelism needed) ═══
+  if (chunks.length === 1) {
     const { system, user } = buildTranslationMessages(
-      chunk, fieldName, targetLang, config.systemPromptPrefix,
-      sourceLang, customPrompt, customSchema, contextHint, glossary, previousTranslationContext,
-      chunkIdx === 0 ? previousTranslationToUpdate : undefined
+      chunks[0], fieldName, targetLang, config.systemPromptPrefix,
+      sourceLang, customPrompt, customSchema, contextHint, glossary, '',
+      previousTranslationToUpdate
     );
-
-    let lastError: Error | null = null;
-
-    for (let attempt = 0; attempt <= config.maxRetries; attempt++) {
-      try {
-        if (signal?.aborted) throw new Error('Cancelled');
-
-        const controller = new AbortController();
-        // Scale timeout for longer chunks
-        const baseTimeout = config.requestTimeout || 60000;
-        const chunkRatio = Math.max(1, chunk.length / 2000);
-        const timeout = Math.min(baseTimeout * chunkRatio, baseTimeout * 3);
-        const timeoutId = setTimeout(() => controller.abort('Request timeout'), timeout);
-
-        // Combine signals
-        const combinedSignal = signal
-          ? AbortSignal.any([signal, controller.signal])
-          : controller.signal;
-
-        let result = await callProvider(config, system, user, combinedSignal);
-        clearTimeout(timeoutId);
-
-        // ─── Truncation detection & continuation ───
-        // If the response is suspiciously short relative to input, the model likely hit its output limit
-        const minRatio = config.minResponseRatio || 0.15;
-        if (chunk.length > 500 && result.length > 0) {
-          const responseRatio = result.length / chunk.length;
-          if (responseRatio < minRatio) {
-            // Likely truncated — attempt continuation
-            const continuationPrompt = `The previous translation was cut off. Continue translating from where you stopped. ` +
-              `The last translated text ended with: "${result.slice(-150)}"\n\n` +
-              `Continue translating the remaining original text below. Return ONLY the continuation, do NOT repeat what was already translated:\n\n` +
-              `${chunk.slice(Math.floor(chunk.length * Math.max(responseRatio - 0.05, 0.1)))}`;
-
-            try {
-              const contController = new AbortController();
-              const contTimeout = setTimeout(() => contController.abort('Continuation timeout'), timeout);
-              const contSignal = signal
-                ? AbortSignal.any([signal, contController.signal])
-                : contController.signal;
-
-              const continuation = await callProvider(config, system, continuationPrompt, contSignal);
-              clearTimeout(contTimeout);
-
-              if (continuation.trim()) {
-                result = result + '\n' + continuation;
-              }
-            } catch {
-              // Continuation failed — use what we have
-            }
-          }
-        }
-
-        translatedChunks.push(result);
-        
-        // Save the full translated content so far as context for the next chunk
-        // High input token limits allow us to send everything previously translated
-        previousTranslationContext = translatedChunks.join('\n\n');
-        
-        lastError = null;
-        break;
-      } catch (err) {
-        lastError = err as Error;
-
-        // User cancelled — stop immediately
-        if (signal?.aborted) throw err;
-
-        // Detect timeout abort (from our controller) vs other errors
-        const errMsg = err instanceof Error ? err.message : String(err);
-        const isTimeout = errMsg.includes('timeout') || errMsg.includes('aborted');
-
-        if (err instanceof ApiError && !err.retryable) {
-          throw err; // Non-retryable API errors (401, etc.)
-        }
-
-        // Retry on timeout or retryable errors
-        if (attempt < config.maxRetries) {
-          const baseDelay = config.retryDelay || 1000;
-          const backoff = Math.min(baseDelay * Math.pow(2, attempt), 30000);
-          await sleep(backoff);
-        } else if (isTimeout) {
-          // Final attempt was a timeout — throw a clear error
-          throw new ApiError(`Request timed out after ${(config.requestTimeout || 60000) / 1000}s`, undefined, true);
-        }
-      }
-    }
-
-    if (lastError) throw lastError;
+    const result = await translateChunk(
+      chunks[0], 0, 1, fieldName, config, targetLang, sourceLang, system, user, signal
+    );
+    return cleanTranslationResponse(text, result);
   }
 
-  const rawResult = translatedChunks.join('\n\n');
+  // ═══ MULTIPLE CHUNKS — parallel translation (concurrency-limited) ═══
+  const MAX_CONCURRENT = 2; // Avoid 429 rate limits
+  console.log(`[translateText] ${fieldName}: Translating ${chunks.length} chunks (max ${MAX_CONCURRENT} concurrent)...`);
+
+  // Build all tasks
+  const tasks = chunks.map((chunk, idx) => {
+    const { system, user } = buildTranslationMessages(
+      chunk, `${fieldName} [part ${idx + 1}/${chunks.length}]`, targetLang, config.systemPromptPrefix,
+      sourceLang, customPrompt, customSchema, contextHint, glossary, '',
+      idx === 0 ? previousTranslationToUpdate : undefined
+    );
+    return { chunk, idx, system, user };
+  });
+
+  // Concurrency-limited executor
+  const results: PromiseSettledResult<string>[] = new Array(tasks.length);
+  let nextIdx = 0;
+
+  async function runWorker() {
+    while (nextIdx < tasks.length) {
+      const taskIdx = nextIdx++;
+      const t = tasks[taskIdx];
+      try {
+        const value = await translateChunk(
+          t.chunk, t.idx, chunks.length, fieldName, config, targetLang, sourceLang, t.system, t.user, signal
+        );
+        results[taskIdx] = { status: 'fulfilled', value };
+        console.log(`[translateText] ${fieldName}: chunk ${t.idx + 1}/${chunks.length} done ✓`);
+      } catch (reason: any) {
+        results[taskIdx] = { status: 'rejected', reason };
+      }
+    }
+  }
+
+  // Spawn workers
+  const workers = Array.from({ length: Math.min(MAX_CONCURRENT, tasks.length) }, () => runWorker());
+  await Promise.all(workers);
+
+  // Check results
+  const translatedChunks: string[] = [];
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i];
+    if (r.status === 'fulfilled') {
+      translatedChunks.push(r.value);
+    } else {
+      // If any chunk failed fatally, throw
+      const err = r.reason;
+      if (signal?.aborted || (err instanceof Error && err.message === 'Cancelled')) {
+        throw new Error('Cancelled');
+      }
+      throw err;
+    }
+  }
+
+  console.log(`[translateText] ${fieldName}: All ${chunks.length} chunks done. Verifying seams...`);
+
+  // ═══ SEAM VERIFICATION — check chunk boundaries for coherence ═══
+  const verifiedChunks = await verifySeams(translatedChunks, chunks, config, targetLang, signal);
+
+  const rawResult = verifiedChunks.join('\n\n');
   return cleanTranslationResponse(text, rawResult);
 }
 

@@ -585,7 +585,7 @@ input[type="range"]::-webkit-slider-thumb {
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
-.animate-spin {
+.animate-spin, .spin {
   animation: spin 1s linear infinite;
 }
 

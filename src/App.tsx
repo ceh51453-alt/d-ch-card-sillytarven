@@ -6,6 +6,7 @@ import CardPreview from './components/CardPreview';
 import TranslationProgress from './components/TranslationProgress';
 import FieldEditor from './components/FieldEditor';
 import ExportPanel from './components/ExportPanel';
+import VerifyPanel from './components/VerifyPanel';
 import { useStore } from './store';
 import { useT } from './i18n/useLocale';
 import type { Locale } from './i18n/translations';
@@ -121,6 +122,7 @@ export default function App() {
             <CardPreview />
             <TranslationProgress />
             <FieldEditor />
+            <VerifyPanel />
             <ExportPanel />
           </div>
         )}

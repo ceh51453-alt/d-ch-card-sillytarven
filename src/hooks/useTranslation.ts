@@ -2,7 +2,7 @@ import { useCallback, useRef } from 'react';
 import { useStore } from '../store';
 import { translateText, translateBatch } from '../utils/apiClient';
 import { extractTranslatableFields, applyTranslationsToCard } from '../utils/cardFields';
-import { syncMvuVariables, postProcessRegexHtml } from '../utils/mvuSync';
+import { syncMvuVariables, postProcessRegexHtml, extractPotentialMvuKeys, aiTranslateMvuKeys } from '../utils/mvuSync';
 import { shouldSkipTranslation } from '../utils/langDetect';
 import type { FieldGroup, FieldGroupConfig, TranslationField } from '../types/card';
 
@@ -103,7 +103,14 @@ export function useTranslation() {
   const translateSingleField = async (field: TranslationField, index: number, fields: TranslationField[]) => {
     store.setCurrentFieldIndex(index);
     store.updateField(field.path, { status: 'translating' });
-    store.addLog('active', `Translating: ${field.label} (${field.original.length} chars)`);
+    const charCount = field.original.length;
+    const CHUNK_THRESHOLD = 15000;
+    if (charCount > CHUNK_THRESHOLD) {
+      const estimatedChunks = Math.ceil(charCount / CHUNK_THRESHOLD);
+      store.addLog('active', `Translating: ${field.label} (${charCount.toLocaleString()} chars → ~${estimatedChunks} chunks ⚡parallel)`);
+    } else {
+      store.addLog('active', `Translating: ${field.label} (${charCount.toLocaleString()} chars)`);
+    }
 
     try {
       // Contextual keyword translation: for lorebook keys, find the already-translated content
@@ -150,6 +157,19 @@ export function useTranslation() {
       // Post-process TavernHelper content that contains HTML
       if (isTavernHelperField && translated && /<[a-z][^>]*>/i.test(translated)) {
         translated = postProcessRegexHtml(translated);
+      }
+
+      // Empty translation guard — if API returned empty/whitespace, treat as error
+      if (!translated || !translated.trim()) {
+        if ((field.retries || 0) < 1) {
+          store.updateField(field.path, { retries: (field.retries || 0) + 1 });
+          store.addLog('retry', `⚠️ Empty translation for ${field.label}. Auto-retrying...`);
+          await new Promise((r) => setTimeout(r, store.proxy.retryDelay || 1000));
+          return 'retry';
+        }
+        store.updateField(field.path, { status: 'error', error: 'API returned empty translation' });
+        store.addLog('error', `Empty translation for ${field.label} after retry`);
+        return 'error';
       }
 
       // Min response length validation
@@ -245,8 +265,12 @@ export function useTranslation() {
               store.translationConfig.glossary,
               ef.previousTranslation
             );
-            store.updateField(ef.path, { status: 'done', translated });
-            doneCount++;
+            if (translated && translated.trim()) {
+              store.updateField(ef.path, { status: 'done', translated });
+              doneCount++;
+            } else {
+              store.updateField(ef.path, { status: 'error', error: 'API returned empty translation' });
+            }
           } catch (fallbackErr) {
             const fbMsg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
             if (fbMsg === 'Cancelled' || checkAbort()) throw fallbackErr;
@@ -288,7 +312,11 @@ export function useTranslation() {
             ctxHint,
             store.translationConfig.glossary
           );
-          store.updateField(f.path, { status: 'done', translated });
+          if (translated && translated.trim()) {
+            store.updateField(f.path, { status: 'done', translated });
+          } else {
+            store.updateField(f.path, { status: 'error', error: 'API returned empty translation' });
+          }
         } catch (fallbackErr) {
           const fbMsg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
           if (fbMsg === 'Cancelled' || checkAbort()) throw fallbackErr;
@@ -327,6 +355,88 @@ export function useTranslation() {
     if (skippedCount > 0) logParts.push(`(${skippedCount} skipped — already in target language)`);
     if (alreadyDone > 0) logParts.push(`(${alreadyDone} already done)`);
     store.addLog('info', logParts.join(' '));
+
+    // ═══ Auto-populate MVU Dictionary (Strategy B) ═══
+    if (store.translationConfig.enableMvuSync && store.card) {
+      try {
+        store.addLog('info', '🔧 Strategy B: Auto-detecting MVU/Zod variables...');
+        const extractedKeys = extractPotentialMvuKeys(store.card);
+        
+        if (extractedKeys.length > 0) {
+          // Filter out keys already in dictionary
+          const existingDict = store.translationConfig.mvuDictionary;
+          const newKeys = extractedKeys.filter(k => !(k in existingDict));
+          
+          store.addLog('info', `Found ${extractedKeys.length} variables (${newKeys.length} new, ${extractedKeys.length - newKeys.length} already mapped)`);
+          
+          if (newKeys.length > 0) {
+            store.addLog('active', `🤖 Calling AI to translate ${newKeys.length} variable names...`);
+            const aiTranslations = await aiTranslateMvuKeys(
+              newKeys,
+              store.translationConfig.targetLanguage,
+              store.proxy,
+              abortRef.current?.signal
+            );
+            
+            // Merge AI translations into dictionary (only non-empty, non-identical)
+            const mergedDict = { ...existingDict };
+            let addedCount = 0;
+            for (const [k, v] of Object.entries(aiTranslations)) {
+              if (v && v.trim() && k !== v && !(k in mergedDict)) {
+                mergedDict[k] = v;
+                addedCount++;
+              }
+            }
+            
+            if (addedCount > 0) {
+              store.setTranslationConfig({ mvuDictionary: mergedDict });
+              store.addLog('success', `✅ Auto-added ${addedCount} variable translations to MVU Dictionary`);
+            } else {
+              store.addLog('info', 'All variables are already ASCII or mapped — no AI translation needed');
+            }
+          }
+        } else {
+          store.addLog('info', 'No MVU/Zod variables detected in this card');
+        }
+      } catch (mvuErr) {
+        const mvuMsg = mvuErr instanceof Error ? mvuErr.message : String(mvuErr);
+        if (mvuMsg === 'Cancelled' || checkAbort()) {
+          store.setPhase('cancelled');
+          return;
+        }
+        store.addLog('warning', `⚠️ MVU auto-detect failed (non-critical): ${mvuMsg}`);
+      }
+    }
+
+    // ═══ Reorder fields for Strategy B (MVU-optimized) ═══
+    // Khi bật MVU Sync, thứ tự dịch tối ưu:
+    // 1. core (name, description) → thiết lập ngữ cảnh nhân vật
+    // 2. system → system prompt  
+    // 3. tavern_helper → Zod schema, JS logic (quan trọng nhất cho MVU)
+    // 4. lorebook → initvar, mvu_update, rules (tham chiếu biến)
+    // 5. lorebook_keys → keywords
+    // 6. regex → HTML dashboard UI
+    // 7. messages → dialogue examples
+    // 8. depth_prompt, creator → phụ trợ
+    if (store.translationConfig.enableMvuSync) {
+      const MVU_GROUP_ORDER: Record<string, number> = {
+        core: 0,
+        system: 1,
+        tavern_helper: 2,
+        lorebook: 3,
+        lorebook_keys: 4,
+        regex: 5,
+        messages: 6,
+        depth_prompt: 7,
+        creator: 8,
+      };
+      fields.sort((a, b) => {
+        const orderA = MVU_GROUP_ORDER[a.group] ?? 99;
+        const orderB = MVU_GROUP_ORDER[b.group] ?? 99;
+        return orderA - orderB;
+      });
+      store.addLog('info', '📋 Strategy B: Reordered fields → core → system → tavernHelper → lorebook → regex → messages');
+    }
 
     const isBatchLorebook = store.translationConfig.lorebookStrategy === 'batch';
     const batchSize = store.translationConfig.lorebookBatchSize || 20;

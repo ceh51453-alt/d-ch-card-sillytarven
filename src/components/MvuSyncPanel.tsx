@@ -1,15 +1,17 @@
 import React, { useState } from 'react';
 import { useStore } from '../store';
 import { useT } from '../i18n/useLocale';
-import { extractPotentialMvuKeys } from '../utils/mvuSync';
-import { Settings, Plus, Trash2, Wand2, Info } from 'lucide-react';
+import { extractPotentialMvuKeys, aiTranslateMvuKeys } from '../utils/mvuSync';
+import { Settings, Plus, Trash2, Wand2, Info, Loader2, Bot } from 'lucide-react';
 
 export default function MvuSyncPanel() {
-  const { card, translationConfig, setTranslationConfig, locale } = useStore();
+  const { card, translationConfig, setTranslationConfig, locale, proxy, addToast } = useStore();
   const t = useT();
   const [isExpanded, setIsExpanded] = useState(false);
   const [newKey, setNewKey] = useState('');
   const [newValue, setNewValue] = useState('');
+  const [isAutoTranslating, setIsAutoTranslating] = useState(false);
+  const isVi = locale === 'vi';
 
   const { enableMvuSync, mvuDictionary } = translationConfig;
 
@@ -48,7 +50,7 @@ export default function MvuSyncPanel() {
   const autoExtract = () => {
     const keys = extractPotentialMvuKeys(card);
     if (keys.length === 0) {
-      alert(locale === 'vi' ? 'Không tìm thấy key MVU nào.' : 'No MVU keys found.');
+      addToast('info', isVi ? 'Không tìm thấy key MVU nào.' : 'No MVU keys found.');
       return;
     }
     const nextDict = { ...mvuDictionary };
@@ -62,11 +64,68 @@ export default function MvuSyncPanel() {
     
     if (added > 0) {
       setTranslationConfig({ mvuDictionary: nextDict });
-      alert(locale === 'vi' ? `Đã thêm ${added} key mới.` : `Added ${added} new keys.`);
+      addToast('success', isVi ? `Đã thêm ${added} key mới.` : `Added ${added} new keys.`);
     } else {
-      alert(locale === 'vi' ? 'Các key đều đã có sẵn.' : 'Keys already exist.');
+      addToast('info', isVi ? 'Các key đều đã có sẵn.' : 'Keys already exist.');
     }
   };
+
+  // Quét key + gọi AI dịch tự động
+  const autoExtractAndTranslate = async () => {
+    const keys = extractPotentialMvuKeys(card);
+    if (keys.length === 0) {
+      addToast('info', isVi ? 'Không tìm thấy key MVU nào.' : 'No MVU keys found.');
+      return;
+    }
+
+    // Lọc keys chưa có hoặc chưa có bản dịch
+    const keysNeedTranslation = keys.filter(k => !(k in mvuDictionary) || !mvuDictionary[k]);
+    if (keysNeedTranslation.length === 0) {
+      addToast('info', isVi ? 'Tất cả key đều đã có bản dịch.' : 'All keys already have translations.');
+      return;
+    }
+
+    setIsAutoTranslating(true);
+    try {
+      const translations = await aiTranslateMvuKeys(
+        keysNeedTranslation,
+        translationConfig.targetLanguage,
+        proxy
+      );
+
+      const nextDict = { ...mvuDictionary };
+      let added = 0;
+      for (const [k, v] of Object.entries(translations)) {
+        if (v && v.trim() && k !== v) {
+          nextDict[k] = v;
+          added++;
+        }
+      }
+
+      // Also add keys that AI couldn't translate (empty value for manual input)
+      for (const k of keysNeedTranslation) {
+        if (!(k in nextDict)) {
+          nextDict[k] = '';
+        }
+      }
+
+      setTranslationConfig({ mvuDictionary: nextDict });
+      addToast('success', isVi
+        ? `AI đã dịch ${added}/${keysNeedTranslation.length} tên biến.`
+        : `AI translated ${added}/${keysNeedTranslation.length} variable names.`
+      );
+    } catch (err) {
+      addToast('error', isVi
+        ? `Lỗi AI: ${err instanceof Error ? err.message : String(err)}`
+        : `AI Error: ${err instanceof Error ? err.message : String(err)}`
+      );
+    } finally {
+      setIsAutoTranslating(false);
+    }
+  };
+
+  const dictEntries = Object.entries(mvuDictionary);
+  const filledCount = dictEntries.filter(([, v]) => v.trim()).length;
 
   return (
     <div style={{
@@ -91,8 +150,17 @@ export default function MvuSyncPanel() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <Settings size={16} color="var(--accent-primary)" />
           <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>
-            {locale === 'vi' ? 'Chiến Lược B (Đồng bộ Biến MVU/Zod)' : 'Strategy B (Sync MVU Variables)'}
+            {isVi ? 'Chiến Lược B (Đồng bộ Biến MVU/Zod)' : 'Strategy B (Sync MVU Variables)'}
           </span>
+          {dictEntries.length > 0 && (
+            <span style={{
+              padding: '1px 6px', borderRadius: '8px', fontSize: '0.6rem', fontWeight: 700,
+              background: filledCount === dictEntries.length ? 'rgba(106,240,138,0.1)' : 'rgba(240,196,106,0.1)',
+              color: filledCount === dictEntries.length ? 'var(--accent-success)' : 'var(--accent-warning)',
+            }}>
+              {filledCount}/{dictEntries.length}
+            </span>
+          )}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <label className="toggle-switch" onClick={(e) => e.stopPropagation()}>
@@ -119,21 +187,32 @@ export default function MvuSyncPanel() {
           }}>
             <Info size={14} style={{ flexShrink: 0, marginTop: '2px' }} />
             <span>
-              {locale === 'vi' 
-                ? 'Đổi tên biến hệ thống để thẻ MVU vẫn hoạt động sau khi dịch (Zod, Regex UI, Lorebook Rules).' 
-                : 'Rename system variables to keep MVU cards functional after translation (Zod, Regex UI, Lorebook Rules).'}
+              {isVi 
+                ? 'Đổi tên biến hệ thống để thẻ MVU vẫn hoạt động sau khi dịch. Bật ON → khi dịch, AI sẽ TỰ ĐỘNG quét key và dịch tên biến.' 
+                : 'Rename system variables to keep MVU cards functional after translation. ON → AI will AUTO-DETECT keys and translate variable names during translation.'}
             </span>
           </div>
 
           <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
-            <button className="btn btn-secondary" onClick={autoExtract} style={{ flex: 1, padding: '6px' }}>
+            <button className="btn btn-secondary" onClick={autoExtract} style={{ flex: 1, padding: '6px', fontSize: '0.75rem' }}>
               <Wand2 size={14} />
-              {locale === 'vi' ? 'Quét Key Tự Động' : 'Auto Extract Keys'}
+              {isVi ? 'Quét Key' : 'Extract Keys'}
+            </button>
+            <button
+              className="btn btn-primary"
+              onClick={autoExtractAndTranslate}
+              disabled={isAutoTranslating}
+              style={{ flex: 1, padding: '6px', fontSize: '0.75rem' }}
+            >
+              {isAutoTranslating
+                ? <><Loader2 size={14} className="spin" /> {isVi ? 'Đang dịch...' : 'Translating...'}</>
+                : <><Bot size={14} /> {isVi ? 'AI Quét + Dịch Key' : 'AI Extract + Translate'}</>
+              }
             </button>
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '200px', overflowY: 'auto' }}>
-            {Object.entries(mvuDictionary).map(([k, v]) => (
+            {dictEntries.map(([k, v]) => (
               <div key={k} style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
                 <input
                   type="text"
@@ -150,10 +229,11 @@ export default function MvuSyncPanel() {
                   type="text"
                   value={v}
                   onChange={(e) => updateEntry(k, e.target.value)}
-                  placeholder={locale === 'vi' ? 'Bản dịch (VD: Do_Hao_Cam)' : 'Translation'}
+                  placeholder={isVi ? 'Bản dịch (VD: Do_Hao_Cam)' : 'Translation'}
                   style={{
                     flex: 1, padding: '6px 8px', fontSize: '0.75rem',
-                    background: 'var(--bg-primary)', border: '1px solid var(--border-subtle)',
+                    background: v ? 'var(--bg-primary)' : 'rgba(240,196,106,0.06)',
+                    border: `1px solid ${v ? 'var(--border-subtle)' : 'rgba(240,196,106,0.3)'}`,
                     borderRadius: 'var(--radius-sm)',
                     outline: 'none'
                   }}
@@ -174,7 +254,7 @@ export default function MvuSyncPanel() {
               type="text"
               value={newKey}
               onChange={(e) => setNewKey(e.target.value)}
-              placeholder={locale === 'vi' ? 'Key gốc' : 'Original Key'}
+              placeholder={isVi ? 'Key gốc' : 'Original Key'}
               style={{
                 flex: 1, padding: '6px 8px', fontSize: '0.75rem',
                 background: 'var(--bg-primary)', border: '1px solid var(--border-subtle)',
@@ -186,7 +266,7 @@ export default function MvuSyncPanel() {
               type="text"
               value={newValue}
               onChange={(e) => setNewValue(e.target.value)}
-              placeholder={locale === 'vi' ? 'Dịch' : 'Translated'}
+              placeholder={isVi ? 'Dịch' : 'Translated'}
               style={{
                 flex: 1, padding: '6px 8px', fontSize: '0.75rem',
                 background: 'var(--bg-primary)', border: '1px solid var(--border-subtle)',
