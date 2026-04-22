@@ -112,7 +112,7 @@ export interface CharacterCard {
 
 /* ─── Translation Types ─── */
 
-export type TranslationStatus = 'pending' | 'translating' | 'done' | 'error' | 'skipped';
+export type TranslationStatus = 'pending' | 'translating' | 'done' | 'error' | 'skipped' | 'ignored';
 
 export interface TranslationField {
   /** Unique path, e.g. "data.character_book.entries[2].content" */

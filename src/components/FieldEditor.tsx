@@ -3,7 +3,7 @@ import { useStore } from '../store';
 import { useTranslation } from '../hooks/useTranslation';
 import { useT } from '../i18n/useLocale';
 import type { FieldGroup } from '../types/card';
-import { RotateCcw, AlertTriangle, CheckCircle2, Clock, ArrowLeftRight, BarChart3 } from 'lucide-react';
+import { RotateCcw, AlertTriangle, CheckCircle2, Clock, ArrowLeftRight, BarChart3, Ban } from 'lucide-react';
 
 const TAB_IDS: (FieldGroup | 'all')[] = [
   'all', 'core', 'messages', 'lorebook', 'lorebook_keys', 'system', 'creator', 'regex', 'depth_prompt', 'tavern_helper',
@@ -245,15 +245,26 @@ export default function FieldEditor() {
                   <StatusBadge status={field.status} t={t} />
                   <CharRatio original={field.original} translated={field.translated} />
                 </div>
-                <button
-                  className="btn btn-ghost btn-xs"
-                  onClick={() => retranslateField(field.path)}
-                  disabled={phase === 'translating'}
-                  style={{ padding: '3px 6px' }}
-                  title={t.retranslate}
-                >
-                  <RotateCcw size={12} />
-                </button>
+                <div style={{ display: 'flex', gap: '4px' }}>
+                  <button
+                    className="btn btn-ghost btn-xs tooltip"
+                    data-tooltip={t.ignored}
+                    onClick={() => updateField(field.path, { status: field.status === 'ignored' ? 'pending' : 'ignored' })}
+                    disabled={phase === 'translating'}
+                    style={{ padding: '3px 6px' }}
+                  >
+                    {field.status === 'ignored' ? <RotateCcw size={12} /> : <Ban size={12} />}
+                  </button>
+                  <button
+                    className="btn btn-ghost btn-xs tooltip"
+                    data-tooltip={t.retranslate}
+                    onClick={() => retranslateField(field.path)}
+                    disabled={phase === 'translating'}
+                    style={{ padding: '3px 6px' }}
+                  >
+                    <RotateCcw size={12} />
+                  </button>
+                </div>
               </div>
               <DiffView original={field.original} translated={field.translated} />
               {field.error && (
@@ -322,7 +333,16 @@ export default function FieldEditor() {
                   </td>
 
                   {/* Actions */}
-                  <td>
+                  <td style={{ display: 'flex', gap: '4px' }}>
+                    <button
+                      className="btn btn-ghost btn-xs tooltip"
+                      data-tooltip={t.ignored}
+                      onClick={() => updateField(field.path, { status: field.status === 'ignored' ? 'pending' : 'ignored' })}
+                      disabled={phase === 'translating'}
+                      style={{ padding: '4px' }}
+                    >
+                      {field.status === 'ignored' ? <RotateCcw size={13} /> : <Ban size={13} />}
+                    </button>
                     <button
                       className="btn btn-ghost btn-xs tooltip"
                       data-tooltip={t.retranslate}
@@ -356,6 +376,13 @@ function StatusBadge({ status, t }: { status: string; t: Record<string, string> 
     return (
       <span className="badge badge-warning" style={{ fontSize: '0.65rem', background: 'var(--accent-warning)', color: '#fff', border: 'none' }}>
         <CheckCircle2 size={8} /> Bỏ qua
+      </span>
+    );
+  }
+  if (status === 'ignored') {
+    return (
+      <span className="badge badge-neutral" style={{ fontSize: '0.65rem', background: 'var(--bg-secondary)', color: 'var(--text-muted)' }}>
+        <Ban size={8} /> {t.ignored || 'Bỏ qua (không dịch)'}
       </span>
     );
   }

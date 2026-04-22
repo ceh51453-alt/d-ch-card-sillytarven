@@ -93,6 +93,7 @@ const en = {
   retranslateAll: 'Re-translate All',
   clear: 'Clear',
   skipped: 'Skipped',
+  ignored: 'Ignored',
   skipAlreadyTranslated: 'Skip fields already in target language',
 
   // Log Filter
@@ -235,6 +236,7 @@ const vi: TranslationKeys = {
   retranslateAll: 'Dịch lại tất cả',
   clear: 'Xóa',
   skipped: 'Bỏ qua',
+  ignored: 'Bỏ qua (không dịch)',
   skipAlreadyTranslated: 'Bỏ qua trường đã đúng ngôn ngữ đích',
 
   // Log Filter

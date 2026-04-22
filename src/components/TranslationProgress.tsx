@@ -15,6 +15,7 @@ import {
   RotateCcw,
   Filter,
   Trash2,
+  Ban,
 } from 'lucide-react';
 
 export default function TranslationProgress() {
@@ -34,14 +35,15 @@ export default function TranslationProgress() {
   const doneFields = fields.filter((f) => f.status === 'done').length;
   const errorFields = fields.filter((f) => f.status === 'error').length;
   const skippedFields = fields.filter((f) => f.status === 'skipped').length;
-  const progress = totalFields > 0 ? ((doneFields + skippedFields) / totalFields) * 100 : 0;
+  const ignoredFields = fields.filter((f) => f.status === 'ignored').length;
+  const progress = totalFields > 0 ? ((doneFields + skippedFields + ignoredFields) / totalFields) * 100 : 0;
 
   // Estimated time remaining
   const getETA = () => {
     if (!startTime || doneFields === 0) return '--';
     const elapsed = Date.now() - startTime;
     const avgPerField = elapsed / doneFields;
-    const remaining = avgPerField * (totalFields - doneFields - errorFields - skippedFields);
+    const remaining = avgPerField * (totalFields - doneFields - errorFields - skippedFields - ignoredFields);
     if (remaining < 60000) return `${Math.ceil(remaining / 1000)}s`;
     return `${Math.ceil(remaining / 60000)}m`;
   };
@@ -78,7 +80,7 @@ export default function TranslationProgress() {
         <div style={{ marginBottom: '12px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', marginBottom: '6px' }}>
             <span style={{ color: 'var(--text-secondary)' }}>
-              {doneFields + skippedFields} / {totalFields} {t.fields}
+              {doneFields + skippedFields + ignoredFields} / {totalFields} {t.fields}
             </span>
             <span style={{ fontWeight: 600, color: 'var(--accent-primary)' }}>
               {progress.toFixed(0)}%
@@ -109,10 +111,13 @@ export default function TranslationProgress() {
           {skippedFields > 0 && (
             <MiniStat icon={<CheckCircle2 size={12} />} value={skippedFields} label={t.skipped} color="var(--accent-warning)" />
           )}
+          {ignoredFields > 0 && (
+            <MiniStat icon={<Ban size={12} />} value={ignoredFields} label={t.ignored || 'Ignored'} color="var(--text-muted)" />
+          )}
           <MiniStat icon={<XCircle size={12} />} value={errorFields} label={t.error} color="var(--accent-danger)" />
           <MiniStat
             icon={<Loader2 size={12} />}
-            value={totalFields - doneFields - errorFields - skippedFields}
+            value={totalFields - doneFields - errorFields - skippedFields - ignoredFields}
             label={t.remaining}
             color="var(--text-muted)"
           />

@@ -55,15 +55,15 @@ export function useTranslation() {
       const existingMap = new Map(store.fields.map(f => [f.path, f]));
       mergedFields = newFields.map(nf => {
         const existing = existingMap.get(nf.path);
-        // Keep existing translation if done or skipped
-        if (existing && (existing.status === 'done' || existing.status === 'skipped')) {
+        // Keep existing translation if done, skipped or ignored
+        if (existing && (existing.status === 'done' || existing.status === 'skipped' || existing.status === 'ignored')) {
           return existing;
         }
         return nf;
       });
-      // Also keep done/skipped fields from groups not currently enabled
+      // Also keep done/skipped/ignored fields from groups not currently enabled
       for (const ef of store.fields) {
-        if ((ef.status === 'done' || ef.status === 'skipped') && !mergedFields.find(m => m.path === ef.path)) {
+        if ((ef.status === 'done' || ef.status === 'skipped' || ef.status === 'ignored') && !mergedFields.find(m => m.path === ef.path)) {
           mergedFields.push(ef);
         }
       }
