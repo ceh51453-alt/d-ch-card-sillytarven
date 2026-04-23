@@ -220,7 +220,8 @@ export async function aiTranslateMvuKeys(
   keys: string[],
   targetLang: string,
   proxy: ProxySettings,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  schemaContext?: string
 ): Promise<Record<string, string>> {
   if (keys.length === 0) return {};
 
@@ -251,8 +252,13 @@ STRICT RULES:
 
 RESPOND in EXACT JSON format (no markdown): {"translations": {"original_key": "Translated_Key", ...}}`;
 
-  const userPrompt = `Translate these variable names to ${targetLang} (code-friendly, underscore-separated):
+  let contextBlock = '';
+  if (schemaContext && schemaContext.trim()) {
+    contextBlock = `\nHere is the Zod schema or script context where these variables are defined. USE THIS CONTEXT to understand what the variables mean (look at the .describe() text or comments):\n\`\`\`javascript\n${schemaContext.slice(0, 5000)}\n\`\`\`\n\n`;
+  }
 
+  const userPrompt = `Translate these variable names to ${targetLang} (code-friendly, underscore-separated):${contextBlock}
+Variables to translate:
 ${keysToTranslate.map((k, i) => `${i + 1}. "${k}"`).join('\n')}`;
 
   try {

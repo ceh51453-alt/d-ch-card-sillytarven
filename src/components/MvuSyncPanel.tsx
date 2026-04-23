@@ -87,10 +87,17 @@ export default function MvuSyncPanel() {
 
     setIsAutoTranslating(true);
     try {
+      let schemaContext = translationConfig.customSchema || '';
+      if (!schemaContext.trim() && card?.data?.extensions?.tavern_helper?.scripts) {
+        schemaContext = card.data.extensions.tavern_helper.scripts.map((s: any) => s.content).join('\n\n');
+      }
+
       const translations = await aiTranslateMvuKeys(
         keysNeedTranslation,
         translationConfig.targetLanguage,
-        proxy
+        proxy,
+        undefined,
+        schemaContext
       );
 
       const nextDict = { ...mvuDictionary };

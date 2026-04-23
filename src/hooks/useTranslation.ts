@@ -136,6 +136,21 @@ export function useTranslation() {
         effectivePrompt = (effectivePrompt || '') + TAVERN_HELPER_EXTRA_PROMPT;
       }
 
+      // Add MVU variable protection prompt
+      if (store.translationConfig.enableMvuSync) {
+        const currentDict = useStore.getState().translationConfig.mvuDictionary;
+        if (Object.keys(currentDict).length > 0) {
+          const isLogicField = field.group === 'tavern_helper' || field.group === 'regex' || field.group === 'lorebook';
+          if (isLogicField) {
+            const mvuEntries = Object.entries(currentDict).filter(([k,v]) => k && v && k !== v);
+            if (mvuEntries.length > 0) {
+              const keysList = mvuEntries.map(([k]) => `"${k}"`).join(', ');
+              effectivePrompt = (effectivePrompt || '') + `\n\nCRITICAL VARIABLE PROTECTION (MVU/Zod):\nDO NOT TRANSLATE the following exact strings. Keep them exactly as they are in the original language, because they are system variable keys:\n${keysList}`;
+            }
+          }
+        }
+      }
+
       let translated = await translateText(
         field.original,
         field.label,
@@ -215,13 +230,29 @@ export function useTranslation() {
 
     try {
       const items = batchFields.map(f => ({ text: f.original, fieldName: f.label }));
+      
+      let effectivePrompt = store.translationConfig.translationPrompt;
+      // Add MVU variable protection prompt for lorebook batch
+      if (store.translationConfig.enableMvuSync) {
+        const currentDict = useStore.getState().translationConfig.mvuDictionary;
+        if (Object.keys(currentDict).length > 0) {
+          if (batchFields.some(f => f.group === 'lorebook')) {
+            const mvuEntries = Object.entries(currentDict).filter(([k,v]) => k && v && k !== v);
+            if (mvuEntries.length > 0) {
+              const keysList = mvuEntries.map(([k]) => `"${k}"`).join(', ');
+              effectivePrompt = (effectivePrompt || '') + `\n\nCRITICAL VARIABLE PROTECTION (MVU/Zod):\nDO NOT TRANSLATE the following exact strings. Keep them exactly as they are in the original language, because they are system variable keys:\n${keysList}`;
+            }
+          }
+        }
+      }
+
       const results = await translateBatch(
         items,
         store.proxy,
         store.translationConfig.targetLanguage,
         store.translationConfig.sourceLanguage,
         store.proxy.systemPromptPrefix,
-        store.translationConfig.translationPrompt,
+        effectivePrompt,
         store.translationConfig.customSchema,
         abortRef.current?.signal,
         store.translationConfig.glossary
@@ -371,11 +402,19 @@ export function useTranslation() {
           
           if (newKeys.length > 0) {
             store.addLog('active', `🤖 Calling AI to translate ${newKeys.length} variable names...`);
+            
+            // Provide schema context for better AI translation
+            let schemaContext = store.translationConfig.customSchema || '';
+            if (!schemaContext.trim() && store.card?.data?.extensions?.tavern_helper?.scripts) {
+              schemaContext = store.card.data.extensions.tavern_helper.scripts.map(s => s.content).join('\n\n');
+            }
+
             const aiTranslations = await aiTranslateMvuKeys(
               newKeys,
               store.translationConfig.targetLanguage,
               store.proxy,
-              abortRef.current?.signal
+              abortRef.current?.signal,
+              schemaContext
             );
             
             // Merge AI translations into dictionary (only non-empty, non-identical)
