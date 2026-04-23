@@ -136,16 +136,21 @@ export function useTranslation() {
         effectivePrompt = (effectivePrompt || '') + TAVERN_HELPER_EXTRA_PROMPT;
       }
 
-      // Add MVU variable protection prompt
+      // Add MVU variable REPLACEMENT dictionary prompt
       if (store.translationConfig.enableMvuSync) {
         const currentDict = useStore.getState().translationConfig.mvuDictionary;
         if (Object.keys(currentDict).length > 0) {
-          const isLogicField = field.group === 'tavern_helper' || field.group === 'regex' || field.group === 'lorebook';
-          if (isLogicField) {
-            const mvuEntries = Object.entries(currentDict).filter(([k,v]) => k && v && k !== v);
-            if (mvuEntries.length > 0) {
-              const keysList = mvuEntries.map(([k]) => `"${k}"`).join(', ');
-              effectivePrompt = (effectivePrompt || '') + `\n\nCRITICAL VARIABLE PROTECTION (MVU/Zod):\nDO NOT TRANSLATE the following exact strings. Keep them exactly as they are in the original language, because they are system variable keys:\n${keysList}`;
+          const mvuEntries = Object.entries(currentDict).filter(([k,v]) => k && v && k !== v);
+          if (mvuEntries.length > 0) {
+            const isLogicField = field.group === 'tavern_helper' || field.group === 'regex' || field.group === 'lorebook';
+            const dictList = mvuEntries.map(([k, v]) => `  "${k}" → "${v}"`).join('\n');
+            if (isLogicField) {
+              // For code/logic fields: REPLACE variable names using the dictionary
+              effectivePrompt = (effectivePrompt || '') + `\n\nCRITICAL — MVU/Zod VARIABLE REPLACEMENT DICTIONARY:\nThis card uses a variable system (MVU/Zod). The following variable names MUST be replaced with their translated equivalents EVERYWHERE they appear (in code, data-var attributes, {{getvar::}}, {{setvar::}}, YAML keys, z.object fields, etc.):\n${dictList}\nRules:\n- Replace ALL occurrences of the original name with the translated name\n- Keep the same format (underscores, no spaces in variable names)\n- Do NOT invent your own translations for these variables — use EXACTLY the dictionary above\n- If you see a variable name from the dictionary, ALWAYS use the mapped translation`;
+            } else {
+              // For narrative/text fields: just use as glossary for consistency
+              const termsList = mvuEntries.map(([k, v]) => `  "${k}" → "${v}"`).join('\n');
+              effectivePrompt = (effectivePrompt || '') + `\n\nVARIABLE NAME GLOSSARY (use these translations consistently):\n${termsList}`;
             }
           }
         }
@@ -232,15 +237,18 @@ export function useTranslation() {
       const items = batchFields.map(f => ({ text: f.original, fieldName: f.label }));
       
       let effectivePrompt = store.translationConfig.translationPrompt;
-      // Add MVU variable protection prompt for lorebook batch
+      // Add MVU variable REPLACEMENT dictionary for batch translations
       if (store.translationConfig.enableMvuSync) {
         const currentDict = useStore.getState().translationConfig.mvuDictionary;
         if (Object.keys(currentDict).length > 0) {
-          if (batchFields.some(f => f.group === 'lorebook')) {
-            const mvuEntries = Object.entries(currentDict).filter(([k,v]) => k && v && k !== v);
-            if (mvuEntries.length > 0) {
-              const keysList = mvuEntries.map(([k]) => `"${k}"`).join(', ');
-              effectivePrompt = (effectivePrompt || '') + `\n\nCRITICAL VARIABLE PROTECTION (MVU/Zod):\nDO NOT TRANSLATE the following exact strings. Keep them exactly as they are in the original language, because they are system variable keys:\n${keysList}`;
+          const mvuEntries = Object.entries(currentDict).filter(([k,v]) => k && v && k !== v);
+          if (mvuEntries.length > 0) {
+            const hasLogicFields = batchFields.some(f => f.group === 'lorebook' || f.group === 'tavern_helper' || f.group === 'regex');
+            const dictList = mvuEntries.map(([k, v]) => `  "${k}" → "${v}"`).join('\n');
+            if (hasLogicFields) {
+              effectivePrompt = (effectivePrompt || '') + `\n\nCRITICAL — MVU/Zod VARIABLE REPLACEMENT DICTIONARY:\nReplace the following variable names with their translated equivalents EVERYWHERE they appear:\n${dictList}\n- Replace ALL occurrences consistently. Do NOT invent your own translations.`;
+            } else {
+              effectivePrompt = (effectivePrompt || '') + `\n\nVARIABLE NAME GLOSSARY (use consistently):\n${dictList}`;
             }
           }
         }
@@ -658,6 +666,23 @@ export function useTranslation() {
         effectivePrompt = (effectivePrompt || '') + REGEX_EXTRA_PROMPT;
       } else if (isTavernHelperField) {
         effectivePrompt = (effectivePrompt || '') + TAVERN_HELPER_EXTRA_PROMPT;
+      }
+
+      // Add MVU variable REPLACEMENT dictionary for retranslation
+      if (store.translationConfig.enableMvuSync) {
+        const currentDict = useStore.getState().translationConfig.mvuDictionary;
+        if (Object.keys(currentDict).length > 0) {
+          const mvuEntries = Object.entries(currentDict).filter(([k,v]) => k && v && k !== v);
+          if (mvuEntries.length > 0) {
+            const isLogicField = field.group === 'tavern_helper' || field.group === 'regex' || field.group === 'lorebook';
+            const dictList = mvuEntries.map(([k, v]) => `  "${k}" → "${v}"`).join('\n');
+            if (isLogicField) {
+              effectivePrompt = (effectivePrompt || '') + `\n\nCRITICAL — MVU/Zod VARIABLE REPLACEMENT DICTIONARY:\nReplace the following variable names with their translated equivalents EVERYWHERE they appear:\n${dictList}\n- Replace ALL occurrences consistently. Do NOT invent your own translations.`;
+            } else {
+              effectivePrompt = (effectivePrompt || '') + `\n\nVARIABLE NAME GLOSSARY (use consistently):\n${dictList}`;
+            }
+          }
+        }
       }
 
       let translated = await translateText(

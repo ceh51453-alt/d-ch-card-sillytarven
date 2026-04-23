@@ -28,25 +28,23 @@ export function syncMvuVariables(
   // Escape regex special characters
   const escapeRegExp = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-  // Hàm helper: Replace thông minh — chỉ replace trong ngữ cảnh biến
-  // Không replace nếu key nằm giữa chữ cái khác (cho ASCII)
-  const replaceInText = (text: string): string => {
+  // ─── replaceInCode: Replace biến trong ngữ cảnh code (aggressive) ───
+  // Dùng cho: TavernHelper scripts, regex HTML, lorebook entries  
+  // Thay thế MỌI NƠI vì các field này chứa code/data
+  const replaceInCode = (text: string): string => {
     if (!text || typeof text !== 'string') return text;
     let newText = text;
     for (const [original, translated] of entries) {
       const escaped = escapeRegExp(original);
       
-      // Xác định loại boundary dựa trên nội dung key
       const isAsciiOnly = /^[a-zA-Z0-9_]+$/.test(original);
       let regex: RegExp;
       
       if (isAsciiOnly) {
         // ASCII keys: sử dụng word boundary để tránh replace nhầm
-        // VD: "name" không replace trong "username"
         regex = new RegExp(`\\b${escaped}\\b`, 'g');
       } else {
-        // Unicode keys (Trung/Nhật/Hàn): không có word boundary
-        // Nhưng kiểm tra không nằm trong giữa chuỗi ASCII (VD: function name)
+        // Unicode keys (Trung/Nhật/Hàn): replace trực tiếp
         regex = new RegExp(escaped, 'g');
       }
       
@@ -55,12 +53,43 @@ export function syncMvuVariables(
     return newText;
   };
 
-  // 1. Xử lý TavernHelper Scripts (Zod Schema)
+  // ─── replaceInStructured: Replace biến CHỈ trong ngữ cảnh có cấu trúc ───
+  // Dùng cho: narrative fields (system_prompt, description, v.v.)
+  // Chỉ replace khi biến xuất hiện trong context rõ ràng:
+  //   {{getvar::KEY}}, {{setvar::KEY::}}, data-var="KEY", KEY: value (YAML), z.object fields
+  const replaceInStructured = (text: string): string => {
+    if (!text || typeof text !== 'string') return text;
+    let newText = text;
+    for (const [original, translated] of entries) {
+      const escaped = escapeRegExp(original);
+      
+      // 1. {{getvar::KEY}} / {{setvar::KEY::}} / {{addvar::KEY}}
+      newText = newText.replace(
+        new RegExp(`(\\{\\{(?:getvar|setvar|addvar|getglobalvar|setglobalvar|addglobalvar)::)${escaped}`, 'g'),
+        `$1${translated}`
+      );
+      
+      // 2. data-var="KEY"
+      newText = newText.replace(
+        new RegExp(`(data-var\\s*=\\s*["'])${escaped}(["'])`, 'g'),
+        `$1${translated}$2`
+      );
+      
+      // 3. YAML-style KEY: (at start of line)
+      newText = newText.replace(
+        new RegExp(`^(\\s*)${escaped}(\\s*:)`, 'gm'),
+        `$1${translated}$2`
+      );
+    }
+    return newText;
+  };
+
+  // 1. Xử lý TavernHelper Scripts (Zod Schema) — code context
   const tavernHelper = result.data.extensions?.tavern_helper as any;
   if (tavernHelper?.scripts) {
     tavernHelper.scripts = tavernHelper.scripts.map((script: any) => ({
       ...script,
-      content: replaceInText(script.content)
+      content: replaceInCode(script.content)
     }));
   }
   // Hỗ trợ phiên bản cũ của TavernHelper
@@ -68,23 +97,23 @@ export function syncMvuVariables(
   if (Array.isArray(tavernHelperLegacy)) {
     result.data.extensions!.TavernHelper_scripts = tavernHelperLegacy.map((script: any) => ({
       ...script,
-      content: replaceInText(script.content)
+      content: replaceInCode(script.content)
     }));
   }
 
-  // 2. Xử lý Regex Scripts (HTML UI, class, id, data-var)
+  // 2. Xử lý Regex Scripts (HTML UI, class, id, data-var) — code context
   if (result.data.extensions?.regex_scripts) {
     result.data.extensions.regex_scripts = result.data.extensions.regex_scripts.map((script) => ({
       ...script,
-      replaceString: replaceInText(script.replaceString)
+      replaceString: replaceInCode(script.replaceString)
     }));
   }
 
-  // 3. Xử lý Lorebook Entries (Rules, [initvar], JSON Patch)
+  // 3. Xử lý Lorebook Entries (Rules, [initvar], JSON Patch) — code context
   if (result.data.character_book?.entries) {
     result.data.character_book.entries = result.data.character_book.entries.map((entry) => ({
       ...entry,
-      content: replaceInText(entry.content)
+      content: replaceInCode(entry.content)
     }));
   }
 
@@ -93,8 +122,29 @@ export function syncMvuVariables(
   if (extCharBook?.entries) {
     extCharBook.entries = extCharBook.entries.map((entry: any) => ({
       ...entry,
-      content: replaceInText(entry.content)
+      content: replaceInCode(entry.content)
     }));
+  }
+
+  // 4. Xử lý narrative fields — structured replacement only (chỉ thay trong macro/data-var/YAML)
+  // Không replace bừa bãi trong văn xuôi
+  if (result.data.system_prompt) {
+    result.data.system_prompt = replaceInStructured(result.data.system_prompt);
+  }
+  if (result.data.post_history_instructions) {
+    result.data.post_history_instructions = replaceInStructured(result.data.post_history_instructions);
+  }
+  if (result.data.description) {
+    result.data.description = replaceInStructured(result.data.description);
+  }
+  if (result.data.personality) {
+    result.data.personality = replaceInStructured(result.data.personality);
+  }
+  if (result.data.scenario) {
+    result.data.scenario = replaceInStructured(result.data.scenario);
+  }
+  if (result.data.first_mes) {
+    result.data.first_mes = replaceInStructured(result.data.first_mes);
   }
 
   return result;
@@ -204,8 +254,35 @@ export function extractPotentialMvuKeys(card: CharacterCard): string[] {
     }
   }
 
+  // ─── Scan narrative fields for {{getvar/setvar}} references ───
+  // These fields may reference MVU variables via macros
+  const narrativeFields = [
+    data.system_prompt, data.post_history_instructions,
+    data.description, data.personality, data.scenario, data.first_mes,
+  ];
+  for (const fieldText of narrativeFields) {
+    if (!fieldText || typeof fieldText !== 'string') continue;
+    const varMacroRegex = /\{\{(?:getvar|setvar|addvar|getglobalvar|setglobalvar|addglobalvar)::([^:}]+)/g;
+    let match;
+    while ((match = varMacroRegex.exec(fieldText)) !== null) {
+      const key = match[1].trim();
+      if (key) keys.add(key);
+    }
+  }
+  // Also scan alternate_greetings
+  if (Array.isArray(data.alternate_greetings)) {
+    for (const greeting of data.alternate_greetings) {
+      if (typeof greeting !== 'string') continue;
+      const varMacroRegex = /\{\{(?:getvar|setvar|addvar)::([^:}]+)/g;
+      let match;
+      while ((match = varMacroRegex.exec(greeting)) !== null) {
+        keys.add(match[1].trim());
+      }
+    }
+  }
+
   // Filter out generic/noise keys
-  const noiseKeys = new Set(['true', 'false', 'null', 'undefined', 'enabled', 'disabled', 'name', 'value', 'type', 'content', 'key', 'data', 'id', 'class', 'style']);
+  const noiseKeys = new Set(['true', 'false', 'null', 'undefined', 'enabled', 'disabled', 'name', 'value', 'type', 'content', 'key', 'data', 'id', 'class', 'style', 'script', 'div', 'span', 'table', 'tr', 'td', 'th', 'input', 'button', 'label', 'select', 'option', 'form', 'img', 'src', 'href', 'title', 'alt', 'width', 'height']);
   return Array.from(keys).filter(k => k.length > 1 && !noiseKeys.has(k.toLowerCase()));
 }
 
@@ -242,13 +319,21 @@ export async function aiTranslateMvuKeys(
 Your job: translate variable names from the source language to ${targetLang}, formatted as code-friendly identifiers.
 
 STRICT RULES:
-1. Use ONLY Latin letters (with diacritics if the target language requires, like Vietnamese).
-2. Replace spaces with underscores (_).
-3. Keep the names SHORT but meaningful (2-5 words max).
-4. NO spaces, NO special characters except underscores.
-5. Be CONSISTENT: similar concepts should have similar naming patterns.
+1. Use Latin letters WITH diacritics if the target language requires them (e.g. Vietnamese: Độ_Hảo_Cảm, Sức_Tấn_Công).
+2. Replace spaces with underscores (_). No spaces allowed in variable names.
+3. Keep the names SHORT but meaningful (2-4 words max).
+4. NO spaces, NO special characters except underscores and diacritics.
+5. Be CONSISTENT: similar concepts MUST have similar naming patterns.
+   - All emotion/feeling variables should follow the same pattern (e.g. Mức_X, Độ_X)
+   - All stat variables should follow the same pattern
 6. If a key is already in Latin/ASCII, keep it AS IS.
-7. Proper nouns (names) should be transliterated, not translated.
+7. Proper nouns (character names) should be transliterated, not translated.
+8. Keep numeric suffixes and prefixes intact (e.g. "攻击力2" → "Sức_Tấn_Công_2").
+9. For Vietnamese specifically:
+   - Use Title_Case with diacritics: Hảo_Cảm, Thể_Lực, Trí_Tuệ
+   - Each word should be properly capitalized
+   - Common patterns: 好感 → Hảo_Cảm, 体力 → Thể_Lực, 攻击 → Tấn_Công
+10. IMPORTANT: The translated names will be used as variable names in code. They must be valid identifiers (letters, digits, underscores only + diacritics).
 
 RESPOND in EXACT JSON format (no markdown): {"translations": {"original_key": "Translated_Key", ...}}`;
 

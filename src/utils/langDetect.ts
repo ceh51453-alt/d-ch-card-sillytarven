@@ -113,21 +113,16 @@ const LANG_LABEL_MAP: Record<string, string> = {
 
 /**
  * Check if text should be skipped for translation.
- * - Skips if text is already in target language.
- * - Skips if source language is strictly specified and text is detected as a different language.
+ * ONLY skips if text is already in the target language.
+ * Never skip based on source language mismatch — cards often mix languages
+ * (e.g. Chinese text with English variable names, HTML, code).
  */
-export function shouldSkipTranslation(text: string, targetLanguage: string, sourceLanguage: string = 'auto'): boolean {
+export function shouldSkipTranslation(text: string, targetLanguage: string, _sourceLanguage: string = 'auto'): boolean {
   const detected = detectLanguage(text);
-  if (detected === 'unknown' || detected === 'mixed') return false; // Default to translate if we can't tell or it's mixed
+  // If we can't detect or it's mixed → always translate (let AI handle it)
+  if (detected === 'unknown' || detected === 'mixed') return false;
 
   const normalizedTarget = LANG_LABEL_MAP[targetLanguage] || targetLanguage;
-  if (detected === normalizedTarget) return true; // Already target lang
-
-  // If a specific source language is requested, skip if it doesn't match
-  if (sourceLanguage !== 'auto') {
-    const normalizedSource = LANG_LABEL_MAP[sourceLanguage] || sourceLanguage;
-    if (detected !== normalizedSource) return true; // Not the requested source lang
-  }
-
-  return false;
+  // ONLY skip if text is definitively already in the target language
+  return detected === normalizedTarget;
 }
