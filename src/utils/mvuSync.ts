@@ -430,6 +430,117 @@ ${keysToTranslate.map((k, i) => `${i + 1}. "${k}"`).join('\n')}`;
   }
 }
 
+/* ═══ AI Auto-extract Glossary Terms ═══ */
+
+/**
+ * Gọi AI để quét các trường văn bản của thẻ (description, personality, lorebook names...)
+ * và trích xuất ra các thuật ngữ quan trọng (tên người, địa danh, khái niệm) 
+ * cùng với bản dịch sang ngôn ngữ đích.
+ */
+export async function aiExtractGlossaryTerms(
+  card: CharacterCard,
+  targetLang: string,
+  proxy: ProxySettings,
+  signal?: AbortSignal
+): Promise<Record<string, string>> {
+  let context = '';
+  const data = card.data || (card as any);
+  if (data.name) context += `Character Name: ${data.name}\n`;
+  if (data.description) context += `Description:\n${data.description}\n\n`;
+  if (data.personality) context += `Personality:\n${data.personality}\n\n`;
+  if (data.scenario) context += `Scenario:\n${data.scenario}\n\n`;
+  
+  if (data.character_book?.entries) {
+    const names = data.character_book.entries.map((e: any) => e.name).filter(Boolean);
+    if (names.length > 0) context += `Lorebook Entries (Concepts/Characters):\n${names.join(', ')}\n\n`;
+  }
+  
+  // Truncate to save tokens (first 6000 chars)
+  context = context.slice(0, 6000);
+
+  if (!context.trim()) return {};
+
+  const systemPrompt = `You are a terminology extraction AI for roleplay character cards.
+Your job is to read the character's background and extract proper nouns, character names, locations, special artifacts, and unique concepts, then translate them to ${targetLang}.
+
+RULES:
+1. ONLY extract important proper nouns and specific terminology. DO NOT extract common words (like "sword", "house", "run").
+2. Translate them to ${targetLang}. 
+   - For Vietnamese (${targetLang}), use proper Hán Việt (Sino-Vietnamese) for Chinese/wuxia/xianxia names (e.g. 李明 -> Lý Minh, 长安 -> Trường An).
+3. Keep the list concise (max 15-20 most important terms).
+4. Output EXACT JSON format: {"glossary": {"Source Term": "Translated Term"}}
+5. DO NOT wrap the JSON in markdown blocks like \`\`\`json. Just output the raw JSON string.`;
+
+  const userPrompt = `Extract and translate terminology to ${targetLang} from the following text:\n\n${context}`;
+
+  try {
+    const url = proxy.proxyUrl.replace(/\/+$/, '');
+    let apiUrl: string;
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    let body: any;
+
+    if (proxy.provider === 'anthropic') {
+      apiUrl = url + '/messages';
+      headers['x-api-key'] = proxy.apiKey;
+      headers['anthropic-version'] = '2023-06-01';
+      headers['anthropic-dangerous-direct-browser-access'] = 'true';
+      body = {
+        model: proxy.model,
+        max_tokens: Math.min(proxy.maxTokens, 4096),
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userPrompt }],
+        temperature: 0.1,
+      };
+    } else if (proxy.provider === 'google') {
+      apiUrl = `${url}/models/${proxy.model}:generateContent?key=${proxy.apiKey}`;
+      body = {
+        system_instruction: { parts: [{ text: systemPrompt }] },
+        contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
+        generationConfig: { maxOutputTokens: Math.min(proxy.maxTokens, 4096), temperature: 0.1 },
+      };
+    } else {
+      apiUrl = url + '/chat/completions';
+      if (proxy.apiKey) headers['Authorization'] = `Bearer ${proxy.apiKey}`;
+      body = {
+        model: proxy.model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+        max_tokens: Math.min(proxy.maxTokens, 4096),
+        temperature: 0.1,
+      };
+    }
+
+    const res = await fetch(apiUrl, { method: 'POST', headers, body: JSON.stringify(body), signal });
+    if (!res.ok) throw new Error(`API ${res.status}`);
+
+    const json = await res.json();
+    let responseText = '';
+    if (proxy.provider === 'anthropic') responseText = json.content?.[0]?.text || '';
+    else if (proxy.provider === 'google') responseText = json.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    else responseText = json.choices?.[0]?.message?.content || '';
+
+    let jsonStr = responseText.trim();
+    if (jsonStr.startsWith('\`\`\`')) {
+      jsonStr = jsonStr.replace(/^\`\`\`(?:json)?\s*\n?/, '').replace(/\n?\`\`\`\s*$/, '');
+    }
+
+    const parsed = JSON.parse(jsonStr);
+    const result: Record<string, string> = {};
+    const glossary = parsed.glossary || parsed;
+    for (const [k, v] of Object.entries(glossary)) {
+      if (typeof v === 'string' && v.trim() && typeof k === 'string' && k.trim()) {
+        result[k.trim()] = v.trim();
+      }
+    }
+    return result;
+  } catch (err) {
+    console.error('AI Glossary extraction failed:', err);
+    throw err;
+  }
+}
+
 /* ═══ Regex HTML Post-Processing ═══ */
 
 /**

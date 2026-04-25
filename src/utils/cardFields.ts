@@ -78,8 +78,6 @@ function hasTranslatableText(text: string): boolean {
     .replace(/<[^>]+>/g, '')                     // remove HTML tags
     .replace(/\{\{[^}]+\}\}/g, '')               // remove {{macros}}
     .replace(/<\|[^|]+\|>/g, '')                 // remove <|special|> tokens
-    .replace(/\/\*[\s\S]*?\*\//g, '')            // remove /* comments */
-    .replace(/\/\/.*/g, '')                       // remove // comments
     .replace(/[\{\}\[\]\(\);:,=<>!&|+\-*/%.#@~`"'\\]/g, '') // remove code symbols
     .replace(/\s+/g, ' ')
     .trim();

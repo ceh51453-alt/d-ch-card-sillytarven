@@ -49,7 +49,6 @@ export default function VerifyPanel() {
   const [refStats, setRefStats] = useState<{ total: number; types: Record<string, number> } | null>(null);
 
   const doneCount = fields.filter(f => f.status === 'done').length;
-  if (!card || doneCount === 0) return null;
 
   const toggleIssue = (id: string) => {
     setExpandedIssues(prev => {
@@ -170,6 +169,9 @@ export default function VerifyPanel() {
   const autoFixableCount = fieldIssues.filter(i => i.autoFixable).length;
   const fieldErrors = fieldIssues.filter(i => i.severity === 'error').length;
   const fieldWarnings = fieldIssues.filter(i => i.severity === 'warning').length;
+
+  // Early return AFTER all hooks to comply with Rules of Hooks
+  if (!card || doneCount === 0) return null;
 
   return (
     <div className="card fade-in" style={{ padding: '20px' }}>

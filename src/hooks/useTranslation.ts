@@ -249,13 +249,14 @@ export function useTranslation() {
   };
 
   /* ─── Translate one batch of fields (single API call + fallback) ─── */
-  const translateOneBatch = async (batchFields: TranslationField[]) => {
+  const translateOneBatch = async (batchFields: TranslationField[], retryCount = 0) => {
     // Mark all as translating
     for (const f of batchFields) {
       store.updateField(f.path, { status: 'translating' });
     }
     const totalChars = batchFields.reduce((s, f) => s + f.original.length, 0);
-    store.addLog('active', `Batch translating ${batchFields.length} entries (${totalChars} chars)`);
+    const retryPrefix = retryCount > 0 ? `[Retry ${retryCount}] ` : '';
+    store.addLog('active', `${retryPrefix}Batch translating ${batchFields.length} entries (${totalChars} chars)`);
 
     try {
       const items = batchFields.map(f => ({ text: f.original, fieldName: f.label }));
@@ -319,53 +320,59 @@ export function useTranslation() {
       for (let j = 0; j < batchFields.length; j++) {
         const translated = results[j] || '';
         if (translated.trim()) {
-          store.updateField(batchFields[j].path, { status: 'done', translated });
+          store.updateField(batchFields[j].path, { status: 'done', translated, retries: retryCount });
           doneCount++;
         } else {
           emptyFields.push(batchFields[j]);
         }
       }
 
-      // Fallback: translate empty results individually
+      // Fallback/Retry for empty results
       if (emptyFields.length > 0) {
-        store.addLog('warning', `${emptyFields.length} empty, falling back to individual...`);
-        for (const ef of emptyFields) {
-          if (checkAbort()) throw new Error('Cancelled');
-          try {
-            store.updateField(ef.path, { status: 'translating' });
-            // Context hint for keyword fields in fallback
-            let ctxHint: string | undefined;
-            if (ef.group === 'lorebook_keys') {
-              const cp = ef.path.replace('.keys', '.content');
-              const cf = store.fields.find(f => f.path === cp);
-              if (cf) ctxHint = (cf.translated || cf.original || '').slice(0, 1500);
+        if (retryCount < (store.proxy.maxRetries || 3)) {
+          store.addLog('retry', `⚠️ ${emptyFields.length} items failed/empty in batch. Retrying as a batch...`);
+          await new Promise((r) => setTimeout(r, store.proxy.retryDelay || 1000));
+          await translateOneBatch(emptyFields, retryCount + 1);
+        } else {
+          store.addLog('warning', `${emptyFields.length} empty after retries, falling back to individual...`);
+          for (const ef of emptyFields) {
+            if (checkAbort()) throw new Error('Cancelled');
+            try {
+              store.updateField(ef.path, { status: 'translating' });
+              // Context hint for keyword fields in fallback
+              let ctxHint: string | undefined;
+              if (ef.group === 'lorebook_keys') {
+                const cp = ef.path.replace('.keys', '.content');
+                const cf = store.fields.find(f => f.path === cp);
+                if (cf) ctxHint = (cf.translated || cf.original || '').slice(0, 1500);
+              }
+              const translated = await translateText(
+                ef.original, ef.label, store.proxy,
+                store.translationConfig.targetLanguage,
+                store.translationConfig.sourceLanguage,
+                store.translationConfig.translationPrompt,
+                store.translationConfig.customSchema,
+                abortRef.current?.signal,
+                ctxHint,
+                store.translationConfig.glossary,
+                ef.previousTranslation
+              );
+              if (translated && translated.trim()) {
+                store.updateField(ef.path, { status: 'done', translated, retries: retryCount });
+                doneCount++;
+              } else {
+                store.updateField(ef.path, { status: 'error', error: 'API returned empty translation', retries: retryCount });
+              }
+            } catch (fallbackErr) {
+              const fbMsg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
+              if (fbMsg === 'Cancelled' || checkAbort()) throw fallbackErr;
+              store.updateField(ef.path, { status: 'error', error: fbMsg, retries: retryCount });
             }
-            const translated = await translateText(
-              ef.original, ef.label, store.proxy,
-              store.translationConfig.targetLanguage,
-              store.translationConfig.sourceLanguage,
-              store.translationConfig.translationPrompt,
-              store.translationConfig.customSchema,
-              abortRef.current?.signal,
-              ctxHint,
-              store.translationConfig.glossary,
-              ef.previousTranslation
-            );
-            if (translated && translated.trim()) {
-              store.updateField(ef.path, { status: 'done', translated });
-              doneCount++;
-            } else {
-              store.updateField(ef.path, { status: 'error', error: 'API returned empty translation' });
-            }
-          } catch (fallbackErr) {
-            const fbMsg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
-            if (fbMsg === 'Cancelled' || checkAbort()) throw fallbackErr;
-            store.updateField(ef.path, { status: 'error', error: fbMsg });
           }
         }
+      } else {
+        store.addLog('success', `${retryPrefix}Batch complete: ${doneCount}/${batchFields.length}`);
       }
-
-      store.addLog('success', `Batch complete: ${doneCount}/${batchFields.length}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg === 'Cancelled' || checkAbort()) {
@@ -375,8 +382,15 @@ export function useTranslation() {
         throw err;
       }
 
-      // Batch completely failed — fallback ALL to single
-      store.addLog('warning', `Batch failed, falling back for ${batchFields.length} entries...`);
+      if (retryCount < (store.proxy.maxRetries || 3)) {
+        store.addLog('retry', `⚠️ Batch completely failed, retrying the batch... (${msg})`);
+        await new Promise((r) => setTimeout(r, store.proxy.retryDelay || 1000));
+        await translateOneBatch(batchFields, retryCount + 1);
+        return;
+      }
+
+      // Batch completely failed after retries — fallback ALL to single
+      store.addLog('warning', `Batch failed after retries, falling back for ${batchFields.length} entries...`);
       for (const f of batchFields) {
         if (checkAbort()) throw new Error('Cancelled');
         try {
@@ -399,14 +413,14 @@ export function useTranslation() {
             store.translationConfig.glossary
           );
           if (translated && translated.trim()) {
-            store.updateField(f.path, { status: 'done', translated });
+            store.updateField(f.path, { status: 'done', translated, retries: retryCount });
           } else {
-            store.updateField(f.path, { status: 'error', error: 'API returned empty translation' });
+            store.updateField(f.path, { status: 'error', error: 'API returned empty translation', retries: retryCount });
           }
         } catch (fallbackErr) {
           const fbMsg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
           if (fbMsg === 'Cancelled' || checkAbort()) throw fallbackErr;
-          store.updateField(f.path, { status: 'error', error: fbMsg });
+          store.updateField(f.path, { status: 'error', error: fbMsg, retries: retryCount });
         }
       }
     }

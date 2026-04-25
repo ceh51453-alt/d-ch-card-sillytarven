@@ -92,6 +92,13 @@ export function getDefaultTranslationPrompt(sourceLang: string, targetLang: stri
     ? `You are translating FROM ${sourceLang} TO ${targetLang}.`
     : `You are translating content to ${targetLang}.`;
 
+  const vietnameseRules = targetLang.toLowerCase().includes('việt') || targetLang.toLowerCase().includes('vietnamese')
+    ? `\n15. VIETNAMESE SPECIFIC RULES:
+    - Translate Chinese names (characters, places, martial arts, etc.) into Hán Việt (Sino-Vietnamese) instead of Pinyin or raw English.
+    - Use natural roleplay pronouns (e.g., tôi/bạn, anh/em, hắn/nàng/y) suitable for the context, avoiding rigid direct translation of pronouns (like 'ngươi/ta' unless it's a historical setting).
+    - Ensure a smooth, natural literary flow (văn phong mượt mà) suitable for fiction/roleplay. Avoid word-by-word literal translation.`
+    : '';
+
   return `You are a professional translator specializing in translating to ${targetLang}.
 You are translating content from a SillyTavern AI character card (roleplay fiction).
 ${sourceInfo}
@@ -114,7 +121,8 @@ STRICT RULES:
 10. Maintain consistent terminology. If you translate a term one way, use that same translation throughout.
 11. For Japanese proper nouns (names, places, etc.), you MUST transliterate them into standard Romaji.
 12. CRITICAL: The output must contain ONLY the translated text in ${targetLang}. Do NOT include source language text. Do NOT pair original text with translation. Do NOT use arrows (→) or colons (:) to show before/after.
-13. CRITICAL: You MUST translate the COMPLETE text. Do NOT stop early. Do NOT summarize or truncate. If the text is very long, translate ALL of it from start to finish.`;
+13. CRITICAL: You MUST translate the COMPLETE text. Do NOT stop early. Do NOT summarize or truncate. If the text is very long, translate ALL of it from start to finish.
+14. CRITICAL: ABSOLUTELY NO untranslated source language characters (e.g., Chinese Hanzi, Japanese Kanji) should remain in the final output. You MUST translate every single word into ${targetLang} unless it is a specific system variable name (like {{char}}).${vietnameseRules}`;
 }
 
 /* ─── Build messages for translation ─── */
@@ -152,7 +160,14 @@ function buildTranslationMessages(
     ? customPrompt
     : getDefaultTranslationPrompt(sourceLang, targetLang);
 
-  const systemPrompt = `${systemPromptPrefix ? systemPromptPrefix + '\n\n' : ''}${basePrompt}${schemaInstructions}${glossaryInstructions}`;
+  const isVietnamese = targetLang.toLowerCase().includes('việt') || targetLang.toLowerCase().includes('vietnamese');
+  const vietnameseSafetyRule = isVietnamese 
+    ? `\n    - VIETNAMESE SPECIFIC: Translate names into Hán Việt (Sino-Vietnamese). Use natural roleplay pronouns. Ensure smooth literary flow.`
+    : '';
+
+  const safetyRule = `\n\nCRITICAL RULE: ABSOLUTELY NO untranslated source language characters (e.g., Chinese Hanzi, Japanese Kanji) should remain in the final output. You MUST translate every single word into ${targetLang} unless it is a specific system variable name (like {{char}}).${vietnameseSafetyRule}`;
+
+  const systemPrompt = `${systemPromptPrefix ? systemPromptPrefix + '\n\n' : ''}${basePrompt}${safetyRule}${schemaInstructions}${glossaryInstructions}`;
 
   const sourceHint = sourceLang && sourceLang !== 'auto' ? ` (from ${sourceLang})` : '';
 

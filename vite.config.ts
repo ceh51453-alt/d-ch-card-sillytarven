@@ -2,10 +2,49 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
+import httpProxy from 'http-proxy';
+
 export default defineConfig({
   plugins: [
     react(),
     tailwindcss(),
+    {
+      name: 'dynamic-cors-proxy',
+      configureServer(server) {
+        // Create a dedicated proxy for dynamic targets
+        const dynamicProxy = httpProxy.createProxyServer({
+          changeOrigin: true,
+          secure: false,
+        });
+
+        dynamicProxy.on('error', (err, req, res) => {
+          console.error('[dynamic proxy error]', err);
+          if (!res.headersSent) {
+            (res as import('http').ServerResponse).writeHead(502);
+            res.end('Bad Gateway');
+          }
+        });
+
+        server.middlewares.use((req, res, next) => {
+          const match = (req.url ?? '').match(/^\/api-proxy\/custom\/([A-Za-z0-9_-]+)\/(.*)/);
+          if (match) {
+            try {
+              const targetOrigin = atob(match[1].replace(/-/g, '+').replace(/_/g, '/'));
+              // Rewrite the URL to just the path part
+              req.url = `/${match[2]}`;
+              dynamicProxy.web(req, res, { target: targetOrigin });
+              return; // Do not call next() since we handled it
+            } catch (e) {
+              console.error('[dynamic proxy] Invalid base64 origin:', e);
+              res.statusCode = 400;
+              res.end('Invalid proxy origin');
+              return;
+            }
+          }
+          next();
+        });
+      }
+    }
   ],
   server: {
     // ─── CORS Proxy ───
@@ -29,45 +68,6 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api-proxy\/google/, ''),
         secure: true,
-      },
-      // Generic passthrough proxy for any custom URL
-      // Usage: /api-proxy/custom/<base64-encoded-target-origin>/rest/of/path
-      '/api-proxy/custom': {
-        target: 'http://localhost', // placeholder, overridden by router
-        changeOrigin: true,
-        secure: false,
-        configure: (proxy, _options) => {
-          proxy.on('proxyReq', (proxyReq, req) => {
-            // Extract the real target from the URL
-            // Format: /api-proxy/custom/<base64url-encoded-origin>/rest/of/path
-            const match = req.url?.match(/^\/api-proxy\/custom\/([A-Za-z0-9_-]+)\/(.*)/);
-            if (match) {
-              try {
-                const targetOrigin = atob(match[1].replace(/-/g, '+').replace(/_/g, '/'));
-                const targetUrl = new URL(`/${match[2]}`, targetOrigin);
-                proxyReq.setHeader('host', targetUrl.host);
-                proxyReq.path = targetUrl.pathname + targetUrl.search;
-              } catch {
-                // fallback — let it fail naturally
-              }
-            }
-          });
-        },
-        router: (req) => {
-          const match = req.url?.match(/^\/api-proxy\/custom\/([A-Za-z0-9_-]+)/);
-          if (match) {
-            try {
-              return atob(match[1].replace(/-/g, '+').replace(/_/g, '/'));
-            } catch {
-              return 'http://localhost';
-            }
-          }
-          return 'http://localhost';
-        },
-        rewrite: (path) => {
-          const match = path.match(/^\/api-proxy\/custom\/[A-Za-z0-9_-]+\/(.*)/);
-          return match ? `/${match[1]}` : path;
-        },
       },
     },
   },

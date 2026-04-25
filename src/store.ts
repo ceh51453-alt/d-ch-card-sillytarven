@@ -159,7 +159,7 @@ export const useStore = create<AppState>((set) => ({
 
   // ─── Translation Config ───
   translationConfig: {
-    sourceLanguage: 'auto',
+    sourceLanguage: '中文',
     targetLanguage: 'Tiếng Việt',
     translationPrompt: '',
     mode: 'field',

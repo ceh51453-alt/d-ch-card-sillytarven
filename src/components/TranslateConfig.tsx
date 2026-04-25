@@ -1,9 +1,11 @@
+import React, { useState } from 'react';
 import { useStore } from '../store';
 import { useT } from '../i18n/useLocale';
 import { TARGET_LANGUAGES, SOURCE_LANGUAGES } from '../utils/cardFields';
 import { getDefaultTranslationPrompt } from '../utils/apiClient';
+import { aiExtractGlossaryTerms } from '../utils/mvuSync';
 import type { TranslationMode, LorebookStrategy, FieldGroupConfig, FieldGroup, GlossaryEntry } from '../types/card';
-import { Languages, Settings2, FileJson, BookOpen, Plus, Trash2, Download, Upload } from 'lucide-react';
+import { Languages, Settings2, FileJson, BookOpen, Plus, Trash2, Download, Upload, Bot, Loader2 } from 'lucide-react';
 import MvuSyncPanel from './MvuSyncPanel';
 
 /** Map field group IDs to i18n keys */
@@ -24,9 +26,10 @@ function useGroupLabels() {
 }
 
 export default function TranslateConfig() {
-  const { translationConfig, setTranslationConfig, toggleFieldGroup, card, locale } = useStore();
+  const { translationConfig, setTranslationConfig, toggleFieldGroup, card, locale, proxy, addToast } = useStore();
   const t = useT();
   const groupLabels = useGroupLabels();
+  const [isAutoExtractingGlossary, setIsAutoExtractingGlossary] = useState(false);
 
   const updateGlossaryEntry = (index: number, field: 'source' | 'target', value: string) => {
     const updated = [...translationConfig.glossary];
@@ -70,6 +73,44 @@ export default function TranslateConfig() {
     };
     reader.readAsText(file);
     e.target.value = '';
+  };
+
+  const autoExtractGlossary = async () => {
+    if (!card) return;
+    setIsAutoExtractingGlossary(true);
+    try {
+      const extracted = await aiExtractGlossaryTerms(card, translationConfig.targetLanguage, proxy);
+      
+      const newEntries: GlossaryEntry[] = [];
+      let added = 0;
+      
+      // Avoid duplicates
+      const existingSources = new Set(translationConfig.glossary.map(g => g.source.trim().toLowerCase()));
+      
+      for (const [source, target] of Object.entries(extracted)) {
+        if (source.trim() && !existingSources.has(source.trim().toLowerCase())) {
+          newEntries.push({ source: source.trim(), target: target.trim() });
+          added++;
+        }
+      }
+      
+      if (added > 0) {
+        setTranslationConfig({ glossary: [...translationConfig.glossary, ...newEntries] });
+        addToast('success', locale === 'vi' 
+          ? `AI đã trích xuất thành công ${added} thuật ngữ mới.` 
+          : `AI successfully extracted ${added} new terms.`);
+      } else {
+        addToast('info', locale === 'vi' 
+          ? 'Không tìm thấy thuật ngữ mới nào.' 
+          : 'No new terms found.');
+      }
+    } catch (err) {
+      addToast('error', locale === 'vi'
+        ? `Lỗi AI: ${err instanceof Error ? err.message : String(err)}`
+        : `AI Error: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setIsAutoExtractingGlossary(false);
+    }
   };
 
   return (
@@ -205,20 +246,42 @@ export default function TranslateConfig() {
               </div>
             ))}
           </div>
-          <button
-            onClick={addGlossaryEntry}
-            style={{
-              marginTop: '6px', width: '100%', padding: '5px',
-              border: '1px dashed var(--border-subtle)', borderRadius: 'var(--radius-sm)',
-              background: 'transparent', cursor: 'pointer',
-              color: 'var(--accent-primary)', fontSize: '0.7rem', fontWeight: 600,
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px',
-              transition: 'all 0.15s',
-            }}
-          >
-            <Plus size={12} />
-            {locale === 'vi' ? 'Thêm thuật ngữ' : 'Add Term'}
-          </button>
+          <div style={{ display: 'flex', gap: '8px', marginTop: '6px' }}>
+            <button
+              onClick={addGlossaryEntry}
+              style={{
+                flex: 1, padding: '5px',
+                border: '1px dashed var(--border-subtle)', borderRadius: 'var(--radius-sm)',
+                background: 'transparent', cursor: 'pointer',
+                color: 'var(--accent-primary)', fontSize: '0.7rem', fontWeight: 600,
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px',
+                transition: 'all 0.15s',
+              }}
+            >
+              <Plus size={12} />
+              {locale === 'vi' ? 'Thêm thuật ngữ' : 'Add Term'}
+            </button>
+            <button
+              onClick={autoExtractGlossary}
+              disabled={isAutoExtractingGlossary || !card}
+              title={!card ? (locale === 'vi' ? 'Cần tải thẻ nhân vật trước' : 'Load a card first') : ''}
+              style={{
+                flex: 1, padding: '5px',
+                border: '1px solid var(--accent-primary)', borderRadius: 'var(--radius-sm)',
+                background: 'var(--accent-primary)', cursor: (!card || isAutoExtractingGlossary) ? 'not-allowed' : 'pointer',
+                color: 'white', fontSize: '0.7rem', fontWeight: 600,
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px',
+                transition: 'all 0.15s',
+                opacity: (!card || isAutoExtractingGlossary) ? 0.6 : 1,
+              }}
+            >
+              {isAutoExtractingGlossary ? (
+                <><Loader2 size={12} className="spin" /> {locale === 'vi' ? 'Đang quét...' : 'Extracting...'}</>
+              ) : (
+                <><Bot size={12} /> {locale === 'vi' ? 'AI Quét Thuật Ngữ' : 'AI Extract Terms'}</>
+              )}
+            </button>
+          </div>
         </div>
 
         {/* Fields & mode only shown when a card is loaded */}
