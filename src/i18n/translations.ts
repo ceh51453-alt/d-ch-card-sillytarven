@@ -43,6 +43,10 @@ const en = {
   systemPromptPrefix: 'System Prompt Prefix (optional)',
   systemPromptPrefixPlaceholder: 'Additional instructions to prepend to translation prompt...',
   resetDefaults: 'Reset to Defaults',
+  corsProxy: 'CORS Proxy',
+  corsProxyHint: 'Route API calls through the dev server to bypass browser CORS restrictions. Required for direct OpenAI/Anthropic API calls.',
+  corsProxyActive: 'Active — requests are proxied through the dev server',
+  corsProxyInactive: 'Off — browser calls APIs directly (may cause CORS errors)',
 
   // File Upload
   characterCard: 'Character Card',
@@ -186,6 +190,10 @@ const vi: TranslationKeys = {
   systemPromptPrefix: 'Tiền tố System Prompt (tùy chọn)',
   systemPromptPrefixPlaceholder: 'Hướng dẫn bổ sung thêm vào đầu prompt dịch...',
   resetDefaults: 'Khôi phục mặc định',
+  corsProxy: 'CORS Proxy',
+  corsProxyHint: 'Chuyển hướng các lệnh gọi API qua dev server để tránh lỗi CORS trên trình duyệt. Cần thiết khi gọi trực tiếp OpenAI/Anthropic.',
+  corsProxyActive: 'Đang bật — request được proxy qua dev server',
+  corsProxyInactive: 'Tắt — trình duyệt gọi trực tiếp API (có thể gặp lỗi CORS)',
 
   // File Upload
   characterCard: 'Thẻ nhân vật',

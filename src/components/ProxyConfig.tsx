@@ -16,6 +16,7 @@ import {
   CircleDot,
   RotateCcw,
   RefreshCw,
+  ShieldCheck,
 } from 'lucide-react';
 
 const PROVIDERS: { value: AIProvider; label: string }[] = [
@@ -240,6 +241,78 @@ export default function ProxyConfig() {
               ))}
             </div>
           )}
+        </div>
+
+        {/* CORS Proxy Toggle */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '8px 12px',
+            background: proxy.useCorsProxy
+              ? 'rgba(106, 240, 138, 0.06)'
+              : 'rgba(240, 180, 106, 0.06)',
+            borderRadius: 'var(--radius-sm)',
+            border: `1px solid ${proxy.useCorsProxy ? 'rgba(106,240,138,0.2)' : 'rgba(240,180,106,0.2)'}`,
+            transition: 'all 0.2s',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+            <ShieldCheck
+              size={15}
+              style={{ color: proxy.useCorsProxy ? 'var(--accent-success)' : 'var(--text-muted)', flexShrink: 0 }}
+            />
+            <div>
+              <div style={{ fontSize: '0.8rem', fontWeight: 600 }}>{t.corsProxy}</div>
+              <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)', marginTop: '1px' }}>
+                {proxy.useCorsProxy ? t.corsProxyActive : t.corsProxyInactive}
+              </div>
+            </div>
+          </div>
+          <label
+            style={{
+              position: 'relative',
+              display: 'inline-block',
+              width: '36px',
+              height: '20px',
+              flexShrink: 0,
+              cursor: 'pointer',
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={proxy.useCorsProxy}
+              onChange={(e) => {
+                setProxy({ useCorsProxy: e.target.checked });
+                setConnectionStatus('untested');
+                setTestMessage('');
+              }}
+              style={{ opacity: 0, width: 0, height: 0, position: 'absolute' }}
+            />
+            <span
+              style={{
+                position: 'absolute',
+                inset: 0,
+                borderRadius: '10px',
+                background: proxy.useCorsProxy ? 'var(--accent-success)' : 'var(--border-default)',
+                transition: 'background 0.2s',
+              }}
+            />
+            <span
+              style={{
+                position: 'absolute',
+                top: '2px',
+                left: proxy.useCorsProxy ? '18px' : '2px',
+                width: '16px',
+                height: '16px',
+                borderRadius: '50%',
+                background: 'white',
+                transition: 'left 0.2s',
+                boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+              }}
+            />
+          </label>
         </div>
 
         {/* Test Connection */}

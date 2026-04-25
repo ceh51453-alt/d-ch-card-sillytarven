@@ -171,6 +171,8 @@ export interface ProxySettings {
   maxRetries: number;
   minResponseRatio: number;
   systemPromptPrefix: string;
+  /** Route API calls through the Vite dev-server proxy to bypass CORS */
+  useCorsProxy: boolean;
 }
 
 export type ConnectionStatus = 'untested' | 'connected' | 'failed';

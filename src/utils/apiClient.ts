@@ -4,6 +4,7 @@ import type { AIProvider, ProxySettings, GlossaryEntry } from '../types/card';
 export class ApiError extends Error {
   statusCode?: number;
   retryable: boolean;
+  isCorsError?: boolean;
 
   constructor(message: string, statusCode?: number, retryable: boolean = false) {
     super(message);
@@ -11,6 +12,78 @@ export class ApiError extends Error {
     this.statusCode = statusCode;
     this.retryable = retryable;
   }
+}
+
+/* ─── CORS Proxy URL Rewriting ─── */
+
+/** Known provider proxy paths (must match vite.config.ts proxy entries) */
+const PROXY_ROUTES: Record<string, string> = {
+  'https://api.openai.com':                        '/api-proxy/openai',
+  'https://api.anthropic.com':                     '/api-proxy/anthropic',
+  'https://generativelanguage.googleapis.com':      '/api-proxy/google',
+};
+
+/** Base64url-encode a string (URL-safe, no padding) */
+function toBase64Url(str: string): string {
+  return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/**
+ * Rewrite a URL to go through the Vite dev-server CORS proxy.
+ * - Known providers (OpenAI, Anthropic, Google) → /api-proxy/<provider>/path
+ * - Custom/unknown URLs → /api-proxy/custom/<base64url(origin)>/path
+ * - localhost / 127.0.0.1 URLs → returned as-is (no CORS issue)
+ */
+function corsProxyUrl(originalUrl: string, useCorsProxy: boolean): string {
+  if (!useCorsProxy) return originalUrl;
+
+  // Don't proxy localhost — no CORS issues there
+  try {
+    const u = new URL(originalUrl);
+    if (u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === '::1') {
+      return originalUrl;
+    }
+  } catch {
+    return originalUrl;
+  }
+
+  // Check known providers
+  for (const [origin, proxyPath] of Object.entries(PROXY_ROUTES)) {
+    if (originalUrl.startsWith(origin)) {
+      return proxyPath + originalUrl.slice(origin.length);
+    }
+  }
+
+  // Generic proxy for unknown URLs
+  try {
+    const u = new URL(originalUrl);
+    const origin = u.origin;
+    const rest = u.pathname + u.search;
+    return `/api-proxy/custom/${toBase64Url(origin)}${rest}`;
+  } catch {
+    return originalUrl;
+  }
+}
+
+/**
+ * Detect if a fetch error is a CORS error and wrap it with a helpful message.
+ */
+function wrapCorsError(err: unknown, url: string, useCorsProxy: boolean): Error {
+  if (err instanceof TypeError) {
+    const msg = err.message.toLowerCase();
+    if (msg.includes('failed to fetch') || msg.includes('networkerror') || msg.includes('load failed')) {
+      const corsErr = new ApiError(
+        useCorsProxy
+          ? `Network error calling ${url}. The CORS proxy is enabled but the Vite dev server may not be running. Run 'npm run dev' first.`
+          : `Network/CORS error calling ${url}. Enable the built-in CORS Proxy in API settings to fix this.`,
+        0,
+        true
+      );
+      corsErr.isCorsError = true;
+      return corsErr;
+    }
+  }
+  return err instanceof Error ? err : new Error(String(err));
 }
 
 /* ─── Default prompt template ─── */
@@ -261,7 +334,8 @@ async function callOpenAICompatible(
   user: string,
   signal?: AbortSignal
 ): Promise<string> {
-  const url = config.proxyUrl.replace(/\/+$/, '') + '/chat/completions';
+  const rawUrl = config.proxyUrl.replace(/\/+$/, '') + '/chat/completions';
+  const url = corsProxyUrl(rawUrl, config.useCorsProxy);
 
   const body = {
     model: config.model,
@@ -280,12 +354,17 @@ async function callOpenAICompatible(
     headers['Authorization'] = `Bearer ${config.apiKey}`;
   }
 
-  const res = await fetch(url, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(body),
-    signal,
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      signal,
+    });
+  } catch (err) {
+    throw wrapCorsError(err, rawUrl, config.useCorsProxy);
+  }
 
   if (!res.ok) {
     const errText = await res.text().catch(() => '');
@@ -310,7 +389,8 @@ async function callAnthropic(
   user: string,
   signal?: AbortSignal
 ): Promise<string> {
-  const url = config.proxyUrl.replace(/\/+$/, '') + '/messages';
+  const rawUrl = config.proxyUrl.replace(/\/+$/, '') + '/messages';
+  const url = corsProxyUrl(rawUrl, config.useCorsProxy);
 
   const body = {
     model: config.model,
@@ -320,17 +400,28 @@ async function callAnthropic(
     temperature: config.temperature,
   };
 
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': config.apiKey,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true',
-    },
-    body: JSON.stringify(body),
-    signal,
-  });
+  // When using the CORS proxy, we don't need the dangerous-direct-browser-access header
+  // because the request goes through the Vite server (not from browser to Anthropic)
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'x-api-key': config.apiKey,
+    'anthropic-version': '2023-06-01',
+  };
+  if (!config.useCorsProxy) {
+    headers['anthropic-dangerous-direct-browser-access'] = 'true';
+  }
+
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      signal,
+    });
+  } catch (err) {
+    throw wrapCorsError(err, rawUrl, config.useCorsProxy);
+  }
 
   if (!res.ok) {
     const errText = await res.text().catch(() => '');
@@ -356,7 +447,8 @@ async function callGemini(
   signal?: AbortSignal
 ): Promise<string> {
   const baseUrl = config.proxyUrl.replace(/\/+$/, '');
-  const url = `${baseUrl}/models/${config.model}:generateContent?key=${config.apiKey}`;
+  const rawUrl = `${baseUrl}/models/${config.model}:generateContent?key=${config.apiKey}`;
+  const url = corsProxyUrl(rawUrl, config.useCorsProxy);
 
   const body = {
     system_instruction: { parts: [{ text: system }] },
@@ -367,12 +459,17 @@ async function callGemini(
     },
   };
 
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    signal,
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal,
+    });
+  } catch (err) {
+    throw wrapCorsError(err, rawUrl, config.useCorsProxy);
+  }
 
   if (!res.ok) {
     const errText = await res.text().catch(() => '');
@@ -1002,13 +1099,20 @@ export async function testConnection(config: ProxySettings): Promise<{ ok: boole
       'auto'
     );
     if (result) {
-      return { ok: true, message: `Connected! Response: "${result.slice(0, 60)}..."` };
+      const proxyNote = config.useCorsProxy ? ' (via CORS proxy)' : '';
+      return { ok: true, message: `Connected${proxyNote}! Response: "${result.slice(0, 60)}..."` };
     }
     return { ok: false, message: 'Empty response from API' };
   } catch (err) {
+    if (err instanceof ApiError && err.isCorsError) {
+      return { ok: false, message: err.message };
+    }
     const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
-      return { ok: false, message: `Cannot reach proxy at ${config.proxyUrl}. Check if proxy is running.` };
+    if (msg.includes('Failed to fetch') || msg.includes('NetworkError') || msg.includes('Load failed')) {
+      if (config.useCorsProxy) {
+        return { ok: false, message: `Cannot reach API through CORS proxy. Make sure 'npm run dev' is running and the API URL is correct: ${config.proxyUrl}` };
+      }
+      return { ok: false, message: `CORS/Network error reaching ${config.proxyUrl}. Try enabling the "CORS Proxy" toggle in API settings.` };
     }
     return { ok: false, message: msg };
   }
