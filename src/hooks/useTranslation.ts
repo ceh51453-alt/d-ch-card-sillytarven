@@ -4,6 +4,7 @@ import { translateText, translateBatch } from '../utils/apiClient';
 import { extractTranslatableFields, applyTranslationsToCard } from '../utils/cardFields';
 import { syncMvuVariables, postProcessRegexHtml, extractPotentialMvuKeys, aiTranslateMvuKeys } from '../utils/mvuSync';
 import { shouldSkipTranslation } from '../utils/langDetect';
+import { buildUnifiedRAGContext, clearRAGCache } from '../utils/ragContext';
 import type { FieldGroup, FieldGroupConfig, TranslationField } from '../types/card';
 
 /* ─── Prompt bổ sung dành riêng cho regex replaceString ─── */
@@ -136,21 +137,44 @@ export function useTranslation() {
         effectivePrompt = (effectivePrompt || '') + TAVERN_HELPER_EXTRA_PROMPT;
       }
 
-      // Add MVU variable REPLACEMENT dictionary prompt
-      if (store.translationConfig.enableMvuSync) {
-        const currentDict = useStore.getState().translationConfig.mvuDictionary;
-        if (Object.keys(currentDict).length > 0) {
-          const mvuEntries = Object.entries(currentDict).filter(([k,v]) => k && v && k !== v);
-          if (mvuEntries.length > 0) {
-            const isLogicField = field.group === 'tavern_helper' || field.group === 'regex' || field.group === 'lorebook';
-            const dictList = mvuEntries.map(([k, v]) => `  "${k}" → "${v}"`).join('\n');
-            if (isLogicField) {
-              // For code/logic fields: REPLACE variable names using the dictionary
-              effectivePrompt = (effectivePrompt || '') + `\n\nCRITICAL — MVU/Zod VARIABLE REPLACEMENT DICTIONARY:\nThis card uses a variable system (MVU/Zod). The following variable names MUST be replaced with their translated equivalents EVERYWHERE they appear (in code, data-var attributes, {{getvar::}}, {{setvar::}}, YAML keys, z.object fields, etc.):\n${dictList}\nRules:\n- Replace ALL occurrences of the original name with the translated name\n- Keep the same format (underscores, no spaces in variable names)\n- Do NOT invent your own translations for these variables — use EXACTLY the dictionary above\n- If you see a variable name from the dictionary, ALWAYS use the mapped translation`;
-            } else {
-              // For narrative/text fields: just use as glossary for consistency
-              const termsList = mvuEntries.map(([k, v]) => `  "${k}" → "${v}"`).join('\n');
-              effectivePrompt = (effectivePrompt || '') + `\n\nVARIABLE NAME GLOSSARY (use these translations consistently):\n${termsList}`;
+      // ═══ Unified RAG Context (combines Schema + Glossary + MVU Dict + Cross-field) ═══
+      let unifiedSchemaForApi = store.translationConfig.customSchema;
+      let unifiedGlossaryForApi = store.translationConfig.glossary;
+
+      if (store.translationConfig.enableRAGContext) {
+        // Build unified context block that merges all sources
+        const ragCtx = buildUnifiedRAGContext({
+          currentField: field,
+          allFields: fields,
+          glossary: store.translationConfig.glossary,
+          mvuDictionary: store.translationConfig.enableMvuSync
+            ? useStore.getState().translationConfig.mvuDictionary
+            : undefined,
+          customSchema: store.translationConfig.customSchema,
+          maxFields: store.translationConfig.ragMaxFields,
+          maxChars: store.translationConfig.ragMaxChars,
+        });
+        if (ragCtx) {
+          effectivePrompt = (effectivePrompt || '') + ragCtx;
+          // Schema + Glossary are already in the unified block — don't double-inject via apiClient
+          unifiedSchemaForApi = undefined;
+          unifiedGlossaryForApi = [];
+        }
+      } else {
+        // Fallback: inject MVU dict separately (legacy behavior when RAG is off)
+        if (store.translationConfig.enableMvuSync) {
+          const currentDict = useStore.getState().translationConfig.mvuDictionary;
+          if (Object.keys(currentDict).length > 0) {
+            const mvuEntries = Object.entries(currentDict).filter(([k,v]) => k && v && k !== v);
+            if (mvuEntries.length > 0) {
+              const isLogicField = field.group === 'tavern_helper' || field.group === 'regex' || field.group === 'lorebook';
+              const dictList = mvuEntries.map(([k, v]) => `  "${k}" → "${v}"`).join('\n');
+              if (isLogicField) {
+                effectivePrompt = (effectivePrompt || '') + `\n\nCRITICAL — MVU/Zod VARIABLE REPLACEMENT DICTIONARY:\nThis card uses a variable system (MVU/Zod). The following variable names MUST be replaced with their translated equivalents EVERYWHERE they appear (in code, data-var attributes, {{getvar::}}, {{setvar::}}, YAML keys, z.object fields, etc.):\n${dictList}\nRules:\n- Replace ALL occurrences of the original name with the translated name\n- Keep the same format (underscores, no spaces in variable names)\n- Do NOT invent your own translations for these variables — use EXACTLY the dictionary above\n- If you see a variable name from the dictionary, ALWAYS use the mapped translation`;
+              } else {
+                const termsList = mvuEntries.map(([k, v]) => `  "${k}" → "${v}"`).join('\n');
+                effectivePrompt = (effectivePrompt || '') + `\n\nVARIABLE NAME GLOSSARY (use these translations consistently):\n${termsList}`;
+              }
             }
           }
         }
@@ -163,10 +187,10 @@ export function useTranslation() {
         store.translationConfig.targetLanguage,
         store.translationConfig.sourceLanguage,
         effectivePrompt,
-        store.translationConfig.customSchema,
+        unifiedSchemaForApi,
         abortRef.current?.signal,
         contextHint,
-        store.translationConfig.glossary,
+        unifiedGlossaryForApi,
         field.previousTranslation
       );
 
@@ -237,18 +261,41 @@ export function useTranslation() {
       const items = batchFields.map(f => ({ text: f.original, fieldName: f.label }));
       
       let effectivePrompt = store.translationConfig.translationPrompt;
-      // Add MVU variable REPLACEMENT dictionary for batch translations
-      if (store.translationConfig.enableMvuSync) {
-        const currentDict = useStore.getState().translationConfig.mvuDictionary;
-        if (Object.keys(currentDict).length > 0) {
-          const mvuEntries = Object.entries(currentDict).filter(([k,v]) => k && v && k !== v);
-          if (mvuEntries.length > 0) {
-            const hasLogicFields = batchFields.some(f => f.group === 'lorebook' || f.group === 'tavern_helper' || f.group === 'regex');
-            const dictList = mvuEntries.map(([k, v]) => `  "${k}" → "${v}"`).join('\n');
-            if (hasLogicFields) {
-              effectivePrompt = (effectivePrompt || '') + `\n\nCRITICAL — MVU/Zod VARIABLE REPLACEMENT DICTIONARY:\nReplace the following variable names with their translated equivalents EVERYWHERE they appear:\n${dictList}\n- Replace ALL occurrences consistently. Do NOT invent your own translations.`;
-            } else {
-              effectivePrompt = (effectivePrompt || '') + `\n\nVARIABLE NAME GLOSSARY (use consistently):\n${dictList}`;
+      let batchSchemaForApi = store.translationConfig.customSchema;
+      let batchGlossaryForApi = store.translationConfig.glossary;
+
+      if (store.translationConfig.enableRAGContext) {
+        // Unified RAG: merge Schema + Glossary + MVU Dict + Cross-field context
+        const ragCtx = buildUnifiedRAGContext({
+          currentField: batchFields[0], // Representative field for context matching
+          allFields: store.fields,
+          glossary: store.translationConfig.glossary,
+          mvuDictionary: store.translationConfig.enableMvuSync
+            ? useStore.getState().translationConfig.mvuDictionary
+            : undefined,
+          customSchema: store.translationConfig.customSchema,
+          maxFields: Math.min(store.translationConfig.ragMaxFields, 3),
+          maxChars: Math.min(store.translationConfig.ragMaxChars, 2000),
+        });
+        if (ragCtx) {
+          effectivePrompt = (effectivePrompt || '') + ragCtx;
+          batchSchemaForApi = undefined;
+          batchGlossaryForApi = [];
+        }
+      } else {
+        // Fallback: inject MVU dict separately (legacy behavior)
+        if (store.translationConfig.enableMvuSync) {
+          const currentDict = useStore.getState().translationConfig.mvuDictionary;
+          if (Object.keys(currentDict).length > 0) {
+            const mvuEntries = Object.entries(currentDict).filter(([k,v]) => k && v && k !== v);
+            if (mvuEntries.length > 0) {
+              const hasLogicFields = batchFields.some(f => f.group === 'lorebook' || f.group === 'tavern_helper' || f.group === 'regex');
+              const dictList = mvuEntries.map(([k, v]) => `  "${k}" → "${v}"`).join('\n');
+              if (hasLogicFields) {
+                effectivePrompt = (effectivePrompt || '') + `\n\nCRITICAL — MVU/Zod VARIABLE REPLACEMENT DICTIONARY:\nReplace the following variable names with their translated equivalents EVERYWHERE they appear:\n${dictList}\n- Replace ALL occurrences consistently. Do NOT invent your own translations.`;
+              } else {
+                effectivePrompt = (effectivePrompt || '') + `\n\nVARIABLE NAME GLOSSARY (use consistently):\n${dictList}`;
+              }
             }
           }
         }
@@ -261,9 +308,9 @@ export function useTranslation() {
         store.translationConfig.sourceLanguage,
         store.proxy.systemPromptPrefix,
         effectivePrompt,
-        store.translationConfig.customSchema,
+        batchSchemaForApi,
         abortRef.current?.signal,
-        store.translationConfig.glossary
+        batchGlossaryForApi
       );
 
       // Apply results — collect empties for fallback
@@ -394,6 +441,12 @@ export function useTranslation() {
     if (skippedCount > 0) logParts.push(`(${skippedCount} skipped — already in target language)`);
     if (alreadyDone > 0) logParts.push(`(${alreadyDone} already done)`);
     store.addLog('info', logParts.join(' '));
+
+    // ═══ Clear RAG cache for fresh card ═══
+    clearRAGCache();
+    if (store.translationConfig.enableRAGContext) {
+      store.addLog('info', '🧠 Cross-field Context RAG enabled — each field will receive context from related translated fields');
+    }
 
     // ═══ Auto-populate MVU Dictionary (Strategy B) ═══
     if (store.translationConfig.enableMvuSync && store.card) {
@@ -668,18 +721,41 @@ export function useTranslation() {
         effectivePrompt = (effectivePrompt || '') + TAVERN_HELPER_EXTRA_PROMPT;
       }
 
-      // Add MVU variable REPLACEMENT dictionary for retranslation
-      if (store.translationConfig.enableMvuSync) {
-        const currentDict = useStore.getState().translationConfig.mvuDictionary;
-        if (Object.keys(currentDict).length > 0) {
-          const mvuEntries = Object.entries(currentDict).filter(([k,v]) => k && v && k !== v);
-          if (mvuEntries.length > 0) {
-            const isLogicField = field.group === 'tavern_helper' || field.group === 'regex' || field.group === 'lorebook';
-            const dictList = mvuEntries.map(([k, v]) => `  "${k}" → "${v}"`).join('\n');
-            if (isLogicField) {
-              effectivePrompt = (effectivePrompt || '') + `\n\nCRITICAL — MVU/Zod VARIABLE REPLACEMENT DICTIONARY:\nReplace the following variable names with their translated equivalents EVERYWHERE they appear:\n${dictList}\n- Replace ALL occurrences consistently. Do NOT invent your own translations.`;
-            } else {
-              effectivePrompt = (effectivePrompt || '') + `\n\nVARIABLE NAME GLOSSARY (use consistently):\n${dictList}`;
+      // ═══ Unified RAG Context for retranslation ═══
+      let retransSchemaForApi = store.translationConfig.customSchema;
+      let retransGlossaryForApi = store.translationConfig.glossary;
+
+      if (store.translationConfig.enableRAGContext) {
+        const ragCtx = buildUnifiedRAGContext({
+          currentField: field,
+          allFields: store.fields,
+          glossary: store.translationConfig.glossary,
+          mvuDictionary: store.translationConfig.enableMvuSync
+            ? useStore.getState().translationConfig.mvuDictionary
+            : undefined,
+          customSchema: store.translationConfig.customSchema,
+          maxFields: store.translationConfig.ragMaxFields,
+          maxChars: store.translationConfig.ragMaxChars,
+        });
+        if (ragCtx) {
+          effectivePrompt = (effectivePrompt || '') + ragCtx;
+          retransSchemaForApi = undefined;
+          retransGlossaryForApi = [];
+        }
+      } else {
+        // Fallback: inject MVU dict separately
+        if (store.translationConfig.enableMvuSync) {
+          const currentDict = useStore.getState().translationConfig.mvuDictionary;
+          if (Object.keys(currentDict).length > 0) {
+            const mvuEntries = Object.entries(currentDict).filter(([k,v]) => k && v && k !== v);
+            if (mvuEntries.length > 0) {
+              const isLogicField = field.group === 'tavern_helper' || field.group === 'regex' || field.group === 'lorebook';
+              const dictList = mvuEntries.map(([k, v]) => `  "${k}" → "${v}"`).join('\n');
+              if (isLogicField) {
+                effectivePrompt = (effectivePrompt || '') + `\n\nCRITICAL — MVU/Zod VARIABLE REPLACEMENT DICTIONARY:\nReplace the following variable names with their translated equivalents EVERYWHERE they appear:\n${dictList}\n- Replace ALL occurrences consistently. Do NOT invent your own translations.`;
+              } else {
+                effectivePrompt = (effectivePrompt || '') + `\n\nVARIABLE NAME GLOSSARY (use consistently):\n${dictList}`;
+              }
             }
           }
         }
@@ -692,10 +768,10 @@ export function useTranslation() {
         store.translationConfig.targetLanguage,
         store.translationConfig.sourceLanguage,
         effectivePrompt,
-        store.translationConfig.customSchema,
+        retransSchemaForApi,
         controller.signal,
         contextHint,
-        store.translationConfig.glossary,
+        retransGlossaryForApi,
         field.previousTranslation
       );
 

@@ -173,6 +173,9 @@ export const useStore = create<AppState>((set) => ({
     glossary: LS.get('st-translator-glossary', []) as GlossaryEntry[],
     enableMvuSync: false,
     mvuDictionary: LS.get('st-translator-mvu-dict', {}) as Record<string, string>,
+    enableRAGContext: LS.get('st-translator-rag-enabled', true),
+    ragMaxFields: LS.get('st-translator-rag-max-fields', 5),
+    ragMaxChars: LS.get('st-translator-rag-max-chars', 3000),
   },
   setTranslationConfig: (partial) =>
     set((s) => {
@@ -182,6 +185,15 @@ export const useStore = create<AppState>((set) => ({
       }
       if ('mvuDictionary' in partial) {
         LS.set('st-translator-mvu-dict', next.mvuDictionary);
+      }
+      if ('enableRAGContext' in partial) {
+        LS.set('st-translator-rag-enabled', next.enableRAGContext);
+      }
+      if ('ragMaxFields' in partial) {
+        LS.set('st-translator-rag-max-fields', next.ragMaxFields);
+      }
+      if ('ragMaxChars' in partial) {
+        LS.set('st-translator-rag-max-chars', next.ragMaxChars);
       }
       return { translationConfig: next };
     }),

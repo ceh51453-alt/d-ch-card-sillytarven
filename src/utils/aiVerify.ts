@@ -1,4 +1,4 @@
-import type { CharacterCard, ProxySettings } from '../types/card';
+import type { CharacterCard, ProxySettings, TranslationField } from '../types/card';
 
 /* ═══ Types ═══ */
 
@@ -239,7 +239,264 @@ export function quickVerify(
   return issues;
 }
 
-/* ═══ AI-powered deep verification ═══ */
+/* ═══ Field-level verification (per-field checks on TranslationField[]) ═══ */
+
+export interface FieldIssue extends VerifyIssue {
+  fieldPath: string;
+  category: 'residual_source' | 'html_broken' | 'bracket_mismatch' | 'macro_damaged' | 'json_broken' | 'mvu_inconsistent' | 'length_anomaly' | 'empty_translation';
+}
+
+/** Count CJK characters in text */
+function countCJK(text: string): number {
+  return (text.match(/[\u4e00-\u9fff\u3400-\u4dbf\u3000-\u303f\uff00-\uffef]/g) || []).length;
+}
+
+/** Count HTML open/close tags */
+function countHtmlTags(text: string): { open: number; close: number; selfClose: number } {
+  const open = (text.match(/<[a-z][^/>]*>/gi) || []).length;
+  const close = (text.match(/<\/[a-z][^>]*>/gi) || []).length;
+  const selfClose = (text.match(/<[a-z][^>]*\/>/gi) || []).length;
+  return { open, close, selfClose };
+}
+
+/** Count bracket pairs */
+function countBrackets(text: string): Record<string, [number, number]> {
+  return {
+    '()': [(text.match(/\(/g) || []).length, (text.match(/\)/g) || []).length],
+    '{}': [(text.match(/\{/g) || []).length, (text.match(/\}/g) || []).length],
+    '[]': [(text.match(/\[/g) || []).length, (text.match(/\]/g) || []).length],
+  };
+}
+
+/** Extract all {{macro::xxx}} patterns */
+function extractMacros(text: string): string[] {
+  return (text.match(/\{\{[^}]+\}\}/g) || []);
+}
+
+/** Check if text looks like it contains JSON */
+function hasJsonContent(text: string): boolean {
+  return /^\s*[\[{]/.test(text.trim()) && /[\]}]\s*$/.test(text.trim());
+}
+
+/** Verify all translated fields for common errors */
+export function verifyFields(
+  fields: TranslationField[],
+  mvuDictionary: Record<string, string> = {},
+  sourceLang = 'Chinese'
+): FieldIssue[] {
+  const issues: FieldIssue[] = [];
+  const isCJKSource = /chinese|中文|japanese|日本語|korean|한국어/i.test(sourceLang) || sourceLang === 'auto';
+
+  for (const field of fields) {
+    if (field.status !== 'done' || !field.translated) continue;
+    const orig = field.original;
+    const trans = field.translated;
+
+    // ─── 1. Residual source text (untranslated CJK left behind) ───
+    if (isCJKSource && orig.length > 10) {
+      const origCJK = countCJK(orig);
+      const transCJK = countCJK(trans);
+      // If original was CJK-heavy and translation still has >40% CJK ratio of original
+      if (origCJK > 5 && transCJK > 0) {
+        const ratio = transCJK / origCJK;
+        if (ratio > 0.4) {
+          issues.push({
+            id: crypto.randomUUID(), fieldPath: field.path,
+            severity: ratio > 0.7 ? 'error' : 'warning',
+            category: 'residual_source',
+            location: field.label,
+            description: `${transCJK} CJK characters remain (${Math.round(ratio * 100)}% of original). Text may be untranslated.`,
+            original: orig.slice(0, 100),
+            current: trans.slice(0, 100),
+            suggestion: 'Re-translate this field to ensure all source text is converted.',
+            autoFixable: false,
+          });
+        }
+      }
+    }
+
+    // ─── 2. HTML tag balance (for regex/tavern_helper fields) ───
+    if ((field.group === 'regex' || field.group === 'tavern_helper') && /<[a-z]/i.test(orig)) {
+      const origTags = countHtmlTags(orig);
+      const transTags = countHtmlTags(trans);
+      const origNet = origTags.open - origTags.close;
+      const transNet = transTags.open - transTags.close;
+      if (Math.abs(origNet - transNet) > 1 || Math.abs(origTags.open - transTags.open) > 2) {
+        issues.push({
+          id: crypto.randomUUID(), fieldPath: field.path,
+          severity: 'error', category: 'html_broken',
+          location: field.label,
+          description: `HTML tag mismatch: original has ${origTags.open} open / ${origTags.close} close tags, translation has ${transTags.open} / ${transTags.close}.`,
+          original: `Open: ${origTags.open}, Close: ${origTags.close}`,
+          current: `Open: ${transTags.open}, Close: ${transTags.close}`,
+          suggestion: 'Check translated HTML for missing or extra tags.',
+          autoFixable: false,
+        });
+      }
+    }
+
+    // ─── 3. Bracket mismatch (for code-heavy fields) ───
+    if (field.group === 'tavern_helper' || field.group === 'lorebook' || field.group === 'regex') {
+      const origBrackets = countBrackets(orig);
+      const transBrackets = countBrackets(trans);
+      for (const [pair, [origOpen, origClose]] of Object.entries(origBrackets)) {
+        const [transOpen, transClose] = transBrackets[pair];
+        const origDiff = origOpen - origClose;
+        const transDiff = transOpen - transClose;
+        if (Math.abs(origDiff - transDiff) > 1) {
+          issues.push({
+            id: crypto.randomUUID(), fieldPath: field.path,
+            severity: 'warning', category: 'bracket_mismatch',
+            location: field.label,
+            description: `Bracket ${pair} mismatch: original balance ${origDiff >= 0 ? '+' : ''}${origDiff}, translation balance ${transDiff >= 0 ? '+' : ''}${transDiff}.`,
+            original: `${pair[0]}:${origOpen} ${pair[1]}:${origClose}`,
+            current: `${pair[0]}:${transOpen} ${pair[1]}:${transClose}`,
+            suggestion: `Check ${pair} brackets in the translation.`,
+            autoFixable: false,
+          });
+        }
+      }
+    }
+
+    // ─── 4. SillyTavern macro damage ───
+    const origMacros = extractMacros(orig);
+    const transMacros = extractMacros(trans);
+    if (origMacros.length > 0) {
+      const origSet = new Set(origMacros);
+      const transSet = new Set(transMacros);
+      // Check for macros present in original but missing in translation
+      for (const m of origSet) {
+        if (!transSet.has(m)) {
+          // Check if it might be an MVU-renamed variable
+          const varMatch = m.match(/\{\{(getvar|setvar|addvar)::([^:}]+)/);
+          if (varMatch) {
+            const varName = varMatch[2].trim();
+            const mappedName = mvuDictionary[varName];
+            if (mappedName) {
+              // Check if the mapped version exists
+              const mappedMacro = m.replace(varName, mappedName);
+              if (transSet.has(mappedMacro)) continue; // MVU-renamed, OK
+            }
+          }
+          issues.push({
+            id: crypto.randomUUID(), fieldPath: field.path,
+            severity: 'error', category: 'macro_damaged',
+            location: field.label,
+            description: `Macro "${m}" from original is missing or damaged in translation.`,
+            original: m,
+            current: '(missing)',
+            suggestion: `Restore macro "${m}" in the translated text.`,
+            autoFixable: false,
+          });
+        }
+      }
+      // Check for new/broken macros in translation
+      for (const m of transSet) {
+        if (!origSet.has(m) && /\{\{(getvar|setvar|addvar|getglobalvar|setglobalvar)::/.test(m)) {
+          // Not in original — check if it's a valid MVU rename
+          const varMatch = m.match(/\{\{(?:getvar|setvar|addvar)::([^:}]+)/);
+          const isKnownMapping = varMatch && Object.values(mvuDictionary).includes(varMatch[1].trim());
+          if (!isKnownMapping) {
+            issues.push({
+              id: crypto.randomUUID(), fieldPath: field.path,
+              severity: 'warning', category: 'macro_damaged',
+              location: field.label,
+              description: `New/unexpected macro "${m}" in translation that wasn't in original.`,
+              original: '(not present)',
+              current: m,
+              suggestion: 'Verify this macro is intentional (MVU rename) or accidental.',
+              autoFixable: false,
+            });
+          }
+        }
+      }
+    }
+
+    // ─── 5. JSON structure broken ───
+    if (hasJsonContent(orig)) {
+      try { JSON.parse(orig); } catch { /* original wasn't valid JSON, skip */ continue; }
+      try {
+        JSON.parse(trans);
+      } catch (e) {
+        issues.push({
+          id: crypto.randomUUID(), fieldPath: field.path,
+          severity: 'error', category: 'json_broken',
+          location: field.label,
+          description: `Translation broke JSON structure: ${e instanceof Error ? e.message : String(e)}`,
+          original: orig.slice(0, 80),
+          current: trans.slice(0, 80),
+          suggestion: 'The translated content is no longer valid JSON. Fix the structure.',
+          autoFixable: false,
+        });
+      }
+    }
+
+    // ─── 6. Length anomaly ───
+    if (orig.length > 20) {
+      const ratio = trans.length / orig.length;
+      if (ratio < 0.15) {
+        issues.push({
+          id: crypto.randomUUID(), fieldPath: field.path,
+          severity: 'error', category: 'length_anomaly',
+          location: field.label,
+          description: `Translation is suspiciously short: ${trans.length} chars vs ${orig.length} original (${Math.round(ratio * 100)}%).`,
+          original: `${orig.length} chars`,
+          current: `${trans.length} chars (${Math.round(ratio * 100)}%)`,
+          suggestion: 'Translation may be truncated or incomplete. Consider re-translating.',
+          autoFixable: false,
+        });
+      } else if (ratio > 5) {
+        issues.push({
+          id: crypto.randomUUID(), fieldPath: field.path,
+          severity: 'warning', category: 'length_anomaly',
+          location: field.label,
+          description: `Translation is unusually long: ${trans.length} chars vs ${orig.length} original (${Math.round(ratio * 100)}%).`,
+          original: `${orig.length} chars`,
+          current: `${trans.length} chars`,
+          suggestion: 'Translation may contain duplicate content or excessive explanations.',
+          autoFixable: false,
+        });
+      }
+    }
+
+    // ─── 7. MVU variable consistency ───
+    if (Object.keys(mvuDictionary).length > 0 && (field.group === 'tavern_helper' || field.group === 'lorebook' || field.group === 'regex')) {
+      for (const [origVar, transVar] of Object.entries(mvuDictionary)) {
+        if (!origVar || !transVar || origVar === transVar) continue;
+        // If original has this variable and translation still has the original name (not renamed)
+        if (orig.includes(origVar) && trans.includes(origVar) && !trans.includes(transVar)) {
+          issues.push({
+            id: crypto.randomUUID(), fieldPath: field.path,
+            severity: 'warning', category: 'mvu_inconsistent',
+            location: field.label,
+            description: `MVU variable "${origVar}" should be renamed to "${transVar}" but original name still appears in translation.`,
+            original: origVar,
+            current: origVar,
+            suggestion: `Replace "${origVar}" with "${transVar}" in the translated text.`,
+            autoFixable: true,
+            fixPath: field.path,
+            fixValue: trans.split(origVar).join(transVar),
+          });
+        }
+      }
+    }
+  }
+
+  return issues;
+}
+
+/** Apply auto-fix to a field issue */
+export function applyAutoFix(issue: FieldIssue, fields: TranslationField[]): TranslationField[] {
+  if (!issue.autoFixable || !issue.fixPath || !issue.fixValue) return fields;
+  return fields.map(f => {
+    if (f.path === issue.fixPath) {
+      return { ...f, translated: issue.fixValue! };
+    }
+    return f;
+  });
+}
+
+
 
 export async function aiVerifyCard(
   originalCard: CharacterCard,

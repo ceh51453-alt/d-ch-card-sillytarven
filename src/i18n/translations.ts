@@ -147,6 +147,35 @@ const en = {
   groupDepthPromptDesc: 'extensions.depth_prompt.prompt',
   groupTavernHelper: 'TavernHelper Scripts',
   groupTavernHelperDesc: 'JS-Slash-Runner / TavernHelper script content',
+
+  // Verify Panel
+  verifyTitle: 'Translation Error Check',
+  verifyDesc: 'Check for untranslated text, broken HTML/JSON, missing macros, bracket mismatches, MVU inconsistencies.',
+  verifyFields: 'Verify Fields',
+  verifyCheckRefs: 'Check Refs',
+  verifyAIDeep: 'AI Deep',
+  verifyChecking: 'Checking...',
+  verifyNoIssues: '✅ No issues found!',
+  verifyAutoFixAll: 'Auto-fix {count} issues',
+  verifyAutoFixed: 'Auto-fixed {count} issues',
+  verifyFixed: 'Fixed: {location}',
+  verifyAllRefsValid: '✅ All system references are valid.',
+  verifyFoundIssues: 'Found {count} issue(s).',
+  verifyStartHint: 'Click "Verify Fields" to start.',
+  verifyRefs: 'Refs:',
+  verifySuggestFix: 'Fix:',
+  verifyPass: 'Pass',
+  verifyErrors: 'errors',
+  verifyWarnings: 'warnings',
+  // Verify Categories
+  catResidualSource: 'Untranslated Text',
+  catHtmlBroken: 'HTML Broken',
+  catBracketMismatch: 'Bracket Mismatch',
+  catMacroDamaged: 'Macro Damaged',
+  catJsonBroken: 'JSON Broken',
+  catMvuInconsistent: 'MVU Inconsistent',
+  catLengthAnomaly: 'Length Anomaly',
+  catEmpty: 'Empty',
 };
 
 const vi: TranslationKeys = {
@@ -294,6 +323,35 @@ const vi: TranslationKeys = {
   groupDepthPromptDesc: 'extensions.depth_prompt.prompt',
   groupTavernHelper: 'Script TavernHelper',
   groupTavernHelperDesc: 'nội dung script JS-Slash-Runner / TavernHelper',
+
+  // Verify Panel
+  verifyTitle: 'Kiểm Tra Lỗi Dịch',
+  verifyDesc: 'Kiểm tra text chưa dịch, HTML/JSON hỏng, macro bị mất, ngoặc lệch, biến MVU không khớp.',
+  verifyFields: 'Kiểm Tra Field',
+  verifyCheckRefs: 'Check Tham Chiếu',
+  verifyAIDeep: 'AI Deep',
+  verifyChecking: 'Đang kiểm tra...',
+  verifyNoIssues: '✅ Không phát hiện lỗi nào!',
+  verifyAutoFixAll: 'Tự động sửa {count} lỗi',
+  verifyAutoFixed: 'Đã tự động sửa {count} lỗi',
+  verifyFixed: 'Đã sửa: {location}',
+  verifyAllRefsValid: '✅ Tất cả tham chiếu hệ thống đều hợp lệ.',
+  verifyFoundIssues: 'Tìm thấy {count} vấn đề.',
+  verifyStartHint: 'Nhấn "Kiểm Tra Field" để bắt đầu.',
+  verifyRefs: 'Tham chiếu:',
+  verifySuggestFix: 'Gợi ý:',
+  verifyPass: 'Đạt',
+  verifyErrors: 'lỗi',
+  verifyWarnings: 'cảnh báo',
+  // Verify Categories
+  catResidualSource: 'Text chưa dịch',
+  catHtmlBroken: 'HTML hỏng',
+  catBracketMismatch: 'Ngoặc lệch',
+  catMacroDamaged: 'Macro hỏng',
+  catJsonBroken: 'JSON hỏng',
+  catMvuInconsistent: 'MVU không khớp',
+  catLengthAnomaly: 'Độ dài bất thường',
+  catEmpty: 'Trống',
 };
 
 export const translations: Record<Locale, TranslationKeys> = { en, vi };

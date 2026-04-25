@@ -407,6 +407,68 @@ export default function TranslateConfig() {
               </div>
             </div>
 
+            {/* ═══ Cross-field Context RAG ═══ */}
+            <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '10px' }}>
+              <label className="checkbox-wrapper">
+                <input
+                  type="checkbox"
+                  checked={translationConfig.enableRAGContext}
+                  onChange={(e) => setTranslationConfig({ enableRAGContext: e.target.checked })}
+                />
+                <div>
+                  <span style={{ color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                    🧠 {locale === 'vi' ? 'Cross-field Context RAG' : 'Cross-field Context RAG'}
+                  </span>
+                  <span style={{ color: 'var(--text-muted)', fontSize: '0.65rem', display: 'block', marginTop: '2px' }}>
+                    {locale === 'vi'
+                      ? 'Tự động kéo context từ các field đã dịch trong cùng card → AI dịch nhất quán thuật ngữ, tên, văn phong.'
+                      : 'Automatically pull context from already-translated fields → AI maintains consistent terminology, names, and style.'}
+                  </span>
+                </div>
+              </label>
+
+              {translationConfig.enableRAGContext && (
+                <div style={{ marginTop: '8px', marginLeft: '20px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <div style={{ flex: 1 }}>
+                      <label className="label" style={{ fontSize: '0.7rem' }}>
+                        {locale === 'vi' ? 'Số field context tối đa' : 'Max context fields'}
+                      </label>
+                      <input
+                        className="input"
+                        type="number"
+                        min={2}
+                        max={15}
+                        value={translationConfig.ragMaxFields}
+                        onChange={(e) => setTranslationConfig({ ragMaxFields: Math.max(2, Math.min(15, parseInt(e.target.value) || 5)) })}
+                        style={{ fontSize: '0.78rem', padding: '4px 8px' }}
+                      />
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <label className="label" style={{ fontSize: '0.7rem' }}>
+                        {locale === 'vi' ? 'Max ký tự context' : 'Max context chars'}
+                      </label>
+                      <input
+                        className="input"
+                        type="number"
+                        min={500}
+                        max={8000}
+                        step={500}
+                        value={translationConfig.ragMaxChars}
+                        onChange={(e) => setTranslationConfig({ ragMaxChars: Math.max(500, Math.min(8000, parseInt(e.target.value) || 3000)) })}
+                        style={{ fontSize: '0.78rem', padding: '4px 8px' }}
+                      />
+                    </div>
+                  </div>
+                  <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)', lineHeight: '1.3' }}>
+                    {locale === 'vi'
+                      ? '💡 Số field càng cao → AI có nhiều context hơn nhưng tốn thêm token. Mặc định 5 field / 3000 ký tự là cân bằng tốt.'
+                      : '💡 More fields = more context for AI but costs more tokens. Default 5 fields / 3000 chars is a good balance.'}
+                  </div>
+                </div>
+              )}
+            </div>
+
             {/* MVU Sync Panel (Chiến Lược B) */}
             <div style={{ marginTop: '8px' }}>
               <MvuSyncPanel />

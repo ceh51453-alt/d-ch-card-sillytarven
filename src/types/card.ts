@@ -204,6 +204,9 @@ export interface TranslationConfig {
   glossary: GlossaryEntry[]; // Terminology pairs for consistent translation
   enableMvuSync: boolean; // Enable Strategy B (Sync MVU Variables)
   mvuDictionary: Record<string, string>; // Dictionary for Strategy B
+  enableRAGContext: boolean; // Enable Cross-field Context RAG for consistency
+  ragMaxFields: number; // Max context fields to include (default: 5)
+  ragMaxChars: number; // Max total chars for RAG context (default: 3000)
 }
 
 /* ─── Log Entry ─── */
