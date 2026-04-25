@@ -19,9 +19,14 @@ export default defineConfig({
 
         dynamicProxy.on('error', (err, req, res) => {
           console.error('[dynamic proxy error]', err);
-          if (!res.headersSent) {
-            (res as import('http').ServerResponse).writeHead(502);
-            res.end('Bad Gateway');
+          if ('writeHead' in res) {
+            const response = res as import('http').ServerResponse;
+            if (!response.headersSent) {
+              response.writeHead(502);
+              response.end('Bad Gateway');
+            }
+          } else {
+            res.end('HTTP/1.1 502 Bad Gateway\r\n\r\n');
           }
         });
 
