@@ -85,6 +85,11 @@ interface AppState {
   sidebarCollapsed: boolean;
   toggleSidebar: () => void;
 
+  // Live Schema Context — translated TavernHelper schema injected for subsequent fields
+  liveSchemaContext: string;
+  setLiveSchemaContext: (s: string) => void;
+  clearLiveSchemaContext: () => void;
+
   // Per-file translation cache
   saveTranslationCache: () => void;
   loadTranslationCache: (fileName: string) => Promise<boolean>;
@@ -263,6 +268,11 @@ export const useStore = create<AppState>((set) => ({
   setActiveTab: (t) => set({ activeTab: t }),
   sidebarCollapsed: false,
   toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
+
+  // Live Schema Context
+  liveSchemaContext: '',
+  setLiveSchemaContext: (s) => set({ liveSchemaContext: s }),
+  clearLiveSchemaContext: () => set({ liveSchemaContext: '' }),
 
   // ─── Per-file Translation Cache ───
   saveTranslationCache: () => {

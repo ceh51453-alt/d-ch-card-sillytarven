@@ -88,6 +88,43 @@ function hasTranslatableText(text: string): boolean {
   return hasCJK || hasCyrillic || hasSubstantialLatin || stripped.length > 20;
 }
 
+/* ─── Classify lorebook entry type for MVU per-type strategy ─── */
+type LorebookEntryType = 'initvar' | 'mvu_logic' | 'rules' | 'narrative' | 'controller';
+
+function classifyLorebookEntry(entry: { name?: string; comment?: string; content?: string }): LorebookEntryType {
+  const name = (entry.name || '').toLowerCase();
+  const comment = (entry.comment || '').toLowerCase();
+  const content = entry.content || '';
+
+  // [initvar] — variable initialization YAML
+  if (content.includes('[initvar]') || comment.includes('initvar') || name.includes('initvar') || name.includes('var_init')) {
+    return 'initvar';
+  }
+
+  // Controller — MVU controller/update logic
+  if (/controller|mvu_update|update_mvu/i.test(comment) || /controller|mvu_update/i.test(name)) {
+    return 'controller';
+  }
+
+  // MVU logic — contains setvar/getvar/addvar macros or Zod patterns
+  if (/mvu|zod|variable/i.test(comment) || /mvu|zod|variable/i.test(name)) {
+    return 'mvu_logic';
+  }
+  
+  // Check content for heavy macro usage (more than 3 setvar/getvar macros = probably logic)
+  const macroCount = (content.match(/\{\{(?:setvar|getvar|addvar)::/g) || []).length;
+  if (macroCount >= 3) {
+    return 'mvu_logic';
+  }
+
+  // Rules / world info
+  if (/rules|rule|world_info|system|guideline/i.test(comment) || /rules|rule|world_info/i.test(name)) {
+    return 'rules';
+  }
+
+  return 'narrative';
+}
+
 /* ─── Extract translatable fields from a card ─── */
 export function extractTranslatableFields(
   card: CharacterCard,
@@ -96,7 +133,7 @@ export function extractTranslatableFields(
   const fields: TranslationField[] = [];
   const data = card.data;
 
-  function addField(path: string, label: string, group: FieldGroup, text: unknown) {
+  function addField(path: string, label: string, group: FieldGroup, text: unknown, entryType?: LorebookEntryType) {
     if (!enabledGroups.includes(group)) return;
     if (typeof text !== 'string' || text.trim() === '') return;
     if (isCodeOnly(text)) return;
@@ -108,6 +145,7 @@ export function extractTranslatableFields(
       translated: '',
       status: 'pending',
       retries: 0,
+      entryType,
     });
   }
 
@@ -158,31 +196,37 @@ export function extractTranslatableFields(
   // Group only greetings
   addArrayField('data.group_only_greetings', 'data.group_only_greetings', 'messages', data.group_only_greetings);
 
-  // Character book entries
+  // Character book entries — with MVU entry classification
   if (data.character_book) {
     addField('data.character_book.name', 'lorebook.name', 'lorebook', data.character_book.name);
     addField('data.character_book.description', 'lorebook.description', 'lorebook', data.character_book.description);
 
     if (data.character_book.entries) {
       data.character_book.entries.forEach((entry, i) => {
+        const eType = classifyLorebookEntry(entry);
+        const typeTag = eType !== 'narrative' ? ` [${eType}]` : '';
+
         // Entry name (display name)
         addField(
           `data.character_book.entries[${i}].name`,
-          `lorebook[${i}].name`,
+          `lorebook[${i}].name${typeTag}`,
           'lorebook',
-          entry.name
+          entry.name,
+          eType
         );
         addField(
           `data.character_book.entries[${i}].content`,
-          `lorebook[${i}].content`,
+          `lorebook[${i}].content${typeTag}`,
           'lorebook',
-          entry.content
+          entry.content,
+          eType
         );
         addField(
           `data.character_book.entries[${i}].comment`,
-          `lorebook[${i}].comment`,
+          `lorebook[${i}].comment${typeTag}`,
           'lorebook',
-          entry.comment
+          entry.comment,
+          eType
         );
         // Primary keys as joined string
         if (enabledGroups.includes('lorebook_keys') && Array.isArray(entry.keys) && entry.keys.length > 0) {
@@ -190,12 +234,13 @@ export function extractTranslatableFields(
           if (keysText.trim()) {
             fields.push({
               path: `data.character_book.entries[${i}].keys`,
-              label: `lorebook[${i}].keys`,
+              label: `lorebook[${i}].keys${typeTag}`,
               group: 'lorebook_keys',
               original: keysText,
               translated: '',
               status: 'pending',
               retries: 0,
+              entryType: eType,
             });
           }
         }
@@ -205,12 +250,13 @@ export function extractTranslatableFields(
           if (secKeysText.trim()) {
             fields.push({
               path: `data.character_book.entries[${i}].secondary_keys`,
-              label: `lorebook[${i}].secondary_keys`,
+              label: `lorebook[${i}].secondary_keys${typeTag}`,
               group: 'lorebook_keys',
               original: secKeysText,
               translated: '',
               status: 'pending',
               retries: 0,
+              entryType: eType,
             });
           }
         }

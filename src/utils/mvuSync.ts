@@ -150,140 +150,313 @@ export function syncMvuVariables(
   return result;
 }
 
+// ─── Noise Filter Sets ───
+const NOISE_GENERIC = new Set([
+  'true', 'false', 'null', 'undefined', 'enabled', 'disabled',
+  'name', 'value', 'type', 'content', 'key', 'keys', 'data', 'id',
+  'class', 'style', 'script', 'div', 'span', 'table', 'tr', 'td', 'th',
+  'input', 'button', 'label', 'select', 'option', 'form', 'img', 'src',
+  'href', 'title', 'alt', 'width', 'height', 'comment', 'entries',
+  'description', 'text', 'string', 'number', 'boolean', 'object', 'array',
+  'index', 'length', 'count', 'size', 'min', 'max', 'start', 'end',
+  'role', 'user', 'system', 'assistant', 'model', 'prompt', 'message',
+  'error', 'result', 'response', 'request', 'status', 'code', 'enum',
+]);
+
+const NOISE_CSS = new Set([
+  'color', 'background', 'background-color', 'background-image', 'background-size',
+  'font', 'font-family', 'font-size', 'font-weight', 'font-style',
+  'margin', 'margin-top', 'margin-bottom', 'margin-left', 'margin-right',
+  'padding', 'padding-top', 'padding-bottom', 'padding-left', 'padding-right',
+  'border', 'border-radius', 'border-color', 'border-width', 'border-style',
+  'border-top', 'border-bottom', 'border-left', 'border-right',
+  'display', 'position', 'top', 'left', 'right', 'bottom',
+  'width', 'height', 'max-width', 'min-width', 'max-height', 'min-height',
+  'text-align', 'text-decoration', 'text-transform', 'text-shadow',
+  'line-height', 'letter-spacing', 'word-spacing', 'white-space',
+  'overflow', 'overflow-x', 'overflow-y', 'opacity', 'cursor', 'z-index',
+  'float', 'clear', 'visibility', 'outline', 'box-shadow', 'box-sizing',
+  'flex', 'flex-direction', 'flex-wrap', 'flex-grow', 'flex-shrink',
+  'grid', 'grid-template', 'grid-template-columns', 'grid-template-rows',
+  'align-items', 'align-content', 'align-self',
+  'justify-content', 'justify-items', 'justify-self',
+  'gap', 'row-gap', 'column-gap', 'order',
+  'transform', 'transition', 'animation', 'animation-name',
+  'animation-duration', 'animation-delay',
+  'filter', 'backdrop-filter', 'clip-path', 'object-fit',
+  'appearance', 'resize', 'user-select', 'pointer-events',
+  'vertical-align', 'list-style', 'content',
+  'fill', 'stroke', 'stroke-width', // SVG
+  'rgb', 'rgba', 'hsl', 'hsla', 'calc', 'var', // CSS functions (lowercase)
+]);
+
+const NOISE_CODE = new Set([
+  'const', 'let', 'var', 'function', 'return', 'export', 'import',
+  'if', 'else', 'for', 'while', 'do', 'class', 'new', 'this',
+  'async', 'await', 'try', 'catch', 'throw', 'finally',
+  'switch', 'case', 'break', 'continue', 'default',
+  'typeof', 'instanceof', 'void', 'delete', 'from', 'as', 'extends',
+  'implements', 'interface', 'abstract', 'static', 'super', 'yield',
+  'constructor', 'prototype', 'module', 'require', 'define',
+  'console', 'document', 'window', 'event', 'target', 'element',
+  'innerHTML', 'textContent', 'className', 'classList',
+  'addEventListener', 'removeEventListener', 'querySelector',
+  'getAttribute', 'setAttribute', 'appendChild', 'createElement',
+  'parse', 'stringify', 'toString', 'valueOf', 'hasOwnProperty',
+  'map', 'filter', 'reduce', 'forEach', 'find', 'some', 'every',
+  'push', 'pop', 'shift', 'unshift', 'slice', 'splice', 'concat',
+  'join', 'split', 'replace', 'match', 'test', 'exec', 'trim',
+  'includes', 'indexOf', 'lastIndexOf', 'startsWith', 'endsWith',
+  'keys', 'values', 'entries', 'assign', 'freeze', 'defineProperty',
+  'Promise', 'resolve', 'reject', 'then', 'catch', 'finally',
+  'Math', 'Date', 'Array', 'Object', 'String', 'Number', 'Boolean',
+  'JSON', 'RegExp', 'Error', 'Map', 'Set', 'Symbol', 'Proxy',
+  'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval',
+  'fetch', 'abort', 'signal', 'headers', 'body', 'method',
+]);
+
+/** Check if a key is noise (CSS, code, HTML, generic) */
+function isNoiseKey(key: string): boolean {
+  const lower = key.toLowerCase();
+  if (NOISE_GENERIC.has(lower)) return true;
+  if (NOISE_CSS.has(lower)) return true;
+  if (NOISE_CODE.has(lower)) return true;
+  // Pure numeric
+  if (/^\d+$/.test(key)) return true;
+  // Single char
+  if (key.length < 2) return true;
+  // Too long (not a typical variable name)
+  if (key.length > 50) return true;
+  // CSS-like patterns: starts with - or contains only lowercase+hyphens (e.g. "border-radius")
+  if (/^-/.test(key) || /^[a-z]+-[a-z-]+$/.test(key)) return true;
+  // Pure hex colors
+  if (/^#[0-9a-fA-F]{3,8}$/.test(key)) return true;
+  // URL-like
+  if (/^https?:/.test(key) || /^\/\//.test(key)) return true;
+  return false;
+}
+
+/** Rich key info for MVU Panel display */
+export interface MvuKeyInfo {
+  key: string;
+  sources: ('yaml' | 'macro' | 'zod' | 'datavar')[];
+  description?: string; // from Zod .describe()
+  occurrences: number;  // how many times it appears in card
+}
+
 /**
- * Trích xuất các biến MVU/Zod có khả năng tồn tại trong thẻ để tạo từ điển.
- * Quét TOÀN BỘ thẻ để tìm biến từ nhiều nguồn:
- * 1. [initvar] entries — cấu trúc YAML
- * 2. Zod Schema — z.object({ field: ... })
- * 3. {{getvar::XXX}} / {{setvar::XXX}} macros
- * 4. data-var="XXX" attributes trong Regex HTML
+ * Extract Zod .describe() annotations from schema text.
+ * E.g. `好感度: z.number().describe("How much the character likes the user")` → {"好感度": "How much..."}
  */
-export function extractPotentialMvuKeys(card: CharacterCard): string[] {
+export function extractZodDescriptions(schemaText: string): Record<string, string> {
+  const result: Record<string, string> = {};
+  if (!schemaText) return result;
+
+  // Pattern: fieldName: z.type().describe("description") or .describe('description')
+  const regex = /(\w+)\s*:\s*z\.\w+\([^)]*\)(?:\.\w+\([^)]*\))*\.describe\(\s*['"`]([^'"`]+)['"`]\s*\)/g;
+  let match;
+  while ((match = regex.exec(schemaText)) !== null) {
+    result[match[1]] = match[2];
+  }
+
+  // Also try: z.object keys with describe
+  const regex2 = /['"]?([^'":\s]+)['"]?\s*:\s*z\.\w+(?:\([^)]*\))?\.describe\(\s*['"`]([^'"`]+)['"`]\s*\)/g;
+  while ((match = regex2.exec(schemaText)) !== null) {
+    if (!result[match[1]]) {
+      result[match[1]] = match[2];
+    }
+  }
+
+  return result;
+}
+
+export function extractPotentialMvuKeys(card: CharacterCard): MvuKeyInfo[] {
   const keys = new Set<string>();
+  // Track key sources for cross-validation
+  const keySources = new Map<string, Set<string>>(); // key → Set<'yaml'|'macro'|'zod'|'datavar'>
+  // Track occurrence counts
+  const keyOccurrences = new Map<string, number>();
   const data = card.data;
   if (!data) return [];
 
-  // ─── Helper: Extract from text ───
-  const scanText = (text: string) => {
-    if (!text || typeof text !== 'string') return;
+  const trackKey = (key: string, source: string) => {
+    keys.add(key);
+    if (!keySources.has(key)) keySources.set(key, new Set());
+    keySources.get(key)!.add(source);
+    keyOccurrences.set(key, (keyOccurrences.get(key) || 0) + 1);
+  };
 
-    // 1. YAML keys: `Key_Name:` at start of line
+  // ─── Scan YAML keys: ONLY for [initvar]/MVU entries ───
+  const scanYamlKeys = (text: string) => {
+    if (!text || typeof text !== 'string') return;
     const yamlKeyRegex = /^[\s]*([^\s:]+):/gm;
     let match;
     while ((match = yamlKeyRegex.exec(text)) !== null) {
       const key = match[1].trim();
-      if (key && !key.startsWith('[') && !key.startsWith('<') && !key.startsWith('//') && !key.startsWith('#')) {
-        keys.add(key);
+      if (key && !key.startsWith('[') && !key.startsWith('<') && !key.startsWith('//') && !key.startsWith('#') && !key.startsWith('{') && !key.startsWith('*')) {
+        trackKey(key, 'yaml');
       }
-    }
-
-    // 2. {{getvar::XXX}} / {{setvar::XXX::VALUE}} / {{getglobalvar::XXX}}
-    const varMacroRegex = /\{\{(?:getvar|setvar|addvar|getglobalvar|setglobalvar|addglobalvar)::([^:}]+)/g;
-    while ((match = varMacroRegex.exec(text)) !== null) {
-      const key = match[1].trim();
-      if (key) keys.add(key);
-    }
-
-    // 3. Zod fields: z.object({ field_name: z.xxx() })
-    const zodFieldRegex = /(\w+)\s*:\s*z\.\w+/g;
-    while ((match = zodFieldRegex.exec(text)) !== null) {
-      const key = match[1];
-      if (key && !['z', 'const', 'let', 'var', 'return', 'export', 'import', 'function', 'if', 'else', 'for', 'while', 'class', 'type'].includes(key)) {
-        keys.add(key);
-      }
-    }
-
-    // 4. data-var="XXX" attributes
-    const dataVarRegex = /data-var\s*=\s*["']([^"']+)["']/g;
-    while ((match = dataVarRegex.exec(text)) !== null) {
-      keys.add(match[1]);
     }
   };
 
-  // ─── Scan lorebook entries (especially [initvar], [mvu_update], rules) ───
+  // ─── Scan macros (all sources) ───
+  const scanMacros = (text: string) => {
+    if (!text || typeof text !== 'string') return;
+    const varMacroRegex = /\{\{(?:getvar|setvar|addvar|getglobalvar|setglobalvar|addglobalvar)::([^:}]+)/g;
+    let match;
+    while ((match = varMacroRegex.exec(text)) !== null) {
+      const key = match[1].trim();
+      if (key) trackKey(key, 'macro');
+    }
+  };
+
+  // ─── Scan Zod schema fields ───
+  const scanZodFields = (text: string) => {
+    if (!text || typeof text !== 'string') return;
+    const zodFieldRegex = /(\w+)\s*:\s*z\.\w+/g;
+    let match;
+    while ((match = zodFieldRegex.exec(text)) !== null) {
+      const key = match[1];
+      if (key && !isNoiseKey(key)) {
+        trackKey(key, 'zod');
+      }
+    }
+  };
+
+  // ─── Scan data-var attributes ───
+  const scanDataVar = (text: string) => {
+    if (!text || typeof text !== 'string') return;
+    const dataVarRegex = /data-var\s*=\s*["']([^"']+)["']/g;
+    let match;
+    while ((match = dataVarRegex.exec(text)) !== null) {
+      trackKey(match[1], 'datavar');
+    }
+  };
+
+  // ═══════════════════════════════════════════════════════════
+  // SOURCE 1: Lorebook entries
+  // ═══════════════════════════════════════════════════════════
   const entries = data.character_book?.entries || [];
   for (const entry of entries) {
-    // Prioritize entries with initvar/mvu content
     const isInitvar = (entry.comment && entry.comment.toLowerCase().includes('initvar')) ||
       (entry.content && entry.content.includes('[initvar]'));
-    const isMvu = (entry.comment && /mvu|variable|var/i.test(entry.comment)) ||
-      (entry.name && /mvu|variable|var/i.test(entry.name));
+    const isMvu = (entry.comment && /mvu|variable|var_init|zod/i.test(entry.comment)) ||
+      (entry.name && /mvu|variable|var_init|zod|initvar/i.test(entry.name));
 
     if (isInitvar || isMvu) {
-      scanText(entry.content);
+      // Full scan for MVU/initvar entries: YAML + macros + Zod + data-var
+      scanYamlKeys(entry.content);
+      scanMacros(entry.content);
+      scanZodFields(entry.content);
+      scanDataVar(entry.content);
     } else if (entry.content) {
-      // For other entries, only extract {{getvar/setvar}} macros
-      const varMacroRegex = /\{\{(?:getvar|setvar|addvar|getglobalvar|setglobalvar|addglobalvar)::([^:}]+)/g;
-      let match;
-      while ((match = varMacroRegex.exec(entry.content)) !== null) {
-        const key = match[1].trim();
-        if (key) keys.add(key);
-      }
+      // Other entries: macros + data-var only (NO YAML — too noisy)
+      scanMacros(entry.content);
+      scanDataVar(entry.content);
     }
   }
 
-  // ─── Scan TavernHelper scripts (Zod schema, MVU) ───
+  // ═══════════════════════════════════════════════════════════
+  // SOURCE 2: TavernHelper scripts (Zod schema, MVU logic)
+  // ═══════════════════════════════════════════════════════════
   const tavernHelper = data.extensions?.tavern_helper as { scripts?: { content: string }[] } | undefined;
   if (tavernHelper?.scripts) {
     for (const script of tavernHelper.scripts) {
-      scanText(script.content);
+      // Zod + macros + data-var (NO YAML — scripts are JS code, not YAML)
+      scanZodFields(script.content);
+      scanMacros(script.content);
+      scanDataVar(script.content);
     }
   }
   const tavernHelperLegacy = data.extensions?.TavernHelper_scripts as { content: string }[] | undefined;
   if (Array.isArray(tavernHelperLegacy)) {
     for (const script of tavernHelperLegacy) {
-      scanText(script.content);
+      scanZodFields(script.content);
+      scanMacros(script.content);
+      scanDataVar(script.content);
     }
   }
 
-  // ─── Scan Regex scripts (data-var, getvar in HTML) ───
+  // ═══════════════════════════════════════════════════════════
+  // SOURCE 3: Regex scripts (HTML dashboard UI)
+  // ═══════════════════════════════════════════════════════════
   if (data.extensions?.regex_scripts) {
     for (const script of data.extensions.regex_scripts) {
       if (script.replaceString) {
-        // Only extract data-var and macro references from regex HTML
-        const dataVarRegex = /data-var\s*=\s*["']([^"']+)["']/g;
-        let match;
-        while ((match = dataVarRegex.exec(script.replaceString)) !== null) {
-          keys.add(match[1]);
-        }
-        const varMacroRegex = /\{\{(?:getvar|setvar|addvar)::([^:}]+)/g;
-        while ((match = varMacroRegex.exec(script.replaceString)) !== null) {
-          keys.add(match[1].trim());
-        }
+        // data-var + macros only (NO YAML, NO Zod — this is HTML)
+        scanDataVar(script.replaceString);
+        scanMacros(script.replaceString);
       }
     }
   }
 
-  // ─── Scan narrative fields for {{getvar/setvar}} references ───
-  // These fields may reference MVU variables via macros
+  // ═══════════════════════════════════════════════════════════
+  // SOURCE 4: Narrative fields — macros only
+  // ═══════════════════════════════════════════════════════════
   const narrativeFields = [
     data.system_prompt, data.post_history_instructions,
     data.description, data.personality, data.scenario, data.first_mes,
   ];
   for (const fieldText of narrativeFields) {
     if (!fieldText || typeof fieldText !== 'string') continue;
-    const varMacroRegex = /\{\{(?:getvar|setvar|addvar|getglobalvar|setglobalvar|addglobalvar)::([^:}]+)/g;
-    let match;
-    while ((match = varMacroRegex.exec(fieldText)) !== null) {
-      const key = match[1].trim();
-      if (key) keys.add(key);
-    }
+    scanMacros(fieldText);
   }
-  // Also scan alternate_greetings
   if (Array.isArray(data.alternate_greetings)) {
     for (const greeting of data.alternate_greetings) {
       if (typeof greeting !== 'string') continue;
-      const varMacroRegex = /\{\{(?:getvar|setvar|addvar)::([^:}]+)/g;
-      let match;
-      while ((match = varMacroRegex.exec(greeting)) !== null) {
-        keys.add(match[1].trim());
-      }
+      scanMacros(greeting);
     }
   }
 
-  // Filter out generic/noise keys
-  const noiseKeys = new Set(['true', 'false', 'null', 'undefined', 'enabled', 'disabled', 'name', 'value', 'type', 'content', 'key', 'data', 'id', 'class', 'style', 'script', 'div', 'span', 'table', 'tr', 'td', 'th', 'input', 'button', 'label', 'select', 'option', 'form', 'img', 'src', 'href', 'title', 'alt', 'width', 'height']);
-  return Array.from(keys).filter(k => k.length > 1 && !noiseKeys.has(k.toLowerCase()));
+  // ═══════════════════════════════════════════════════════════
+  // EXTRACT Zod descriptions for context
+  // ═══════════════════════════════════════════════════════════
+  let zodDescriptions: Record<string, string> = {};
+  const allScripts = [
+    ...(tavernHelper?.scripts || []),
+    ...(Array.isArray(tavernHelperLegacy) ? tavernHelperLegacy : []),
+  ];
+  for (const script of allScripts) {
+    if (script.content) {
+      Object.assign(zodDescriptions, extractZodDescriptions(script.content));
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // FILTER: Remove noise + prioritize multi-source keys
+  // ═══════════════════════════════════════════════════════════
+  const result: MvuKeyInfo[] = [];
+  for (const key of keys) {
+    if (isNoiseKey(key)) continue;
+
+    const sources = keySources.get(key);
+    // YAML-only keys are lower priority — keep if they look like real variable names
+    // (contain CJK, or have underscores, or are Title_Case)
+    if (sources && sources.size === 1 && sources.has('yaml')) {
+      const hasCJK = /[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]/.test(key);
+      const hasUnderscore = key.includes('_');
+      const isTitleCase = /^[A-Z][a-z]/.test(key);
+      // Only keep YAML-only keys if they look like real MVU variables
+      if (!hasCJK && !hasUnderscore && !isTitleCase) continue;
+    }
+
+    result.push({
+      key,
+      sources: [...(sources || [])] as MvuKeyInfo['sources'],
+      description: zodDescriptions[key],
+      occurrences: keyOccurrences.get(key) || 1,
+    });
+  }
+
+  return result;
+}
+
+/**
+ * Backward-compatible wrapper: returns just the key strings.
+ * Used by callers that don't need the rich metadata.
+ */
+export function extractPotentialMvuKeyStrings(card: CharacterCard): string[] {
+  return extractPotentialMvuKeys(card).map(k => k.key);
 }
 
 /* ═══ AI Auto-translate MVU Keys ═══ */
@@ -298,7 +471,8 @@ export async function aiTranslateMvuKeys(
   targetLang: string,
   proxy: ProxySettings,
   signal?: AbortSignal,
-  schemaContext?: string
+  schemaContext?: string,
+  keyDescriptions?: Record<string, string>
 ): Promise<Record<string, string>> {
   if (keys.length === 0) return {};
 
@@ -337,97 +511,124 @@ STRICT RULES:
 
 RESPOND in EXACT JSON format (no markdown): {"translations": {"original_key": "Translated_Key", ...}}`;
 
-  let contextBlock = '';
-  if (schemaContext && schemaContext.trim()) {
-    contextBlock = `\nHere is the Zod schema or script context where these variables are defined. USE THIS CONTEXT to understand what the variables mean (look at the .describe() text or comments):\n\`\`\`javascript\n${schemaContext.slice(0, 5000)}\n\`\`\`\n\n`;
+  // ─── Batch chunking for large key sets ───
+  const BATCH_SIZE = 25;
+  const batches: string[][] = [];
+  for (let i = 0; i < keysToTranslate.length; i += BATCH_SIZE) {
+    batches.push(keysToTranslate.slice(i, i + BATCH_SIZE));
   }
 
-  const userPrompt = `Translate these variable names to ${targetLang} (code-friendly, underscore-separated):${contextBlock}
+  for (const batch of batches) {
+    if (signal?.aborted) break;
+
+    let contextBlock = '';
+    if (schemaContext && schemaContext.trim()) {
+      contextBlock = `\nHere is the Zod schema or script context where these variables are defined. USE THIS CONTEXT to understand what the variables mean (look at the .describe() text or comments):\n\`\`\`javascript\n${schemaContext.slice(0, 5000)}\n\`\`\`\n\n`;
+    }
+
+    // Build variable list with optional descriptions
+    const varList = batch.map((k, i) => {
+      const desc = keyDescriptions?.[k];
+      return desc
+        ? `${i + 1}. "${k}" — ${desc}`
+        : `${i + 1}. "${k}"`;
+    }).join('\n');
+
+    const userPrompt = `Translate these variable names to ${targetLang} (code-friendly, underscore-separated):${contextBlock}
 Variables to translate:
-${keysToTranslate.map((k, i) => `${i + 1}. "${k}"`).join('\n')}`;
+${varList}`;
 
-  try {
-    const url = proxy.proxyUrl.replace(/\/+$/, '');
-    let apiUrl: string;
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    let body: any;
+    try {
+      const url = proxy.proxyUrl.replace(/\/+$/, '');
+      let apiUrl: string;
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      let body: any;
 
-    if (proxy.provider === 'anthropic') {
-      apiUrl = url + '/messages';
-      headers['x-api-key'] = proxy.apiKey;
-      headers['anthropic-version'] = '2023-06-01';
-      headers['anthropic-dangerous-direct-browser-access'] = 'true';
-      body = {
-        model: proxy.model,
-        max_tokens: Math.min(proxy.maxTokens, 4096),
-        system: systemPrompt,
-        messages: [{ role: 'user', content: userPrompt }],
-        temperature: 0.1,
-      };
-    } else if (proxy.provider === 'google') {
-      apiUrl = `${url}/models/${proxy.model}:generateContent?key=${proxy.apiKey}`;
-      body = {
-        system_instruction: { parts: [{ text: systemPrompt }] },
-        contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
-        generationConfig: { maxOutputTokens: Math.min(proxy.maxTokens, 4096), temperature: 0.1 },
-      };
-    } else {
-      apiUrl = url + '/chat/completions';
-      if (proxy.apiKey) headers['Authorization'] = `Bearer ${proxy.apiKey}`;
-      body = {
-        model: proxy.model,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt },
-        ],
-        max_tokens: Math.min(proxy.maxTokens, 4096),
-        temperature: 0.1,
-      };
-    }
-
-    const res = await fetch(apiUrl, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-      signal,
-    });
-
-    if (!res.ok) {
-      const errText = await res.text().catch(() => '');
-      throw new Error(`API ${res.status}: ${errText.slice(0, 200)}`);
-    }
-
-    const json = await res.json();
-    let responseText = '';
-    if (proxy.provider === 'anthropic') {
-      responseText = json.content?.[0]?.text || '';
-    } else if (proxy.provider === 'google') {
-      responseText = json.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    } else {
-      responseText = json.choices?.[0]?.message?.content || '';
-    }
-
-    // Parse JSON response
-    let jsonStr = responseText.trim();
-    if (jsonStr.startsWith('```')) {
-      jsonStr = jsonStr.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
-    }
-
-    const parsed = JSON.parse(jsonStr);
-    const translations = parsed.translations || parsed;
-
-    for (const [k, v] of Object.entries(translations)) {
-      if (typeof v === 'string' && v.trim()) {
-        result[k] = v.trim();
+      if (proxy.provider === 'anthropic') {
+        apiUrl = url + '/messages';
+        headers['x-api-key'] = proxy.apiKey;
+        headers['anthropic-version'] = '2023-06-01';
+        headers['anthropic-dangerous-direct-browser-access'] = 'true';
+        body = {
+          model: proxy.model,
+          max_tokens: Math.min(proxy.maxTokens, 4096),
+          system: systemPrompt,
+          messages: [{ role: 'user', content: userPrompt }],
+          temperature: 0.1,
+        };
+      } else if (proxy.provider === 'google') {
+        apiUrl = `${url}/models/${proxy.model}:generateContent?key=${proxy.apiKey}`;
+        body = {
+          system_instruction: { parts: [{ text: systemPrompt }] },
+          contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
+          generationConfig: { maxOutputTokens: Math.min(proxy.maxTokens, 4096), temperature: 0.1 },
+        };
+      } else {
+        apiUrl = url + '/chat/completions';
+        if (proxy.apiKey) headers['Authorization'] = `Bearer ${proxy.apiKey}`;
+        body = {
+          model: proxy.model,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+          ],
+          max_tokens: Math.min(proxy.maxTokens, 4096),
+          temperature: 0.1,
+        };
       }
-    }
 
-    return result;
-  } catch (err) {
-    console.error('AI MVU key translation failed:', err);
-    // Return what we have (ASCII keys mapped to themselves)
-    return result;
-  }
+      const res = await fetch(apiUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+        signal,
+      });
+
+      if (!res.ok) {
+        const errText = await res.text().catch(() => '');
+        throw new Error(`API ${res.status}: ${errText.slice(0, 200)}`);
+      }
+
+      const json = await res.json();
+      let responseText = '';
+      if (proxy.provider === 'anthropic') {
+        responseText = json.content?.[0]?.text || '';
+      } else if (proxy.provider === 'google') {
+        responseText = json.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      } else {
+        responseText = json.choices?.[0]?.message?.content || '';
+      }
+
+      // Parse JSON response
+      let jsonStr = responseText.trim();
+      if (jsonStr.startsWith('```')) {
+        jsonStr = jsonStr.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
+      }
+
+      const parsed = JSON.parse(jsonStr);
+      const translations = parsed.translations || parsed;
+
+      for (const [k, v] of Object.entries(translations)) {
+        if (typeof v === 'string' && v.trim()) {
+          const cleaned = v.trim();
+          // ─── Validation: reject names with spaces or invalid chars ───
+          const hasSpaces = /\s/.test(cleaned);
+          if (hasSpaces) {
+            // Auto-fix: replace spaces with underscores
+            result[k] = cleaned.replace(/\s+/g, '_');
+          } else {
+            result[k] = cleaned;
+          }
+        }
+      }
+
+    } catch (err) {
+      console.error(`AI MVU key translation batch failed:`, err);
+      // Continue with next batch
+    }
+  } // end batch loop
+
+  return result;
 }
 
 /* ═══ AI Auto-extract Glossary Terms ═══ */

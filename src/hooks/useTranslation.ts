@@ -2,9 +2,11 @@ import { useCallback, useRef } from 'react';
 import { useStore } from '../store';
 import { translateText, translateBatch } from '../utils/apiClient';
 import { extractTranslatableFields, applyTranslationsToCard } from '../utils/cardFields';
-import { syncMvuVariables, postProcessRegexHtml, extractPotentialMvuKeys, aiTranslateMvuKeys } from '../utils/mvuSync';
+import { syncMvuVariables, postProcessRegexHtml, extractPotentialMvuKeyStrings, aiTranslateMvuKeys, extractZodDescriptions } from '../utils/mvuSync';
 import { shouldSkipTranslation } from '../utils/langDetect';
 import { buildUnifiedRAGContext, clearRAGCache } from '../utils/ragContext';
+import { isMvuCard, getMvuCardSummary } from '../utils/mvuDetector';
+import { validateMvuVariables, autoFixMvuVariables, generateSyncReport } from '../utils/mvuValidator';
 import type { FieldGroup, FieldGroupConfig, TranslationField } from '../types/card';
 
 /* ─── Prompt bổ sung dành riêng cho regex replaceString ─── */
@@ -32,6 +34,29 @@ ADDITIONAL RULES FOR JAVASCRIPT/TAVERNHELPER SCRIPT CONTENT:
 19. Keep ALL code structure intact — same line breaks, same indentation, same semicolons/brackets.
 20. If a string contains mixed code and text (e.g. template literals with \${var}), translate only the text parts and preserve the code interpolations.
 21. Preserve font-family replacements as specified for Chinese/Japanese fonts.`;
+
+/* ─── Prompt bổ sung cho [initvar] entries (YAML variable initialization) ─── */
+const INITVAR_EXTRA_PROMPT = `
+
+ADDITIONAL RULES FOR [initvar] VARIABLE INITIALIZATION ENTRIES:
+14. This is a YAML-structured variable initialization entry.
+15. TRANSLATE the VALUE part (text after the colon) into natural language.
+16. KEEP the KEY part (text before the colon) using the variable name mapping from the MVU dictionary if provided.
+17. PRESERVE the exact YAML structure: indentation, colons, line breaks.
+18. DO NOT translate numeric values, boolean values (true/false), or code expressions.
+19. Keep any {{macro}} placeholders exactly as-is.
+20. Example: "好感度: 陌生人" → "Hảo_Cảm: Người lạ" (key translated via dictionary, value translated naturally).`;
+
+/* ─── Prompt bổ sung cho MVU logic entries (controller/update) ─── */
+const MVU_LOGIC_EXTRA_PROMPT = `
+
+ADDITIONAL RULES FOR MVU LOGIC/CONTROLLER ENTRIES:
+14. This entry contains MVU (Model-View-Update) logic code or controller definitions.
+15. ONLY translate human-readable strings and comments. Keep ALL code logic intact.
+16. Preserve ALL {{getvar::}}, {{setvar::}}, {{addvar::}} macros exactly.
+17. Variable names in macros should use the translated names from the MVU dictionary.
+18. Keep JSON structures, conditional expressions, and mathematical formulas unchanged.
+19. Translate descriptive text and labels but NOT code identifiers.`;
 
 
 export function useTranslation() {
@@ -126,7 +151,7 @@ export function useTranslation() {
         }
       }
 
-      // Special prompts for regex and TavernHelper fields
+      // Special prompts for regex, TavernHelper, and MVU entry types
       const isRegexField = field.group === 'regex' && field.path.includes('replaceString');
       const isTavernHelperField = field.group === 'tavern_helper';
       const isRegexTrimString = field.group === 'regex' && field.path.includes('trimStrings');
@@ -135,10 +160,18 @@ export function useTranslation() {
         effectivePrompt = (effectivePrompt || '') + REGEX_EXTRA_PROMPT;
       } else if (isTavernHelperField) {
         effectivePrompt = (effectivePrompt || '') + TAVERN_HELPER_EXTRA_PROMPT;
+      } else if (field.entryType === 'initvar') {
+        effectivePrompt = (effectivePrompt || '') + INITVAR_EXTRA_PROMPT;
+      } else if (field.entryType === 'mvu_logic' || field.entryType === 'controller') {
+        effectivePrompt = (effectivePrompt || '') + MVU_LOGIC_EXTRA_PROMPT;
       }
 
       // ═══ Unified RAG Context (combines Schema + Glossary + MVU Dict + Cross-field) ═══
-      let unifiedSchemaForApi = store.translationConfig.customSchema;
+      // Use liveSchemaContext (translated TavernHelper) when no custom schema is set
+      const effectiveSchema = store.translationConfig.customSchema?.trim()
+        ? store.translationConfig.customSchema
+        : store.liveSchemaContext || undefined;
+      let unifiedSchemaForApi: string | undefined = effectiveSchema;
       let unifiedGlossaryForApi = store.translationConfig.glossary;
 
       if (store.translationConfig.enableRAGContext) {
@@ -150,7 +183,7 @@ export function useTranslation() {
           mvuDictionary: store.translationConfig.enableMvuSync
             ? useStore.getState().translationConfig.mvuDictionary
             : undefined,
-          customSchema: store.translationConfig.customSchema,
+          customSchema: effectiveSchema,
           maxFields: store.translationConfig.ragMaxFields,
           maxChars: store.translationConfig.ragMaxChars,
         });
@@ -248,6 +281,10 @@ export function useTranslation() {
     }
   };
 
+  /* ─── Helper: check if a field is MVU-critical (needs extra care) ─── */
+  const isMvuCriticalField = (f: TranslationField) =>
+    f.entryType === 'initvar' || f.entryType === 'controller' || f.entryType === 'mvu_logic';
+
   /* ─── Translate one batch of fields (single API call + fallback) ─── */
   const translateOneBatch = async (batchFields: TranslationField[], retryCount = 0) => {
     // Mark all as translating
@@ -256,13 +293,52 @@ export function useTranslation() {
     }
     const totalChars = batchFields.reduce((s, f) => s + f.original.length, 0);
     const retryPrefix = retryCount > 0 ? `[Retry ${retryCount}] ` : '';
-    store.addLog('active', `${retryPrefix}Batch translating ${batchFields.length} entries (${totalChars} chars)`);
+    const mvuCriticalCount = batchFields.filter(isMvuCriticalField).length;
+    const entryTypes = [...new Set(batchFields.map(f => f.entryType).filter(Boolean))];
+    const typeLabel = entryTypes.length > 0 ? ` [${entryTypes.join(',')}]` : '';
+    store.addLog('active', `${retryPrefix}Batch translating ${batchFields.length} entries${typeLabel} (${totalChars} chars${mvuCriticalCount > 0 ? `, ${mvuCriticalCount} MVU-critical` : ''})`);
 
     try {
       const items = batchFields.map(f => ({ text: f.original, fieldName: f.label }));
       
       let effectivePrompt = store.translationConfig.translationPrompt;
-      let batchSchemaForApi = store.translationConfig.customSchema;
+
+      // ═══ Per-type MVU prompt injection for batch ═══
+      // Scan batch for entry types and append relevant extra prompts
+      if (store.translationConfig.enableMvuSync) {
+        const hasInitvar = batchFields.some(f => f.entryType === 'initvar');
+        const hasMvuLogic = batchFields.some(f => f.entryType === 'mvu_logic' || f.entryType === 'controller');
+        const hasRegex = batchFields.some(f => f.group === 'regex' && f.path.includes('replaceString'));
+        const hasTavernHelper = batchFields.some(f => f.group === 'tavern_helper');
+
+        if (hasInitvar) {
+          effectivePrompt = (effectivePrompt || '') + INITVAR_EXTRA_PROMPT;
+        }
+        if (hasMvuLogic) {
+          effectivePrompt = (effectivePrompt || '') + MVU_LOGIC_EXTRA_PROMPT;
+        }
+        if (hasRegex) {
+          effectivePrompt = (effectivePrompt || '') + REGEX_EXTRA_PROMPT;
+        }
+        if (hasTavernHelper && !hasRegex) {
+          effectivePrompt = (effectivePrompt || '') + TAVERN_HELPER_EXTRA_PROMPT;
+        }
+      } else {
+        // Non-MVU batch: still inject type-specific prompts for regex/tavernhelper
+        const hasRegex = batchFields.some(f => f.group === 'regex' && (f.path.includes('replaceString') || f.path.includes('trimStrings')));
+        const hasTavernHelper = batchFields.some(f => f.group === 'tavern_helper');
+        if (hasRegex) {
+          effectivePrompt = (effectivePrompt || '') + REGEX_EXTRA_PROMPT;
+        } else if (hasTavernHelper) {
+          effectivePrompt = (effectivePrompt || '') + TAVERN_HELPER_EXTRA_PROMPT;
+        }
+      }
+
+      // Use liveSchemaContext when no custom schema is set
+      const batchEffectiveSchema = store.translationConfig.customSchema?.trim()
+        ? store.translationConfig.customSchema
+        : store.liveSchemaContext || undefined;
+      let batchSchemaForApi: string | undefined = batchEffectiveSchema;
       let batchGlossaryForApi = store.translationConfig.glossary;
 
       if (store.translationConfig.enableRAGContext) {
@@ -274,7 +350,7 @@ export function useTranslation() {
           mvuDictionary: store.translationConfig.enableMvuSync
             ? useStore.getState().translationConfig.mvuDictionary
             : undefined,
-          customSchema: store.translationConfig.customSchema,
+          customSchema: batchEffectiveSchema,
           maxFields: Math.min(store.translationConfig.ragMaxFields, 3),
           maxChars: Math.min(store.translationConfig.ragMaxChars, 2000),
         });
@@ -314,113 +390,179 @@ export function useTranslation() {
         batchGlossaryForApi
       );
 
-      // Apply results — collect empties for fallback
+      // ═══ Apply results + Post-batch MVU validation ═══
       let doneCount = 0;
+      let autoFixCount = 0;
       const emptyFields: TranslationField[] = [];
+      const mvuDict = store.translationConfig.enableMvuSync
+        ? useStore.getState().translationConfig.mvuDictionary
+        : {};
+      const hasMvuDict = Object.keys(mvuDict).filter(k => mvuDict[k] && k !== mvuDict[k]).length > 0;
+
       for (let j = 0; j < batchFields.length; j++) {
-        const translated = results[j] || '';
-        if (translated.trim()) {
-          store.updateField(batchFields[j].path, { status: 'done', translated, retries: retryCount });
-          doneCount++;
-        } else {
+        let translated = results[j] || '';
+        if (!translated.trim()) {
           emptyFields.push(batchFields[j]);
+          continue;
         }
+
+        // ─── Post-batch MVU variable validation + auto-fix ───
+        if (hasMvuDict) {
+          const fieldType = (batchFields[j].entryType || batchFields[j].group) as any;
+          const validation = validateMvuVariables(batchFields[j].original, translated, mvuDict, fieldType);
+
+          if (validation.unreplaced.length > 0) {
+            const isCodeField = isMvuCriticalField(batchFields[j]) ||
+              batchFields[j].group === 'tavern_helper' || batchFields[j].group === 'regex';
+
+            if (isCodeField) {
+              // Auto-fix unreplaced variables in code fields
+              const fixed = autoFixMvuVariables(translated, mvuDict, validation.unreplaced);
+              if (fixed !== translated) {
+                translated = fixed;
+                autoFixCount++;
+                store.addLog('info', `🔧 Auto-fixed ${validation.unreplaced.length} vars in ${batchFields[j].label}`);
+              }
+            } else {
+              store.addLog('warning', `⚠️ ${validation.unreplaced.length} unreplaced vars in ${batchFields[j].label}: ${validation.unreplaced.slice(0, 3).join(', ')}`);
+            }
+          }
+
+          // Log warnings (macro disappearance, etc.)
+          for (const w of validation.warnings.slice(0, 2)) {
+            store.addLog('warning', `${batchFields[j].label}: ${w}`);
+          }
+        }
+
+        // Post-process regex HTML
+        const isRegexField = batchFields[j].group === 'regex' && (batchFields[j].path.includes('replaceString') || batchFields[j].path.includes('trimStrings'));
+        if (isRegexField && translated) {
+          translated = postProcessRegexHtml(translated);
+        }
+        if (batchFields[j].group === 'tavern_helper' && translated && /<[a-z][^>]*>/i.test(translated)) {
+          translated = postProcessRegexHtml(translated);
+        }
+
+        store.updateField(batchFields[j].path, { status: 'done', translated, retries: retryCount });
+        doneCount++;
       }
 
-      // Fallback/Retry for empty results
+      // Log validation summary
+      if (autoFixCount > 0) {
+        store.addLog('info', `📋 Batch validation: ${doneCount} translated, ${autoFixCount} auto-fixed`);
+      }
+
+      // ═══ Fallback/Retry for empty results ═══
       if (emptyFields.length > 0) {
+        // Exponential backoff
+        const backoffDelay = Math.min((store.proxy.retryDelay || 1000) * Math.pow(2, retryCount), 15000);
+
         if (retryCount < (store.proxy.maxRetries || 3)) {
-          store.addLog('retry', `⚠️ ${emptyFields.length} items failed/empty in batch. Retrying as a batch...`);
-          await new Promise((r) => setTimeout(r, store.proxy.retryDelay || 1000));
+          // Log which specific fields failed
+          const failedLabels = emptyFields.map(f => f.label.replace(/^Lorebook: /, '')).slice(0, 5);
+          store.addLog('retry', `⚠️ ${emptyFields.length} items empty in batch: [${failedLabels.join(', ')}${emptyFields.length > 5 ? '...' : ''}]. Retrying (${backoffDelay}ms)...`);
+          await new Promise((r) => setTimeout(r, backoffDelay));
           await translateOneBatch(emptyFields, retryCount + 1);
         } else {
-          store.addLog('warning', `${emptyFields.length} empty after retries, falling back to individual...`);
-          for (const ef of emptyFields) {
+          // ─── Fallback to individual using translateSingleField ───
+          // Separate MVU-critical fields (process first) from regular ones
+          const criticalFields = emptyFields.filter(isMvuCriticalField);
+          const normalFields = emptyFields.filter(f => !isMvuCriticalField(f));
+          const orderedFallback = [...criticalFields, ...normalFields];
+
+          if (criticalFields.length > 0) {
+            store.addLog('warning', `${emptyFields.length} empty after retries. Falling back to individual (${criticalFields.length} MVU-critical first)...`);
+          } else {
+            store.addLog('warning', `${emptyFields.length} empty after retries, falling back to individual...`);
+          }
+
+          for (let fi = 0; fi < orderedFallback.length; fi++) {
+            const ef = orderedFallback[fi];
             if (checkAbort()) throw new Error('Cancelled');
+
+            // Pause support during fallback
+            if (await waitForPause()) throw new Error('Cancelled');
+
             try {
-              store.updateField(ef.path, { status: 'translating' });
-              // Context hint for keyword fields in fallback
-              let ctxHint: string | undefined;
-              if (ef.group === 'lorebook_keys') {
-                const cp = ef.path.replace('.keys', '.content');
-                const cf = store.fields.find(f => f.path === cp);
-                if (cf) ctxHint = (cf.translated || cf.original || '').slice(0, 1500);
-              }
-              const translated = await translateText(
-                ef.original, ef.label, store.proxy,
-                store.translationConfig.targetLanguage,
-                store.translationConfig.sourceLanguage,
-                store.translationConfig.translationPrompt,
-                store.translationConfig.customSchema,
-                abortRef.current?.signal,
-                ctxHint,
-                store.translationConfig.glossary,
-                ef.previousTranslation
-              );
-              if (translated && translated.trim()) {
-                store.updateField(ef.path, { status: 'done', translated, retries: retryCount });
-                doneCount++;
-              } else {
-                store.updateField(ef.path, { status: 'error', error: 'API returned empty translation', retries: retryCount });
+              // Use translateSingleField for full MVU context (per-type prompts, RAG, dict injection)
+              const allCurrentFields = useStore.getState().fields;
+              const fieldIdx = allCurrentFields.findIndex(f => f.path === ef.path);
+              const result = await translateSingleField(ef, fieldIdx >= 0 ? fieldIdx : fi, allCurrentFields);
+
+              // Extra retry for MVU-critical fields that failed
+              if (result === 'error' && isMvuCriticalField(ef)) {
+                store.addLog('retry', `🔄 Extra retry for MVU-critical: ${ef.label}`);
+                await new Promise((r) => setTimeout(r, backoffDelay));
+                await translateSingleField(ef, fieldIdx >= 0 ? fieldIdx : fi, allCurrentFields);
               }
             } catch (fallbackErr) {
               const fbMsg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
               if (fbMsg === 'Cancelled' || checkAbort()) throw fallbackErr;
-              store.updateField(ef.path, { status: 'error', error: fbMsg, retries: retryCount });
+              store.updateField(ef.path, { status: 'error', error: fbMsg, retries: retryCount + 1 });
+            }
+
+            // Small delay between individual fallback calls
+            if (fi < orderedFallback.length - 1 && store.proxy.requestDelay > 0) {
+              await new Promise((r) => setTimeout(r, Math.max(store.proxy.requestDelay, 300)));
             }
           }
         }
       } else {
-        store.addLog('success', `${retryPrefix}Batch complete: ${doneCount}/${batchFields.length}`);
+        store.addLog('success', `${retryPrefix}Batch complete: ${doneCount}/${batchFields.length}${autoFixCount > 0 ? ` (${autoFixCount} auto-fixed)` : ''}`);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg === 'Cancelled' || checkAbort()) {
         for (const f of batchFields) {
-          store.updateField(f.path, { status: 'pending' });
+          const currentStatus = useStore.getState().fields.find(sf => sf.path === f.path)?.status;
+          if (currentStatus === 'translating') {
+            store.updateField(f.path, { status: 'pending' });
+          }
         }
         throw err;
       }
 
+      // Exponential backoff for batch-level failure
+      const backoffDelay = Math.min((store.proxy.retryDelay || 1000) * Math.pow(2, retryCount), 15000);
+
       if (retryCount < (store.proxy.maxRetries || 3)) {
-        store.addLog('retry', `⚠️ Batch completely failed, retrying the batch... (${msg})`);
-        await new Promise((r) => setTimeout(r, store.proxy.retryDelay || 1000));
+        store.addLog('retry', `⚠️ Batch completely failed, retrying (${backoffDelay}ms)... (${msg})`);
+        await new Promise((r) => setTimeout(r, backoffDelay));
         await translateOneBatch(batchFields, retryCount + 1);
         return;
       }
 
-      // Batch completely failed after retries — fallback ALL to single
-      store.addLog('warning', `Batch failed after retries, falling back for ${batchFields.length} entries...`);
-      for (const f of batchFields) {
+      // ─── Batch completely failed after retries — fallback ALL via translateSingleField ───
+      const criticalFields = batchFields.filter(isMvuCriticalField);
+      const normalFields = batchFields.filter(f => !isMvuCriticalField(f));
+      const orderedFallback = [...criticalFields, ...normalFields];
+
+      store.addLog('warning', `Batch failed after retries, falling back for ${batchFields.length} entries${criticalFields.length > 0 ? ` (${criticalFields.length} MVU-critical first)` : ''}...`);
+
+      for (let fi = 0; fi < orderedFallback.length; fi++) {
+        const f = orderedFallback[fi];
         if (checkAbort()) throw new Error('Cancelled');
+        if (await waitForPause()) throw new Error('Cancelled');
+
         try {
-          store.updateField(f.path, { status: 'translating' });
-          // Context hint for keyword fields in batch fallback
-          let ctxHint: string | undefined;
-          if (f.group === 'lorebook_keys') {
-            const cp = f.path.replace('.keys', '.content');
-            const cf = store.fields.find(fl => fl.path === cp);
-            if (cf) ctxHint = (cf.translated || cf.original || '').slice(0, 1500);
-          }
-          const translated = await translateText(
-            f.original, f.label, store.proxy,
-            store.translationConfig.targetLanguage,
-            store.translationConfig.sourceLanguage,
-            store.translationConfig.translationPrompt,
-            store.translationConfig.customSchema,
-            abortRef.current?.signal,
-            ctxHint,
-            store.translationConfig.glossary
-          );
-          if (translated && translated.trim()) {
-            store.updateField(f.path, { status: 'done', translated, retries: retryCount });
-          } else {
-            store.updateField(f.path, { status: 'error', error: 'API returned empty translation', retries: retryCount });
+          const allCurrentFields = useStore.getState().fields;
+          const fieldIdx = allCurrentFields.findIndex(sf => sf.path === f.path);
+          const result = await translateSingleField(f, fieldIdx >= 0 ? fieldIdx : fi, allCurrentFields);
+
+          // Extra retry for MVU-critical fields
+          if (result === 'error' && isMvuCriticalField(f)) {
+            store.addLog('retry', `🔄 Extra retry for MVU-critical: ${f.label}`);
+            await new Promise((r) => setTimeout(r, backoffDelay));
+            await translateSingleField(f, fieldIdx >= 0 ? fieldIdx : fi, allCurrentFields);
           }
         } catch (fallbackErr) {
           const fbMsg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
           if (fbMsg === 'Cancelled' || checkAbort()) throw fallbackErr;
-          store.updateField(f.path, { status: 'error', error: fbMsg, retries: retryCount });
+          store.updateField(f.path, { status: 'error', error: fbMsg, retries: retryCount + 1 });
+        }
+
+        if (fi < orderedFallback.length - 1 && store.proxy.requestDelay > 0) {
+          await new Promise((r) => setTimeout(r, Math.max(store.proxy.requestDelay, 300)));
         }
       }
     }
@@ -456,17 +598,27 @@ export function useTranslation() {
     if (alreadyDone > 0) logParts.push(`(${alreadyDone} already done)`);
     store.addLog('info', logParts.join(' '));
 
-    // ═══ Clear RAG cache for fresh card ═══
+    // ═══ Clear RAG cache + live schema context for fresh card ═══
     clearRAGCache();
+    store.clearLiveSchemaContext();
     if (store.translationConfig.enableRAGContext) {
       store.addLog('info', '🧠 Cross-field Context RAG enabled — each field will receive context from related translated fields');
+    }
+
+    // ═══ Auto-detect MVU card + suggest enabling sync ═══
+    if (store.card && !store.translationConfig.enableMvuSync) {
+      const mvuSummary = getMvuCardSummary(store.card);
+      if (mvuSummary.isMvu) {
+        store.addToast('info', `🔧 MVU card detected (${mvuSummary.reasons.join(', ')}). Consider enabling Strategy B for variable sync.`);
+        store.addLog('info', `🔍 MVU card auto-detected: confidence=${(mvuSummary.confidence * 100).toFixed(0)}%, vars=${mvuSummary.variableCount}, initvar=${mvuSummary.initvarCount}`);
+      }
     }
 
     // ═══ Auto-populate MVU Dictionary (Strategy B) ═══
     if (store.translationConfig.enableMvuSync && store.card) {
       try {
         store.addLog('info', '🔧 Strategy B: Auto-detecting MVU/Zod variables...');
-        const extractedKeys = extractPotentialMvuKeys(store.card);
+        const extractedKeys = extractPotentialMvuKeyStrings(store.card);
         
         if (extractedKeys.length > 0) {
           // Filter out keys already in dictionary
@@ -478,10 +630,16 @@ export function useTranslation() {
           if (newKeys.length > 0) {
             store.addLog('active', `🤖 Calling AI to translate ${newKeys.length} variable names...`);
             
-            // Provide schema context for better AI translation
+            // Provide schema context + Zod descriptions for better AI translation
             let schemaContext = store.translationConfig.customSchema || '';
             if (!schemaContext.trim() && store.card?.data?.extensions?.tavern_helper?.scripts) {
               schemaContext = store.card.data.extensions.tavern_helper.scripts.map(s => s.content).join('\n\n');
+            }
+
+            // Extract .describe() annotations for richer context
+            let keyDescriptions: Record<string, string> = {};
+            if (schemaContext) {
+              keyDescriptions = extractZodDescriptions(schemaContext);
             }
 
             const aiTranslations = await aiTranslateMvuKeys(
@@ -489,7 +647,8 @@ export function useTranslation() {
               store.translationConfig.targetLanguage,
               store.proxy,
               abortRef.current?.signal,
-              schemaContext
+              schemaContext,
+              keyDescriptions
             );
             
             // Merge AI translations into dictionary (only non-empty, non-identical)
@@ -577,6 +736,7 @@ export function useTranslation() {
       if (isBatchLorebook && lorebookGroups.includes(field.group)) {
         const concurrency = store.translationConfig.concurrentBatches || 1;
         const MAX_BATCH_CHARS = Math.max(store.proxy.maxTokens || 65536, 10000);
+        const isMvuEnabled = store.translationConfig.enableMvuSync;
 
         // Step 1: Collect ALL consecutive lorebook fields
         const allLorebookFields: TranslationField[] = [];
@@ -585,24 +745,80 @@ export function useTranslation() {
           i++;
         }
 
-        // Step 2: Split into sub-batches by batchSize AND char limit (no overlap possible)
+        // Step 2: Split into sub-batches
         const subBatches: TranslationField[][] = [];
-        let currentBatch: TranslationField[] = [];
-        let currentChars = 0;
-        for (const f of allLorebookFields) {
-          // Start new batch if size or char limit exceeded
-          if (currentBatch.length >= batchSize || (currentBatch.length > 0 && currentChars + f.original.length > MAX_BATCH_CHARS)) {
-            subBatches.push(currentBatch);
-            currentBatch = [];
-            currentChars = 0;
+
+        if (isMvuEnabled) {
+          // ═══ MVU Smart Grouping: group by entryType first, then split ═══
+          // This ensures initvar entries batch together (YAML format),
+          // mvu_logic entries batch together (code), and narrative batches separately
+          const typeGroups: Record<string, TranslationField[]> = {};
+          for (const f of allLorebookFields) {
+            const typeKey = f.entryType || 'other';
+            if (!typeGroups[typeKey]) typeGroups[typeKey] = [];
+            typeGroups[typeKey].push(f);
           }
-          currentBatch.push(f);
-          currentChars += f.original.length;
+
+          // Process each type group with appropriate batch sizes
+          const TYPE_BATCH_SIZES: Record<string, number> = {
+            initvar: batchSize,          // YAML: normal size
+            mvu_logic: Math.min(batchSize, 5),  // Code: smaller batches (complex, longer)
+            controller: Math.min(batchSize, 5), // Code: smaller batches
+            rules: batchSize,            // Rules: normal size
+            narrative: batchSize,        // Narrative: normal size
+            other: batchSize,            // Default: normal size
+          };
+
+          // Order: initvar first (schema variables), then logic, then rest
+          const typeOrder = ['initvar', 'controller', 'mvu_logic', 'rules', 'narrative', 'other'];
+          const sortedTypes = Object.keys(typeGroups).sort((a, b) => {
+            const ia = typeOrder.indexOf(a);
+            const ib = typeOrder.indexOf(b);
+            return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+          });
+
+          for (const typeKey of sortedTypes) {
+            const typeFields = typeGroups[typeKey];
+            const typeBatchSize = TYPE_BATCH_SIZES[typeKey] || batchSize;
+            let currentBatch: TranslationField[] = [];
+            let currentChars = 0;
+
+            for (const f of typeFields) {
+              if (currentBatch.length >= typeBatchSize || (currentBatch.length > 0 && currentChars + f.original.length > MAX_BATCH_CHARS)) {
+                subBatches.push(currentBatch);
+                currentBatch = [];
+                currentChars = 0;
+              }
+              currentBatch.push(f);
+              currentChars += f.original.length;
+            }
+            if (currentBatch.length > 0) subBatches.push(currentBatch);
+          }
+
+          // Log MVU grouping detail
+          const groupSummary = sortedTypes
+            .map(t => `${t}:${typeGroups[t].length}`)
+            .join(', ');
+          store.addLog('info', `🔧 MVU batch grouping: ${allLorebookFields.length} fields → [${groupSummary}] → ${subBatches.length} batch(es)`);
+
+        } else {
+          // ═══ Standard splitting: by batchSize + char limit ═══
+          let currentBatch: TranslationField[] = [];
+          let currentChars = 0;
+          for (const f of allLorebookFields) {
+            if (currentBatch.length >= batchSize || (currentBatch.length > 0 && currentChars + f.original.length > MAX_BATCH_CHARS)) {
+              subBatches.push(currentBatch);
+              currentBatch = [];
+              currentChars = 0;
+            }
+            currentBatch.push(f);
+            currentChars += f.original.length;
+          }
+          if (currentBatch.length > 0) subBatches.push(currentBatch);
+          store.addLog('info', `${allLorebookFields.length} lorebook fields → ${subBatches.length} batch(es), concurrency: ${concurrency}`);
         }
-        if (currentBatch.length > 0) subBatches.push(currentBatch);
 
         store.setCurrentFieldIndex(i - 1);
-        store.addLog('info', `${allLorebookFields.length} lorebook fields → ${subBatches.length} batch(es), concurrency: ${concurrency}`);
 
         // Step 3: Dispatch sub-batches with concurrency limit (sliding window)
         let batchIdx = 0;
@@ -660,6 +876,22 @@ export function useTranslation() {
         if (result === 'retry') {
           continue; // Don't increment i
         }
+
+        // ═══ Live Schema Injection: capture translated TavernHelper as schema context ═══
+        if (field.group === 'tavern_helper' && result === 'done') {
+          const currentSchema = store.translationConfig.customSchema;
+          // Only inject if user hasn't already set a custom schema
+          if (!currentSchema?.trim()) {
+            const allTranslatedSchemas = useStore.getState().fields
+              .filter(f => f.group === 'tavern_helper' && f.status === 'done' && f.translated)
+              .map(f => f.translated)
+              .join('\n\n');
+            if (allTranslatedSchemas.trim()) {
+              store.setLiveSchemaContext(allTranslatedSchemas);
+              store.addLog('info', '📋 Live Schema: captured translated TavernHelper → context for remaining fields');
+            }
+          }
+        }
       } catch {
         // Cancel was thrown
         store.setPhase('cancelled');
@@ -684,6 +916,32 @@ export function useTranslation() {
     const failCount = store.fields.filter((f) => f.status === 'error').length;
     store.addLog('info', `Translation complete: ${doneCount} done, ${failCount} failed`);
     store.addToast('success', `Translation complete! ${doneCount}/${fields.length} fields translated`);
+
+    // ═══ Post-Translation MVU Sync Verification Report ═══
+    if (store.translationConfig.enableMvuSync && Object.keys(store.translationConfig.mvuDictionary).length > 0) {
+      const syncReport = generateSyncReport(
+        store.fields.filter(f => f.status === 'done').map(f => ({
+          original: f.original,
+          translated: f.translated,
+          label: f.label,
+          group: f.group,
+          entryType: f.entryType,
+        })),
+        store.translationConfig.mvuDictionary
+      );
+      store.addLog('info', `📊 MVU Sync Report: ${syncReport.replaced}/${syncReport.totalVars} variables correctly replaced`);
+      if (syncReport.unreplaced > 0) {
+        store.addLog('warning', `⚠️ ${syncReport.unreplaced} variables not replaced in translated output`);
+        for (const detail of syncReport.details.slice(0, 10)) {
+          store.addLog('warning', detail);
+        }
+      }
+      if (syncReport.warnings.length > 0) {
+        for (const warn of syncReport.warnings.slice(0, 5)) {
+          store.addLog('warning', warn);
+        }
+      }
+    }
   }, [prepareFields, store]);
 
   const pauseTranslation = useCallback(() => {
@@ -724,7 +982,7 @@ export function useTranslation() {
         }
       }
 
-      // Special prompts for regex and TavernHelper fields
+      // Special prompts for regex, TavernHelper, and MVU entry types
       const isRegexField = field.group === 'regex' && field.path.includes('replaceString');
       const isTavernHelperField = field.group === 'tavern_helper';
       const isRegexTrimString = field.group === 'regex' && field.path.includes('trimStrings');
@@ -733,10 +991,17 @@ export function useTranslation() {
         effectivePrompt = (effectivePrompt || '') + REGEX_EXTRA_PROMPT;
       } else if (isTavernHelperField) {
         effectivePrompt = (effectivePrompt || '') + TAVERN_HELPER_EXTRA_PROMPT;
+      } else if (field.entryType === 'initvar') {
+        effectivePrompt = (effectivePrompt || '') + INITVAR_EXTRA_PROMPT;
+      } else if (field.entryType === 'mvu_logic' || field.entryType === 'controller') {
+        effectivePrompt = (effectivePrompt || '') + MVU_LOGIC_EXTRA_PROMPT;
       }
 
       // ═══ Unified RAG Context for retranslation ═══
-      let retransSchemaForApi = store.translationConfig.customSchema;
+      const retransEffectiveSchema = store.translationConfig.customSchema?.trim()
+        ? store.translationConfig.customSchema
+        : store.liveSchemaContext || undefined;
+      let retransSchemaForApi: string | undefined = retransEffectiveSchema;
       let retransGlossaryForApi = store.translationConfig.glossary;
 
       if (store.translationConfig.enableRAGContext) {
@@ -747,7 +1012,7 @@ export function useTranslation() {
           mvuDictionary: store.translationConfig.enableMvuSync
             ? useStore.getState().translationConfig.mvuDictionary
             : undefined,
-          customSchema: store.translationConfig.customSchema,
+          customSchema: retransEffectiveSchema,
           maxFields: store.translationConfig.ragMaxFields,
           maxChars: store.translationConfig.ragMaxChars,
         });

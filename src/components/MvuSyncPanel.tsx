@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useStore } from '../store';
 import { useT } from '../i18n/useLocale';
-import { extractPotentialMvuKeys, aiTranslateMvuKeys } from '../utils/mvuSync';
-import { Settings, Plus, Trash2, Wand2, Info, Loader2, Bot } from 'lucide-react';
+import { extractPotentialMvuKeys, aiTranslateMvuKeys, extractZodDescriptions, type MvuKeyInfo } from '../utils/mvuSync';
+import { isMvuCard, getMvuCardSummary } from '../utils/mvuDetector';
+import { Settings, Plus, Trash2, Wand2, Info, Loader2, Bot, Search, Download, Upload, BarChart3, Zap, AlertTriangle } from 'lucide-react';
 
 export default function MvuSyncPanel() {
   const { card, translationConfig, setTranslationConfig, locale, proxy, addToast } = useStore();
@@ -11,11 +12,16 @@ export default function MvuSyncPanel() {
   const [newKey, setNewKey] = useState('');
   const [newValue, setNewValue] = useState('');
   const [isAutoTranslating, setIsAutoTranslating] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showStats, setShowStats] = useState(false);
   const isVi = locale === 'vi';
 
   const { enableMvuSync, mvuDictionary } = translationConfig;
 
   if (!card) return null;
+
+  // ─── MVU Card Detection Summary ───
+  const mvuSummary = useMemo(() => getMvuCardSummary(card), [card]);
 
   const toggleSync = () => setTranslationConfig({ enableMvuSync: !enableMvuSync });
 
@@ -48,16 +54,16 @@ export default function MvuSyncPanel() {
   };
 
   const autoExtract = () => {
-    const keys = extractPotentialMvuKeys(card);
-    if (keys.length === 0) {
+    const keyInfos = extractPotentialMvuKeys(card);
+    if (keyInfos.length === 0) {
       addToast('info', isVi ? 'Không tìm thấy key MVU nào.' : 'No MVU keys found.');
       return;
     }
     const nextDict = { ...mvuDictionary };
     let added = 0;
-    keys.forEach(k => {
-      if (!(k in nextDict)) {
-        nextDict[k] = '';
+    keyInfos.forEach(ki => {
+      if (!(ki.key in nextDict)) {
+        nextDict[ki.key] = '';
         added++;
       }
     });
@@ -72,7 +78,8 @@ export default function MvuSyncPanel() {
 
   // Quét key + gọi AI dịch tự động
   const autoExtractAndTranslate = async () => {
-    const keys = extractPotentialMvuKeys(card);
+    const keyInfos = extractPotentialMvuKeys(card);
+    const keys = keyInfos.map(ki => ki.key);
     if (keys.length === 0) {
       addToast('info', isVi ? 'Không tìm thấy key MVU nào.' : 'No MVU keys found.');
       return;
@@ -92,12 +99,19 @@ export default function MvuSyncPanel() {
         schemaContext = card.data.extensions.tavern_helper.scripts.map((s: any) => s.content).join('\n\n');
       }
 
+      // Extract Zod descriptions for richer context
+      let keyDescriptions: Record<string, string> = {};
+      if (schemaContext) {
+        keyDescriptions = extractZodDescriptions(schemaContext);
+      }
+
       const translations = await aiTranslateMvuKeys(
         keysNeedTranslation,
         translationConfig.targetLanguage,
         proxy,
         undefined,
-        schemaContext
+        schemaContext,
+        keyDescriptions
       );
 
       const nextDict = { ...mvuDictionary };
@@ -131,8 +145,84 @@ export default function MvuSyncPanel() {
     }
   };
 
+  // ─── Import/Export Dictionary ───
+  const exportDict = () => {
+    const json = JSON.stringify(mvuDictionary, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'mvu_dictionary.json';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const importDict = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+    input.onchange = async (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (!file) return;
+      try {
+        const text = await file.text();
+        const imported = JSON.parse(text);
+        if (typeof imported === 'object' && imported !== null) {
+          const merged = { ...mvuDictionary, ...imported };
+          setTranslationConfig({ mvuDictionary: merged });
+          const newCount = Object.keys(imported).length;
+          addToast('success', isVi ? `Đã nhập ${newCount} key.` : `Imported ${newCount} keys.`);
+        }
+      } catch {
+        addToast('error', isVi ? 'File JSON không hợp lệ.' : 'Invalid JSON file.');
+      }
+    };
+    input.click();
+  };
+
   const dictEntries = Object.entries(mvuDictionary);
   const filledCount = dictEntries.filter(([, v]) => v.trim()).length;
+  const emptyCount = dictEntries.length - filledCount;
+
+  // ─── Enriched key info for source badges ───
+  const keyInfoMap = useMemo(() => {
+    const infos = extractPotentialMvuKeys(card);
+    const map = new Map<string, MvuKeyInfo>();
+    for (const ki of infos) {
+      map.set(ki.key, ki);
+    }
+    return map;
+  }, [card]);
+
+  // ─── Filtered entries ───
+  const filteredEntries = useMemo(() => {
+    if (!searchQuery.trim()) return dictEntries;
+    const q = searchQuery.toLowerCase();
+    return dictEntries.filter(([k, v]) => 
+      k.toLowerCase().includes(q) || v.toLowerCase().includes(q)
+    );
+  }, [dictEntries, searchQuery]);
+
+  // ─── Source badge colors ───
+  const sourceBadgeStyle = (source: string): React.CSSProperties => {
+    const colors: Record<string, { bg: string; color: string }> = {
+      zod: { bg: 'rgba(99,102,241,0.1)', color: '#818cf8' },
+      yaml: { bg: 'rgba(34,197,94,0.1)', color: '#4ade80' },
+      macro: { bg: 'rgba(245,158,11,0.1)', color: '#fbbf24' },
+      datavar: { bg: 'rgba(236,72,153,0.1)', color: '#f472b6' },
+    };
+    const c = colors[source] || { bg: 'rgba(148,163,184,0.1)', color: '#94a3b8' };
+    return {
+      padding: '0 4px',
+      borderRadius: '3px',
+      fontSize: '0.55rem',
+      fontWeight: 700,
+      textTransform: 'uppercase' as const,
+      background: c.bg,
+      color: c.color,
+      letterSpacing: '0.5px',
+    };
+  };
 
   return (
     <div style={{
@@ -168,6 +258,15 @@ export default function MvuSyncPanel() {
               {filledCount}/{dictEntries.length}
             </span>
           )}
+          {mvuSummary.isMvu && !enableMvuSync && (
+            <span style={{
+              padding: '1px 6px', borderRadius: '8px', fontSize: '0.55rem', fontWeight: 700,
+              background: 'rgba(245,158,11,0.1)', color: '#fbbf24',
+              display: 'flex', alignItems: 'center', gap: '3px',
+            }}>
+              <AlertTriangle size={10} /> MVU
+            </span>
+          )}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <label className="toggle-switch" onClick={(e) => e.stopPropagation()}>
@@ -183,6 +282,29 @@ export default function MvuSyncPanel() {
 
       {isExpanded && (
         <div style={{ padding: '0 16px 16px 16px', borderTop: '1px solid var(--border-subtle)' }}>
+          {/* MVU Detection Banner */}
+          {mvuSummary.isMvu && (
+            <div style={{
+              margin: '12px 0 8px',
+              padding: '8px 12px',
+              borderRadius: 'var(--radius-sm)',
+              background: 'rgba(99,102,241,0.06)',
+              border: '1px solid rgba(99,102,241,0.15)',
+              fontSize: '0.72rem',
+              color: 'var(--text-secondary)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+            }}>
+              <Zap size={14} color="#818cf8" style={{ flexShrink: 0 }} />
+              <span>
+                {isVi 
+                  ? `Phát hiện: ${mvuSummary.variableCount} biến, ${mvuSummary.initvarCount} initvar, Zod: ${mvuSummary.hasZodSchema ? '✓' : '✗'}, Conf: ${(mvuSummary.confidence * 100).toFixed(0)}%`
+                  : `Detected: ${mvuSummary.variableCount} vars, ${mvuSummary.initvarCount} initvar, Zod: ${mvuSummary.hasZodSchema ? '✓' : '✗'}, Conf: ${(mvuSummary.confidence * 100).toFixed(0)}%`}
+              </span>
+            </div>
+          )}
+
           <div style={{
             fontSize: '0.75rem',
             color: 'var(--text-muted)',
@@ -200,8 +322,8 @@ export default function MvuSyncPanel() {
             </span>
           </div>
 
-          <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
-            <button className="btn btn-secondary" onClick={autoExtract} style={{ flex: 1, padding: '6px', fontSize: '0.75rem' }}>
+          <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>
+            <button className="btn btn-secondary" onClick={autoExtract} style={{ flex: 1, padding: '6px', fontSize: '0.75rem', minWidth: '100px' }}>
               <Wand2 size={14} />
               {isVi ? 'Quét Key' : 'Extract Keys'}
             </button>
@@ -209,7 +331,7 @@ export default function MvuSyncPanel() {
               className="btn btn-primary"
               onClick={autoExtractAndTranslate}
               disabled={isAutoTranslating}
-              style={{ flex: 1, padding: '6px', fontSize: '0.75rem' }}
+              style={{ flex: 1, padding: '6px', fontSize: '0.75rem', minWidth: '100px' }}
             >
               {isAutoTranslating
                 ? <><Loader2 size={14} className="spin" /> {isVi ? 'Đang dịch...' : 'Translating...'}</>
@@ -218,44 +340,162 @@ export default function MvuSyncPanel() {
             </button>
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '200px', overflowY: 'auto' }}>
-            {dictEntries.map(([k, v]) => (
-              <div key={k} style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                <input
-                  type="text"
-                  value={k}
-                  readOnly
-                  style={{
-                    flex: 1, padding: '6px 8px', fontSize: '0.75rem',
-                    background: 'var(--bg-primary)', border: '1px solid var(--border-subtle)',
-                    borderRadius: 'var(--radius-sm)', color: 'var(--text-muted)'
-                  }}
-                />
-                <span style={{ color: 'var(--text-muted)' }}>→</span>
-                <input
-                  type="text"
-                  value={v}
-                  onChange={(e) => updateEntry(k, e.target.value)}
-                  placeholder={isVi ? 'Bản dịch (VD: Do_Hao_Cam)' : 'Translation'}
-                  style={{
-                    flex: 1, padding: '6px 8px', fontSize: '0.75rem',
-                    background: v ? 'var(--bg-primary)' : 'rgba(240,196,106,0.06)',
-                    border: `1px solid ${v ? 'var(--border-subtle)' : 'rgba(240,196,106,0.3)'}`,
-                    borderRadius: 'var(--radius-sm)',
-                    outline: 'none'
-                  }}
-                  autoFocus={v === ''}
-                />
-                <button
-                  onClick={() => removeEntry(k)}
-                  style={{ background: 'none', border: 'none', color: 'var(--accent-danger)', cursor: 'pointer', padding: '4px' }}
-                >
-                  <Trash2 size={14} />
-                </button>
-              </div>
-            ))}
+          {/* Toolbar: Search + Stats + Import/Export */}
+          <div style={{ display: 'flex', gap: '6px', marginBottom: '10px', alignItems: 'center' }}>
+            <div style={{ 
+              flex: 1, display: 'flex', alignItems: 'center', 
+              background: 'var(--bg-primary)', border: '1px solid var(--border-subtle)',
+              borderRadius: 'var(--radius-sm)', padding: '0 8px',
+            }}>
+              <Search size={12} color="var(--text-muted)" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                placeholder={isVi ? 'Tìm kiếm biến...' : 'Search variables...'}
+                style={{
+                  flex: 1, padding: '5px 6px', fontSize: '0.72rem',
+                  background: 'transparent', border: 'none', outline: 'none',
+                }}
+              />
+            </div>
+            <button
+              onClick={() => setShowStats(!showStats)}
+              title={isVi ? 'Thống kê' : 'Statistics'}
+              style={{
+                background: showStats ? 'rgba(99,102,241,0.1)' : 'none',
+                border: '1px solid var(--border-subtle)',
+                borderRadius: 'var(--radius-sm)',
+                padding: '5px', cursor: 'pointer', color: 'var(--text-secondary)',
+                display: 'flex', alignItems: 'center',
+              }}
+            >
+              <BarChart3 size={14} />
+            </button>
+            <button
+              onClick={exportDict}
+              title={isVi ? 'Xuất từ điển' : 'Export dictionary'}
+              style={{
+                background: 'none', border: '1px solid var(--border-subtle)',
+                borderRadius: 'var(--radius-sm)',
+                padding: '5px', cursor: 'pointer', color: 'var(--text-secondary)',
+                display: 'flex', alignItems: 'center',
+              }}
+            >
+              <Download size={14} />
+            </button>
+            <button
+              onClick={importDict}
+              title={isVi ? 'Nhập từ điển' : 'Import dictionary'}
+              style={{
+                background: 'none', border: '1px solid var(--border-subtle)',
+                borderRadius: 'var(--radius-sm)',
+                padding: '5px', cursor: 'pointer', color: 'var(--text-secondary)',
+                display: 'flex', alignItems: 'center',
+              }}
+            >
+              <Upload size={14} />
+            </button>
           </div>
 
+          {/* Stats Panel */}
+          {showStats && (
+            <div style={{
+              padding: '10px 12px',
+              marginBottom: '10px',
+              borderRadius: 'var(--radius-sm)',
+              background: 'var(--bg-primary)',
+              border: '1px solid var(--border-subtle)',
+              fontSize: '0.72rem',
+              display: 'grid',
+              gridTemplateColumns: 'repeat(3, 1fr)',
+              gap: '8px',
+            }}>
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--accent-primary)' }}>{dictEntries.length}</div>
+                <div style={{ color: 'var(--text-muted)' }}>{isVi ? 'Tổng' : 'Total'}</div>
+              </div>
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--accent-success)' }}>{filledCount}</div>
+                <div style={{ color: 'var(--text-muted)' }}>{isVi ? 'Đã dịch' : 'Translated'}</div>
+              </div>
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: '1.1rem', fontWeight: 700, color: emptyCount > 0 ? 'var(--accent-warning)' : 'var(--text-muted)' }}>{emptyCount}</div>
+                <div style={{ color: 'var(--text-muted)' }}>{isVi ? 'Chưa dịch' : 'Pending'}</div>
+              </div>
+            </div>
+          )}
+
+          {/* Dictionary entries */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '250px', overflowY: 'auto' }}>
+            {filteredEntries.map(([k, v]) => {
+              const keyInfo = keyInfoMap.get(k);
+              return (
+                <div key={k} style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <input
+                        type="text"
+                        value={k}
+                        readOnly
+                        title={keyInfo?.description || k}
+                        style={{
+                          flex: 1, padding: '5px 7px', fontSize: '0.72rem',
+                          background: 'var(--bg-primary)', border: '1px solid var(--border-subtle)',
+                          borderRadius: 'var(--radius-sm)', color: 'var(--text-muted)',
+                          fontFamily: 'var(--font-mono, monospace)',
+                        }}
+                      />
+                      {keyInfo?.sources && keyInfo.sources.length > 0 && (
+                        <div style={{ display: 'flex', gap: '2px', flexShrink: 0 }}>
+                          {keyInfo.sources.map(s => (
+                            <span key={s} style={sourceBadgeStyle(s)}>{s}</span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    {keyInfo?.description && (
+                      <div style={{ 
+                        fontSize: '0.6rem', color: 'var(--text-muted)', paddingLeft: '7px',
+                        fontStyle: 'italic', opacity: 0.7,
+                      }}>
+                        {keyInfo.description}
+                      </div>
+                    )}
+                  </div>
+                  <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>→</span>
+                  <input
+                    type="text"
+                    value={v}
+                    onChange={(e) => updateEntry(k, e.target.value)}
+                    placeholder={isVi ? 'Bản dịch (VD: Do_Hao_Cam)' : 'Translation'}
+                    style={{
+                      flex: 1, padding: '5px 7px', fontSize: '0.72rem',
+                      background: v ? 'var(--bg-primary)' : 'rgba(240,196,106,0.06)',
+                      border: `1px solid ${v ? 'var(--border-subtle)' : 'rgba(240,196,106,0.3)'}`,
+                      borderRadius: 'var(--radius-sm)',
+                      outline: 'none',
+                      fontFamily: 'var(--font-mono, monospace)',
+                    }}
+                    autoFocus={v === ''}
+                  />
+                  <button
+                    onClick={() => removeEntry(k)}
+                    style={{ background: 'none', border: 'none', color: 'var(--accent-danger)', cursor: 'pointer', padding: '4px' }}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              );
+            })}
+            {filteredEntries.length === 0 && dictEntries.length > 0 && (
+              <div style={{ textAlign: 'center', padding: '16px', color: 'var(--text-muted)', fontSize: '0.75rem' }}>
+                {isVi ? 'Không tìm thấy kết quả' : 'No results found'}
+              </div>
+            )}
+          </div>
+
+          {/* Add new entry */}
           <div style={{ display: 'flex', gap: '6px', marginTop: '12px', alignItems: 'center' }}>
             <input
               type="text"

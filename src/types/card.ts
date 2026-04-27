@@ -133,6 +133,8 @@ export interface TranslationField {
   retries: number;
   /** Previous translation for updating/merging */
   previousTranslation?: string;
+  /** MVU entry classification for per-type translation strategy */
+  entryType?: 'initvar' | 'mvu_logic' | 'rules' | 'narrative' | 'controller';
 }
 
 export type FieldGroup =
