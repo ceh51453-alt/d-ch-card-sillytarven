@@ -167,7 +167,15 @@ function buildTranslationMessages(
 
   const safetyRule = `\n\nCRITICAL RULE: ABSOLUTELY NO untranslated source language characters (e.g., Chinese Hanzi, Japanese Kanji) should remain in the final output. You MUST translate every single word into ${targetLang} unless it is a specific system variable name (like {{char}}).${vietnameseSafetyRule}`;
 
-  const systemPrompt = `${systemPromptPrefix ? systemPromptPrefix + '\n\n' : ''}${basePrompt}${safetyRule}${schemaInstructions}${glossaryInstructions}`;
+  let regexInstruction = '';
+  if (fieldName.includes('findRegex') || fieldName.includes('replaceString')) {
+    regexInstruction = `\n\nREGEX SCRIPT INSTRUCTION: You are translating a Regular Expression pattern or Replacement String.
+- Translate any natural language text (e.g., Chinese) inside the string to ${targetLang}.
+- STRICTLY PRESERVE all regex syntax, slashes, flags, brackets, and capture groups (e.g., /.../g, $1, \\s, \\d).
+- DO NOT remove the outer slashes (like /pattern/s) if they exist.`;
+  }
+
+  const systemPrompt = `${systemPromptPrefix ? systemPromptPrefix + '\n\n' : ''}${basePrompt}${safetyRule}${regexInstruction}${schemaInstructions}${glossaryInstructions}`;
 
   const sourceHint = sourceLang && sourceLang !== 'auto' ? ` (from ${sourceLang})` : '';
 
@@ -566,19 +574,32 @@ function sleep(ms: number): Promise<void> {
 function cleanTranslationResponse(original: string, translated: string): string {
   if (!translated || !translated.trim()) return translated;
 
-  // Skip aggressive cleaning for HTML content — arrows (→, ->) appear
-  // naturally in HTML/CSS/JS and cleaning would corrupt the output.
+  // Strip markdown code fences if present (e.g. ```html ... ```)
+  const stripMarkdownFences = (text: string, orig: string) => {
+    const trimmedText = text.trim();
+    const trimmedOrig = orig.trim();
+    const markdownRegex = /^```[a-z]*\n([\s\S]*?)\n```$/i;
+    
+    const match = trimmedText.match(markdownRegex);
+    if (match && !trimmedOrig.match(markdownRegex)) {
+      return match[1].trim();
+    }
+    
+    // Fallback: strip any leading/trailing backticks if original didn't have them
+    if (trimmedText.startsWith('`') && trimmedText.endsWith('`') && !trimmedOrig.startsWith('`')) {
+      return trimmedText.replace(/^`+|`+$/g, '').trim();
+    }
+    return text;
+  };
+
   const isHtmlContent = /<[a-z][^>]*>/i.test(original) && /<\/[a-z]+>/i.test(original);
   if (isHtmlContent) {
     // For HTML content, only strip backtick wrapping (safe operation)
-    let cleaned = translated;
-    if (cleaned.startsWith('`') && cleaned.endsWith('`') && !original.startsWith('`')) {
-      cleaned = cleaned.slice(1, -1);
-    }
+    let cleaned = stripMarkdownFences(translated, original);
     return cleaned.trim() || translated.trim();
   }
 
-  let cleaned = translated;
+  let cleaned = stripMarkdownFences(translated, original);
 
   // Pattern 1: Full text "original → translation" or "original -> translation"
   // The AI sometimes returns "Chinese text → Vietnamese text"
@@ -628,10 +649,7 @@ function cleanTranslationResponse(original: string, translated: string): string 
   cleaned = cleaned.replace(/`[^`]+`\s*[→➜➡⇒]\s*`([^`]+)`/g, '$1');
   cleaned = cleaned.replace(/`[^`]+`\s*->\s*`([^`]+)`/g, '$1');
 
-  // Pattern 3: Remove any remaining backtick wrapping around the whole response
-  if (cleaned.startsWith('`') && cleaned.endsWith('`') && !original.startsWith('`')) {
-    cleaned = cleaned.slice(1, -1);
-  }
+  // Pattern 3: Remove any remaining quotes wrapping around the whole response
   if (cleaned.startsWith("'") && cleaned.endsWith("'") && !original.startsWith("'")) {
     cleaned = cleaned.slice(1, -1);
   }

@@ -8,7 +8,7 @@ export const DEFAULT_FIELD_GROUPS: FieldGroupConfig[] = [
   { id: 'creator', label: 'Creator Notes', description: 'creator_notes, creatorcomment', enabled: true },
   { id: 'lorebook', label: 'Lorebook Entries', description: 'character_book entries content + comment + name', enabled: true },
   { id: 'lorebook_keys', label: 'Lorebook Keys', description: 'character_book entries keywords + secondary_keys', enabled: true },
-  { id: 'regex', label: 'Regex Scripts', description: 'replaceString, scriptName, trimStrings', enabled: true },
+  { id: 'regex', label: 'Regex Scripts', description: 'replaceString, scriptName, findRegex, trimStrings', enabled: true },
   { id: 'depth_prompt', label: 'Depth Prompt', description: 'extensions.depth_prompt.prompt', enabled: true },
   { id: 'tavern_helper', label: 'TavernHelper Scripts', description: 'TavernHelper/JS-Slash-Runner script content', enabled: true },
 ];
@@ -283,6 +283,20 @@ export function extractTranslatableFields(
         'regex',
         script.scriptName
       );
+      // Regex pattern itself (sometimes contains natural language text to match)
+      if (enabledGroups.includes('regex') && typeof script.findRegex === 'string' && script.findRegex.trim() !== '') {
+        if (hasTranslatableText(script.findRegex)) {
+          fields.push({
+            path: `data.extensions.regex_scripts[${i}].findRegex`,
+            label: `regex[${i}].findRegex`,
+            group: 'regex',
+            original: script.findRegex,
+            translated: '',
+            status: 'pending',
+            retries: 0,
+          });
+        }
+      }
       // replaceString — use relaxed check for HTML with embedded text
       if (enabledGroups.includes('regex') && typeof script.replaceString === 'string' && script.replaceString.trim() !== '') {
         if (hasTranslatableText(script.replaceString)) {

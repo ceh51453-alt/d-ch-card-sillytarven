@@ -105,7 +105,8 @@ export function syncMvuVariables(
   if (result.data.extensions?.regex_scripts) {
     result.data.extensions.regex_scripts = result.data.extensions.regex_scripts.map((script) => ({
       ...script,
-      replaceString: replaceInCode(script.replaceString)
+      findRegex: typeof script.findRegex === 'string' ? replaceInCode(script.findRegex) : script.findRegex,
+      replaceString: typeof script.replaceString === 'string' ? replaceInCode(script.replaceString) : script.replaceString
     }));
   }
 
@@ -384,6 +385,10 @@ export function extractPotentialMvuKeys(card: CharacterCard): MvuKeyInfo[] {
   // ═══════════════════════════════════════════════════════════
   if (data.extensions?.regex_scripts) {
     for (const script of data.extensions.regex_scripts) {
+      if (script.findRegex && typeof script.findRegex === 'string') {
+        scanDataVar(script.findRegex);
+        scanMacros(script.findRegex);
+      }
       if (script.replaceString) {
         // data-var + macros only (NO YAML, NO Zod — this is HTML)
         scanDataVar(script.replaceString);

@@ -134,6 +134,7 @@ export function extractSystemReferences(card: CharacterCard): SystemReference[] 
   // Scan regex scripts
   if (data.extensions?.regex_scripts) {
     data.extensions.regex_scripts.forEach((script, i) => {
+      if (typeof script.findRegex === 'string') scan(script.findRegex, `regex[${i}].findRegex`);
       scan(script.replaceString, `regex[${i}].replaceString`);
       if (script.trimStrings) {
         script.trimStrings.forEach((ts, j) => scan(ts, `regex[${i}].trimStrings[${j}]`));
@@ -1358,7 +1359,13 @@ export async function aiVerifyCard(
     const transRegex = transData.extensions.regex_scripts;
     for (let i = 0; i < Math.min(origRegex.length, transRegex.length); i++) {
       if (origRegex[i].replaceString && /data-var|getvar|setvar|class=|id=/.test(origRegex[i].replaceString)) {
-        sections.push(`## Regex[${i}] "${origRegex[i].scriptName}":\n### ORIGINAL replaceString:\n${origRegex[i].replaceString.slice(0, 2000)}\n### TRANSLATED replaceString:\n${transRegex[i].replaceString.slice(0, 2000)}`);
+        let debugText = `## Regex[${i}] "${origRegex[i].scriptName}":\n### ORIGINAL replaceString:\n${origRegex[i].replaceString.slice(0, 2000)}\n### TRANSLATED replaceString:\n${transRegex[i].replaceString.slice(0, 2000)}`;
+        if (origRegex[i].findRegex) {
+           debugText += `\n### ORIGINAL findRegex:\n${origRegex[i].findRegex.slice(0, 2000)}\n### TRANSLATED findRegex:\n${transRegex[i].findRegex?.slice(0, 2000)}`;
+        }
+        sections.push(debugText);
+      } else if (origRegex[i].findRegex && /data-var|getvar|setvar|class=|id=/.test(origRegex[i].findRegex)) {
+        sections.push(`## Regex[${i}] "${origRegex[i].scriptName}":\n### ORIGINAL findRegex:\n${origRegex[i].findRegex.slice(0, 2000)}\n### TRANSLATED findRegex:\n${transRegex[i].findRegex?.slice(0, 2000)}`);
       }
     }
   }
