@@ -75,10 +75,10 @@ export function syncMvuVariables(
         `$1${translated}$2`
       );
       
-      // 3. YAML-style KEY: (at start of line)
+      // 3. YAML-style KEY: (at start of line, with optional quotes)
       newText = newText.replace(
-        new RegExp(`^(\\s*)${escaped}(\\s*:)`, 'gm'),
-        `$1${translated}$2`
+        new RegExp(`^(\\s*)(["']?)${escaped}(["']?)(\\s*:)`, 'gm'),
+        `$1$2${translated}$3$4`
       );
     }
     return newText;
@@ -289,10 +289,11 @@ export function extractPotentialMvuKeys(card: CharacterCard): MvuKeyInfo[] {
   // ─── Scan YAML keys: ONLY for [initvar]/MVU entries ───
   const scanYamlKeys = (text: string) => {
     if (!text || typeof text !== 'string') return;
-    const yamlKeyRegex = /^[\s]*([^\s:]+):/gm;
+    // Match keys with or without quotes, e.g. 'key:', '"My Key":', 'My_Key:'
+    const yamlKeyRegex = /^\s*(?:["']([^"':\n]+)["']|([^"':\s\n][^"':\n]*[^"':\s\n]|[^"':\s\n]))\s*:/gm;
     let match;
     while ((match = yamlKeyRegex.exec(text)) !== null) {
-      const key = match[1].trim();
+      const key = (match[1] || match[2])?.trim();
       if (key && !key.startsWith('[') && !key.startsWith('<') && !key.startsWith('//') && !key.startsWith('#') && !key.startsWith('{') && !key.startsWith('*')) {
         trackKey(key, 'yaml');
       }
@@ -313,10 +314,11 @@ export function extractPotentialMvuKeys(card: CharacterCard): MvuKeyInfo[] {
   // ─── Scan Zod schema fields ───
   const scanZodFields = (text: string) => {
     if (!text || typeof text !== 'string') return;
-    const zodFieldRegex = /(\w+)\s*:\s*z\.\w+/g;
+    // Handle both unquoted (word chars) and quoted keys
+    const zodFieldRegex = /(?:["']([^"']+)["']|(\w+))\s*:\s*z\.\w+/g;
     let match;
     while ((match = zodFieldRegex.exec(text)) !== null) {
-      const key = match[1];
+      const key = match[1] || match[2];
       if (key && !isNoiseKey(key)) {
         trackKey(key, 'zod');
       }
@@ -427,17 +429,18 @@ export function extractPotentialMvuKeys(card: CharacterCard): MvuKeyInfo[] {
   // ═══════════════════════════════════════════════════════════
   const result: MvuKeyInfo[] = [];
   for (const key of keys) {
-    if (isNoiseKey(key)) continue;
-
     const sources = keySources.get(key);
-    // YAML-only keys are lower priority — keep if they look like real variable names
-    // (contain CJK, or have underscores, or are Title_Case)
-    if (sources && sources.size === 1 && sources.has('yaml')) {
-      const hasCJK = /[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]/.test(key);
-      const hasUnderscore = key.includes('_');
-      const isTitleCase = /^[A-Z][a-z]/.test(key);
-      // Only keep YAML-only keys if they look like real MVU variables
-      if (!hasCJK && !hasUnderscore && !isTitleCase) continue;
+    const isExplicit = sources && (sources.has('macro') || sources.has('datavar') || sources.has('yaml'));
+
+    if (isExplicit) {
+      // For explicit sources (macros, explicitly marked MVU YAML, UI data-vars),
+      // we only filter out extreme noise, allowing generic words like "name" or "status".
+      if (/^\d+$/.test(key) || key.length < 2 || key.length > 50) continue;
+      // Skip pure hex colors and URLs as they are never variables
+      if (/^#[0-9a-fA-F]{3,8}$/.test(key) || /^https?:/.test(key) || /^\/\//.test(key)) continue;
+    } else {
+      // For implicit sources (e.g. only Zod schema), apply full strict noise filtering
+      if (isNoiseKey(key)) continue;
     }
 
     result.push({
