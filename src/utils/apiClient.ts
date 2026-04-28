@@ -1,4 +1,11 @@
 import type { AIProvider, ProxySettings, GlossaryEntry } from '../types/card';
+import {
+  buildMasterSystemPrompt,
+  extractTranslationFromResponse,
+  fieldGroupToFieldType,
+  type TranslationFieldType,
+  type MasterPromptOptions,
+} from './masterPrompt';
 
 /* ─── Error types ─── */
 export class ApiError extends Error {
@@ -87,6 +94,10 @@ function wrapCorsError(err: unknown, url: string, useCorsProxy: boolean): Error 
 }
 
 /* ─── Default prompt template ─── */
+/**
+ * Legacy prompt generator — used when expertMode is OFF or as fallback.
+ * When expertMode is ON, buildMasterSystemPrompt() from masterPrompt.ts is used instead.
+ */
 export function getDefaultTranslationPrompt(sourceLang: string, targetLang: string): string {
   const sourceInfo = sourceLang && sourceLang !== 'auto'
     ? `You are translating FROM ${sourceLang} TO ${targetLang}.`
@@ -125,6 +136,41 @@ STRICT RULES:
 14. CRITICAL: ABSOLUTELY NO untranslated source language characters (e.g., Chinese Hanzi, Japanese Kanji) should remain in the final output. You MUST translate every single word into ${targetLang} unless it is a specific system variable name (like {{char}}).${vietnameseRules}`;
 }
 
+/**
+ * Build the system prompt using the Master Prompt engine when expertMode is ON,
+ * or fallback to the legacy prompt when OFF.
+ */
+export function buildSystemPromptForField(
+  config: ProxySettings,
+  fieldType: TranslationFieldType,
+  sourceLang: string,
+  targetLang: string,
+  customPrompt?: string,
+  glossary?: GlossaryEntry[],
+  mvuDictionary?: Record<string, string>,
+): string {
+  if (config.expertMode) {
+    return buildMasterSystemPrompt({
+      fieldType,
+      sourceLang,
+      targetLang,
+      enableThoughtProcess: true,
+      mvuDictionary,
+      glossary,
+      customPromptSuffix: customPrompt?.trim() || undefined,
+    });
+  }
+
+  // Legacy mode: use getDefaultTranslationPrompt + manual layering
+  const basePrompt = customPrompt && customPrompt.trim()
+    ? customPrompt
+    : getDefaultTranslationPrompt(sourceLang, targetLang);
+  return basePrompt;
+}
+
+// Re-export for external use
+export { fieldGroupToFieldType, type TranslationFieldType } from './masterPrompt';
+
 /* ─── Build messages for translation ─── */
 function buildTranslationMessages(
   text: string,
@@ -137,46 +183,77 @@ function buildTranslationMessages(
   contextHint?: string,
   glossary?: GlossaryEntry[],
   previousTranslationContext?: string,
-  previousTranslationToUpdate?: string
+  previousTranslationToUpdate?: string,
+  /** Field type for Master Prompt selection (expert mode) */
+  fieldType?: TranslationFieldType,
+  /** Expert mode: use Master Prompt with thought process */
+  expertMode?: boolean,
+  /** MVU dictionary for variable sync */
+  mvuDictionary?: Record<string, string>,
 ) {
-  const schemaInstructions = customSchema
-    ? `\n\nCARD SCHEMA / GLOSSARY:\nHere is the schema or variable definitions for this character. Please mentally translate these variables into the target language to establish a consistent vocabulary, and apply this vocabulary strictly when translating the text below. Maintain any variable names, JSON keys, or special formats:\n${customSchema}\n`
-    : '';
+  let systemPrompt: string;
 
-  // Build glossary instructions
-  let glossaryInstructions = '';
-  if (glossary && glossary.length > 0) {
-    const terms = glossary
-      .filter(g => g.source.trim() && g.target.trim())
-      .map(g => `  "${g.source}" → "${g.target}"`)
-      .join('\n');
-    if (terms) {
-      glossaryInstructions = `\n\nMANDATORY TERMINOLOGY (use these translations exactly, no exceptions):\n${terms}\n`;
+  if (expertMode && fieldType) {
+    // ═══ EXPERT MODE: Use Master System Prompt ═══
+    // Schema and glossary are baked into the master prompt via layers 5 & 6
+    systemPrompt = buildMasterSystemPrompt({
+      fieldType,
+      sourceLang,
+      targetLang,
+      enableThoughtProcess: true,
+      mvuDictionary,
+      glossary,
+      customPromptSuffix: customPrompt?.trim() || undefined,
+    });
+
+    // Schema is injected via customPromptSuffix or RAG context — add separately if provided
+    if (customSchema) {
+      systemPrompt += `\n\nCARD SCHEMA / VARIABLE DEFINITIONS:\n${customSchema}`;
     }
-  }
 
-  // Use custom prompt if provided, otherwise generate default
-  const basePrompt = customPrompt && customPrompt.trim()
-    ? customPrompt
-    : getDefaultTranslationPrompt(sourceLang, targetLang);
+    // Prepend user's system prompt prefix if any
+    if (systemPromptPrefix?.trim()) {
+      systemPrompt = systemPromptPrefix.trim() + '\n\n' + systemPrompt;
+    }
+  } else {
+    // ═══ LEGACY MODE: Original prompt construction ═══
+    const schemaInstructions = customSchema
+      ? `\n\nCARD SCHEMA / GLOSSARY:\nHere is the schema or variable definitions for this character. Please mentally translate these variables into the target language to establish a consistent vocabulary, and apply this vocabulary strictly when translating the text below. Maintain any variable names, JSON keys, or special formats:\n${customSchema}\n`
+      : '';
 
-  const isVietnamese = targetLang.toLowerCase().includes('việt') || targetLang.toLowerCase().includes('vietnamese');
-  const vietnameseSafetyRule = isVietnamese 
-    ? `\n    - VIETNAMESE SPECIFIC: Translate names into Hán Việt (Sino-Vietnamese). Use natural roleplay pronouns. Ensure smooth literary flow.`
-    : '';
+    let glossaryInstructions = '';
+    if (glossary && glossary.length > 0) {
+      const terms = glossary
+        .filter(g => g.source.trim() && g.target.trim())
+        .map(g => `  "${g.source}" → "${g.target}"`)
+        .join('\n');
+      if (terms) {
+        glossaryInstructions = `\n\nMANDATORY TERMINOLOGY (use these translations exactly, no exceptions):\n${terms}\n`;
+      }
+    }
 
-  const safetyRule = `\n\nCRITICAL RULE: ABSOLUTELY NO untranslated source language characters (e.g., Chinese Hanzi, Japanese Kanji) should remain in the final output. You MUST translate every single word into ${targetLang} unless it is a specific system variable name (like {{char}}).${vietnameseSafetyRule}`;
+    const basePrompt = customPrompt && customPrompt.trim()
+      ? customPrompt
+      : getDefaultTranslationPrompt(sourceLang, targetLang);
 
-  let regexInstruction = '';
-  if (fieldName.includes('findRegex') || fieldName.includes('replaceString')) {
-    regexInstruction = `\n\nREGEX SCRIPT INSTRUCTION: You are translating a Regular Expression pattern or Replacement String.
+    const isVietnamese = targetLang.toLowerCase().includes('việt') || targetLang.toLowerCase().includes('vietnamese');
+    const vietnameseSafetyRule = isVietnamese 
+      ? `\n    - VIETNAMESE SPECIFIC: Translate names into Hán Việt (Sino-Vietnamese). Use natural roleplay pronouns. Ensure smooth literary flow.`
+      : '';
+
+    const safetyRule = `\n\nCRITICAL RULE: ABSOLUTELY NO untranslated source language characters (e.g., Chinese Hanzi, Japanese Kanji) should remain in the final output. You MUST translate every single word into ${targetLang} unless it is a specific system variable name (like {{char}}).${vietnameseSafetyRule}`;
+
+    let regexInstruction = '';
+    if (fieldName.includes('findRegex') || fieldName.includes('replaceString')) {
+      regexInstruction = `\n\nREGEX SCRIPT INSTRUCTION: You are translating a Regular Expression pattern or Replacement String.
 - Translate any natural language text (e.g., Chinese) inside the string to ${targetLang}.
 - STRICTLY PRESERVE all regex syntax, slashes, flags, brackets, and capture groups (e.g., /.../g, $1, \\s, \\d).
 - DO NOT remove the outer slashes (like /pattern/s) if they exist.
 - IMPORTANT: Nếu có CSS hoặc thẻ HTML thay đổi font chữ (font-family) chứa tên font tiếng Trung (như SimSun, KaiTi, v.v.), BẮT BUỘC thay thế bằng font chữ tiếng Việt tương ứng (ví dụ: 'Be Vietnam Pro', 'Inter', 'Arial', sans-serif).`;
-  }
+    }
 
-  const systemPrompt = `${systemPromptPrefix ? systemPromptPrefix + '\n\n' : ''}${basePrompt}${safetyRule}${regexInstruction}${schemaInstructions}${glossaryInstructions}`;
+    systemPrompt = `${systemPromptPrefix ? systemPromptPrefix + '\n\n' : ''}${basePrompt}${safetyRule}${regexInstruction}${schemaInstructions}${glossaryInstructions}`;
+  }
 
   const sourceHint = sourceLang && sourceLang !== 'auto' ? ` (from ${sourceLang})` : '';
 
@@ -189,7 +266,6 @@ function buildTranslationMessages(
   }
 
   if (previousTranslationToUpdate && previousTranslationToUpdate.trim()) {
-    // This is the Update mode: the original text changed, so we want the AI to update the existing translation.
     userMsg = `You are updating the translation of the "${fieldName}" field${sourceHint} to ${targetLang}.
 Some parts of the original text are NEW or CHANGED.
 Please translate the ENTIRE updated original text below, but REUSE the "PREVIOUS TRANSLATION" as much as possible for parts that haven't changed. This ensures consistency.
@@ -572,8 +648,21 @@ function sleep(ms: number): Promise<void> {
 
 /* ─── Clean translation response ─── */
 // Strips patterns where AI returns "original → translation" instead of just translation
-function cleanTranslationResponse(original: string, translated: string): string {
+// Also handles Expert Mode XML responses (<thought_process>/<translation> tags)
+function cleanTranslationResponse(original: string, translated: string, isExpertMode?: boolean): string {
   if (!translated || !translated.trim()) return translated;
+
+  // ═══ EXPERT MODE: Extract <translation> content from XML response ═══
+  if (isExpertMode || translated.includes('<translation>')) {
+    const parsed = extractTranslationFromResponse(translated);
+    if (parsed.usedXmlParsing && parsed.translation) {
+      if (parsed.thoughtProcess) {
+        console.log('[Expert Mode] Thought process extracted:', parsed.thoughtProcess.slice(0, 200) + '...');
+      }
+      // Use extracted translation for further cleaning
+      translated = parsed.translation;
+    }
+  }
 
   // Strip markdown code fences if present (e.g. ```html ... ```)
   const stripMarkdownFences = (text: string, orig: string) => {
@@ -867,10 +956,15 @@ export async function translateText(
   signal?: AbortSignal,
   contextHint?: string,
   glossary?: GlossaryEntry[],
-  previousTranslationToUpdate?: string
+  previousTranslationToUpdate?: string,
+  /** Field type for Master Prompt selection (expert mode) */
+  fieldType?: TranslationFieldType,
+  /** MVU dictionary for variable sync (expert mode) */
+  mvuDictionary?: Record<string, string>,
 ): Promise<string> {
   if (!text || text.trim() === '') return '';
 
+  const isExpert = config.expertMode;
   const chunks = chunkText(text, undefined, config.maxTokens);
 
   // ═══ SINGLE CHUNK — fast path (no parallelism needed) ═══
@@ -878,12 +972,13 @@ export async function translateText(
     const { system, user } = buildTranslationMessages(
       chunks[0], fieldName, targetLang, config.systemPromptPrefix,
       sourceLang, customPrompt, customSchema, contextHint, glossary, '',
-      previousTranslationToUpdate
+      previousTranslationToUpdate,
+      fieldType, isExpert, mvuDictionary,
     );
     const result = await translateChunk(
       chunks[0], 0, 1, fieldName, config, targetLang, sourceLang, system, user, signal
     );
-    return cleanTranslationResponse(text, result);
+    return cleanTranslationResponse(text, result, isExpert);
   }
 
   // ═══ MULTIPLE CHUNKS — parallel translation (concurrency-limited) ═══
@@ -895,7 +990,8 @@ export async function translateText(
     const { system, user } = buildTranslationMessages(
       chunk, `${fieldName} [part ${idx + 1}/${chunks.length}]`, targetLang, config.systemPromptPrefix,
       sourceLang, customPrompt, customSchema, contextHint, glossary, '',
-      idx === 0 ? previousTranslationToUpdate : undefined
+      idx === 0 ? previousTranslationToUpdate : undefined,
+      fieldType, isExpert, mvuDictionary,
     );
     return { chunk, idx, system, user };
   });
@@ -951,7 +1047,7 @@ export async function translateText(
   const isHtmlContent = /<[a-z][^>]*>/i.test(text) && /<\/[a-z]+>/i.test(text);
   const joiner = isHtmlContent ? '' : '\n\n';
   const rawResult = verifiedChunks.join(joiner);
-  return cleanTranslationResponse(text, rawResult);
+  return cleanTranslationResponse(text, rawResult, isExpert);
 }
 
 /* ─── Batch translate multiple fields in one API call ─── */

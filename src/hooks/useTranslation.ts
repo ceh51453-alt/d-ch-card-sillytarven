@@ -1,6 +1,6 @@
 import { useCallback, useRef } from 'react';
 import { useStore } from '../store';
-import { translateText, translateBatch } from '../utils/apiClient';
+import { translateText, translateBatch, fieldGroupToFieldType } from '../utils/apiClient';
 import { extractTranslatableFields, applyTranslationsToCard } from '../utils/cardFields';
 import { syncMvuVariables, postProcessRegexHtml, extractPotentialMvuKeyStrings, aiTranslateMvuKeys, extractZodDescriptions } from '../utils/mvuSync';
 import { shouldSkipTranslation } from '../utils/langDetect';
@@ -213,6 +213,12 @@ export function useTranslation() {
         }
       }
 
+      // ═══ Determine field type for Master Prompt (expert mode) ═══
+      const resolvedFieldType = fieldGroupToFieldType(field.group, field.entryType);
+      const currentMvuDict = store.translationConfig.enableMvuSync
+        ? useStore.getState().translationConfig.mvuDictionary
+        : undefined;
+
       let translated = await translateText(
         field.original,
         field.label,
@@ -224,7 +230,9 @@ export function useTranslation() {
         abortRef.current?.signal,
         contextHint,
         unifiedGlossaryForApi,
-        field.previousTranslation
+        field.previousTranslation,
+        resolvedFieldType,
+        currentMvuDict,
       );
 
       // Post-process regex HTML: font swap + underscore display

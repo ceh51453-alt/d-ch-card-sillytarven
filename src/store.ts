@@ -156,6 +156,7 @@ export const useStore = create<AppState>((set) => ({
     minResponseRatio: LS.get('st-translator-advanced-settings', { minResponseRatio: 0.15 }).minResponseRatio ?? 0.15,
     systemPromptPrefix: LS.get('st-translator-advanced-settings', { systemPromptPrefix: '' }).systemPromptPrefix ?? '',
     useCorsProxy: LS.get('st-translator-use-cors-proxy', true),
+    expertMode: LS.get('st-translator-advanced-settings', { expertMode: false }).expertMode ?? false,
   },
   setProxy: (partial) => {
     set((s) => {
@@ -176,6 +177,7 @@ export const useStore = create<AppState>((set) => ({
         maxRetries: next.maxRetries,
         minResponseRatio: next.minResponseRatio,
         systemPromptPrefix: next.systemPromptPrefix,
+        expertMode: next.expertMode,
       });
       return { proxy: next };
     });

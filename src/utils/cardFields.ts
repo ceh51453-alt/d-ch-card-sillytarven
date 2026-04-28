@@ -285,31 +285,27 @@ export function extractTranslatableFields(
       );
       // Regex pattern itself (sometimes contains natural language text to match)
       if (enabledGroups.includes('regex') && typeof script.findRegex === 'string' && script.findRegex.trim() !== '') {
-        if (hasTranslatableText(script.findRegex)) {
-          fields.push({
-            path: `data.extensions.regex_scripts[${i}].findRegex`,
-            label: `regex[${i}].findRegex`,
-            group: 'regex',
-            original: script.findRegex,
-            translated: '',
-            status: 'pending',
-            retries: 0,
-          });
-        }
+        fields.push({
+          path: `data.extensions.regex_scripts[${i}].findRegex`,
+          label: `regex[${i}].findRegex`,
+          group: 'regex',
+          original: script.findRegex,
+          translated: '',
+          status: 'pending',
+          retries: 0,
+        });
       }
-      // replaceString — use relaxed check for HTML with embedded text
+      // replaceString
       if (enabledGroups.includes('regex') && typeof script.replaceString === 'string' && script.replaceString.trim() !== '') {
-        if (hasTranslatableText(script.replaceString)) {
-          fields.push({
-            path: `data.extensions.regex_scripts[${i}].replaceString`,
-            label: `regex[${i}].replaceString`,
-            group: 'regex',
-            original: script.replaceString,
-            translated: '',
-            status: 'pending',
-            retries: 0,
-          });
-        }
+        fields.push({
+          path: `data.extensions.regex_scripts[${i}].replaceString`,
+          label: `regex[${i}].replaceString`,
+          group: 'regex',
+          original: script.replaceString,
+          translated: '',
+          status: 'pending',
+          retries: 0,
+        });
       }
       // trimStrings — array of strings to trim from output
       if (enabledGroups.includes('regex') && Array.isArray(script.trimStrings)) {
