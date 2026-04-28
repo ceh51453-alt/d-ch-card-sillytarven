@@ -265,7 +265,7 @@ export function quickVerify(
 
 export interface FieldIssue extends VerifyIssue {
   fieldPath: string;
-  category: 'residual_source' | 'html_broken' | 'bracket_mismatch' | 'macro_damaged' | 'json_broken' | 'mvu_inconsistent' | 'length_anomaly' | 'empty_translation';
+  category: 'residual_source' | 'html_broken' | 'bracket_mismatch' | 'macro_damaged' | 'json_broken' | 'mvu_inconsistent' | 'length_anomaly' | 'empty_translation' | 'regex_broken';
 }
 
 /** Count CJK characters in text */
