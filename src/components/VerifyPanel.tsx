@@ -131,11 +131,14 @@ export default function VerifyPanel() {
     const changed = newFields.find(f => f.path === issue.fixPath);
     if (changed) {
       updateField(changed.path, { translated: changed.translated });
-      setFieldIssues(prev => prev.filter(i => i.id !== issue.id));
+      // For compound fixes (e.g. macro_damaged), remove all issues sharing the same fixPath+category
+      setFieldIssues(prev => prev.filter(i =>
+        !(i.fixPath === issue.fixPath && i.category === issue.category && i.autoFixable)
+      ));
       addLog('success', `🔧 Auto-fixed: ${issue.location} — ${issue.category}`);
       addToast('success', t.verifyFixed.replace('{location}', issue.location));
     }
-  }, [fields, updateField, addLog, addToast, isVi]);
+  }, [fields, updateField, addLog, addToast, t]);
 
   // ─── Fix all auto-fixable ───
   const handleFixAll = useCallback(() => {

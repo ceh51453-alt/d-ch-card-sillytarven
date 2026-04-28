@@ -364,50 +364,90 @@ export function verifyFields(
     if (origMacros.length > 0) {
       const origSet = new Set(origMacros);
       const transSet = new Set(transMacros);
-      // Check for macros present in original but missing in translation
+
+      // Collect missing macros (in orig, not in trans) and extra macros (in trans, not in orig)
+      const missingMacros: string[] = [];
+      const extraMacros: string[] = [];
+
       for (const m of origSet) {
         if (!transSet.has(m)) {
-          // Check if it might be an MVU-renamed variable
           const varMatch = m.match(/\{\{(getvar|setvar|addvar)::([^:}]+)/);
           if (varMatch) {
             const varName = varMatch[2].trim();
             const mappedName = mvuDictionary[varName];
-            if (mappedName) {
-              // Check if the mapped version exists
-              const mappedMacro = m.replace(varName, mappedName);
-              if (transSet.has(mappedMacro)) continue; // MVU-renamed, OK
-            }
+            if (mappedName && transSet.has(m.replace(varName, mappedName))) continue;
           }
-          issues.push({
-            id: crypto.randomUUID(), fieldPath: field.path,
-            severity: 'error', category: 'macro_damaged',
-            location: field.label,
-            description: `Macro "${m}" from original is missing or damaged in translation.`,
-            original: m,
-            current: '(missing)',
-            suggestion: `Restore macro "${m}" in the translated text.`,
-            autoFixable: false,
-          });
+          missingMacros.push(m);
         }
       }
-      // Check for new/broken macros in translation
+
       for (const m of transSet) {
-        if (!origSet.has(m) && /\{\{(getvar|setvar|addvar|getglobalvar|setglobalvar)::/.test(m)) {
-          // Not in original — check if it's a valid MVU rename
+        if (!origSet.has(m)) {
           const varMatch = m.match(/\{\{(?:getvar|setvar|addvar)::([^:}]+)/);
           const isKnownMapping = varMatch && Object.values(mvuDictionary).includes(varMatch[1].trim());
           if (!isKnownMapping) {
-            issues.push({
-              id: crypto.randomUUID(), fieldPath: field.path,
-              severity: 'warning', category: 'macro_damaged',
-              location: field.label,
-              description: `New/unexpected macro "${m}" in translation that wasn't in original.`,
-              original: '(not present)',
-              current: m,
-              suggestion: 'Verify this macro is intentional (MVU rename) or accidental.',
-              autoFixable: false,
-            });
+            extraMacros.push(m);
           }
+        }
+      }
+
+      // Compute auto-fix: replace extra (translated) macros with missing (original) macros
+      let fixedTrans: string | null = null;
+      if (missingMacros.length > 0 && extraMacros.length > 0) {
+        fixedTrans = trans;
+        if (origMacros.length === transMacros.length) {
+          // Same macro count → positional 1:1 replacement
+          for (let i = 0; i < origMacros.length; i++) {
+            const om = origMacros[i], tm = transMacros[i];
+            if (om !== tm && !origSet.has(tm)) {
+              fixedTrans = fixedTrans.replace(tm, om);
+            }
+          }
+        } else {
+          // Different counts → match missing↔extra by appearance order
+          const sortByPos = (arr: string[], text: string) =>
+            [...arr].sort((a, b) => text.indexOf(a) - text.indexOf(b));
+          const sortedMissing = sortByPos(missingMacros, orig);
+          const sortedExtra = sortByPos(extraMacros, trans);
+          const n = Math.min(sortedMissing.length, sortedExtra.length);
+          for (let i = 0; i < n; i++) {
+            fixedTrans = fixedTrans!.replace(sortedExtra[i], sortedMissing[i]);
+          }
+        }
+        if (fixedTrans === trans) fixedTrans = null; // no actual change
+      }
+
+      // Create issues for missing macros (auto-fixable if we computed a fix)
+      for (const m of missingMacros) {
+        issues.push({
+          id: crypto.randomUUID(), fieldPath: field.path,
+          severity: 'error', category: 'macro_damaged',
+          location: field.label,
+          description: `Macro "${m}" from original is missing or damaged in translation.`,
+          original: m,
+          current: '(missing)',
+          suggestion: `Restore macro "${m}" in the translated text.`,
+          autoFixable: fixedTrans !== null,
+          fixPath: fixedTrans !== null ? field.path : undefined,
+          fixValue: fixedTrans ?? undefined,
+        });
+      }
+
+      // Create issues for extra macros (warnings, not auto-fixable individually)
+      for (const m of extraMacros) {
+        if (/\{\{(getvar|setvar|addvar|getglobalvar|setglobalvar)::/.test(m)) {
+          issues.push({
+            id: crypto.randomUUID(), fieldPath: field.path,
+            severity: 'warning', category: 'macro_damaged',
+            location: field.label,
+            description: `New/unexpected macro "${m}" in translation that wasn't in original.`,
+            original: '(not present)',
+            current: m,
+            suggestion: 'Verify this macro is intentional (MVU rename) or accidental.',
+            autoFixable: fixedTrans !== null,
+            fixPath: fixedTrans !== null ? field.path : undefined,
+            fixValue: fixedTrans ?? undefined,
+          });
         }
       }
     }
