@@ -100,11 +100,32 @@ export const useStore = create<AppState>((set) => ({
   cardFileName: '',
   originalImage: null,
   setCard: (card, fileName, originalImage = null) => {
-    set({ card, cardFileName: fileName, originalImage });
+    set((s) => ({
+      card,
+      cardFileName: fileName,
+      originalImage,
+      translationConfig: {
+        ...s.translationConfig,
+        mvuDictionary: {}, // Clear dictionary for new card
+      },
+    }));
+    LS.set('st-translator-mvu-dict', {});
     IDB.set('st-translator-card-data', { card, cardFileName: fileName, originalImage });
   },
   clearCard: () => {
-    set({ card: null, cardFileName: '', originalImage: null, fields: [], phase: 'idle', logs: [] });
+    set((s) => ({
+      card: null,
+      cardFileName: '',
+      originalImage: null,
+      fields: [],
+      phase: 'idle',
+      logs: [],
+      translationConfig: {
+        ...s.translationConfig,
+        mvuDictionary: {},
+      },
+    }));
+    LS.set('st-translator-mvu-dict', {});
     IDB.remove('st-translator-card-data');
     IDB.remove('st-translator-fields-data');
   },

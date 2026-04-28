@@ -24,6 +24,27 @@ export interface VerifyResult {
   summary: string;
 }
 
+/* ═══ AI Fix Report — transparency on what was accepted/rejected ═══ */
+
+export interface AIFixReportEntry {
+  path: string;
+  label: string;
+  status: 'accepted' | 'rejected' | 'error';
+  reason?: string;
+  round: number;
+  issuesBefore: number;
+  issuesAfter: number;
+}
+
+export interface AIFixReport {
+  fixes: { path: string; fixedText: string }[];
+  report: AIFixReportEntry[];
+  roundsCompleted: number;
+  totalAccepted: number;
+  totalRejected: number;
+  totalErrors: number;
+}
+
 /* ═══ Extract all system references from a card ═══ */
 
 interface SystemReference {
@@ -268,6 +289,101 @@ function countBrackets(text: string): Record<string, [number, number]> {
   };
 }
 
+/** Fix bracket balance in translation by restoring missing brackets from original context */
+function fixBracketBalance(orig: string, trans: string, openBr: string, closeBr: string): string {
+  const escOpen = openBr.replace(/[[\]{}()]/g, '\\$&');
+  const escClose = closeBr.replace(/[[\]{}()]/g, '\\$&');
+  const origOpenCount = (orig.match(new RegExp(escOpen, 'g')) || []).length;
+  const origCloseCount = (orig.match(new RegExp(escClose, 'g')) || []).length;
+  let transOpenCount = (trans.match(new RegExp(escOpen, 'g')) || []).length;
+  let transCloseCount = (trans.match(new RegExp(escClose, 'g')) || []).length;
+
+  let fixed = trans;
+
+  // Add missing brackets by finding their context in original
+  const addMissing = (bracket: string, origCount: number, transCount: number) => {
+    if (origCount <= transCount) return;
+    const needed = origCount - transCount;
+    let added = 0;
+    const escBr = bracket.replace(/[[\]{}()]/g, '\\$&');
+
+    // Find all positions of this bracket in original
+    for (let i = 0; i < orig.length && added < needed; i++) {
+      if (orig[i] !== bracket) continue;
+
+      // Get context before the bracket
+      const before = orig.slice(Math.max(0, i - 20), i);
+      // Try to find this context in the translation
+      for (let ctxLen = Math.min(before.length, 15); ctxLen >= 3; ctxLen--) {
+        const snippet = before.slice(-ctxLen);
+        const idx = fixed.indexOf(snippet);
+        if (idx !== -1) {
+          const insertPos = idx + snippet.length;
+          // Only insert if bracket is not already there
+          if (fixed[insertPos] !== bracket) {
+            fixed = fixed.slice(0, insertPos) + bracket + fixed.slice(insertPos);
+            added++;
+          }
+          break;
+        }
+      }
+    }
+
+    // Fallback: if context matching didn't find all, try after-context
+    if (added < needed) {
+      for (let i = 0; i < orig.length && added < needed; i++) {
+        if (orig[i] !== bracket) continue;
+        const after = orig.slice(i + 1, Math.min(orig.length, i + 21));
+        for (let ctxLen = Math.min(after.length, 15); ctxLen >= 3; ctxLen--) {
+          const snippet = after.slice(0, ctxLen);
+          const idx = fixed.indexOf(snippet);
+          if (idx !== -1 && idx > 0) {
+            if (fixed[idx - 1] !== bracket) {
+              fixed = fixed.slice(0, idx) + bracket + fixed.slice(idx);
+              added++;
+            }
+            break;
+          }
+        }
+      }
+    }
+  };
+
+  addMissing(openBr, origOpenCount, transOpenCount);
+  addMissing(closeBr, origCloseCount, transCloseCount);
+
+  // Remove extra brackets (translation has more than original)
+  const removeExtra = (bracket: string, origCount: number, transCount: number) => {
+    if (transCount <= origCount) return;
+    let toRemove = transCount - origCount;
+    const escBr = bracket.replace(/[[\]{}()]/g, '\\$&');
+    // Remove from end first (usually trailing extras)
+    while (toRemove > 0) {
+      const lastIdx = fixed.lastIndexOf(bracket);
+      if (lastIdx === -1) break;
+      // Check if this bracket position exists in original context
+      const afterInFixed = fixed.slice(lastIdx + 1, lastIdx + 10);
+      const beforeInFixed = fixed.slice(Math.max(0, lastIdx - 10), lastIdx);
+      // Only remove if context suggests it's extra (not in original at similar position)
+      const contextInOrig = orig.indexOf(beforeInFixed + bracket);
+      if (contextInOrig === -1) {
+        fixed = fixed.slice(0, lastIdx) + fixed.slice(lastIdx + 1);
+        toRemove--;
+      } else {
+        break; // Don't remove brackets that have matching context in original
+      }
+    }
+  };
+
+  // Recount after additions
+  transOpenCount = (fixed.match(new RegExp(escOpen, 'g')) || []).length;
+  transCloseCount = (fixed.match(new RegExp(escClose, 'g')) || []).length;
+  removeExtra(openBr, origOpenCount, transOpenCount);
+  removeExtra(closeBr, origCloseCount, transCloseCount);
+
+  return fixed;
+}
+
 /** Extract all {{macro::xxx}} patterns */
 function extractMacros(text: string): string[] {
   return (text.match(/\{\{[^}]+\}\}/g) || []);
@@ -291,6 +407,7 @@ export function verifyFields(
     if (field.status !== 'done' || !field.translated) continue;
     const orig = field.original;
     const trans = field.translated;
+    let currentAutoFix = trans;
 
     // ─── 1. Residual source text (untranslated CJK left behind) ───
     if (isCJKSource && orig.length > 10) {
@@ -338,12 +455,18 @@ export function verifyFields(
     // ─── 3. Bracket mismatch (for code-heavy fields) ───
     if (field.group === 'tavern_helper' || field.group === 'lorebook' || field.group === 'regex') {
       const origBrackets = countBrackets(orig);
-      const transBrackets = countBrackets(trans);
+      const transBrackets = countBrackets(currentAutoFix);
+      let bracketFixedTrans: string | null = null;
+
       for (const [pair, [origOpen, origClose]] of Object.entries(origBrackets)) {
         const [transOpen, transClose] = transBrackets[pair];
         const origDiff = origOpen - origClose;
         const transDiff = transOpen - transClose;
         if (Math.abs(origDiff - transDiff) > 1) {
+          // Try auto-fix: restore brackets from original context
+          if (!bracketFixedTrans) bracketFixedTrans = currentAutoFix;
+          bracketFixedTrans = fixBracketBalance(orig, bracketFixedTrans, pair[0], pair[1]);
+
           issues.push({
             id: crypto.randomUUID(), fieldPath: field.path,
             severity: 'warning', category: 'bracket_mismatch',
@@ -352,15 +475,36 @@ export function verifyFields(
             original: `${pair[0]}:${origOpen} ${pair[1]}:${origClose}`,
             current: `${pair[0]}:${transOpen} ${pair[1]}:${transClose}`,
             suggestion: `Check ${pair} brackets in the translation.`,
-            autoFixable: false,
+            autoFixable: true, // will be updated below
+            fixPath: field.path,
+            fixValue: '', // placeholder, updated below
           });
+        }
+      }
+
+      // Update bracket issues with computed fix
+      if (bracketFixedTrans && bracketFixedTrans !== currentAutoFix) {
+        currentAutoFix = bracketFixedTrans;
+        for (const iss of issues) {
+          if (iss.category === 'bracket_mismatch' && iss.fixPath === field.path) {
+            iss.fixValue = currentAutoFix;
+          }
+        }
+      } else {
+        // No fix computed — mark as not auto-fixable
+        for (const iss of issues) {
+          if (iss.category === 'bracket_mismatch' && iss.fixPath === field.path) {
+            iss.autoFixable = false;
+            iss.fixPath = undefined;
+            iss.fixValue = undefined;
+          }
         }
       }
     }
 
     // ─── 4. SillyTavern macro damage ───
     const origMacros = extractMacros(orig);
-    const transMacros = extractMacros(trans);
+    const transMacros = extractMacros(currentAutoFix);
     if (origMacros.length > 0) {
       const origSet = new Set(origMacros);
       const transSet = new Set(transMacros);
@@ -371,11 +515,25 @@ export function verifyFields(
 
       for (const m of origSet) {
         if (!transSet.has(m)) {
-          const varMatch = m.match(/\{\{(getvar|setvar|addvar)::([^:}]+)/);
+          // Check if this macro was MVU-remapped in translation
+          const varMatch = m.match(/\{\{(getvar|setvar|addvar|getglobalvar|setglobalvar|addglobalvar)::([^:}]+)/);
           if (varMatch) {
             const varName = varMatch[2].trim();
+            // Forward lookup: original var → mapped name
             const mappedName = mvuDictionary[varName];
             if (mappedName && transSet.has(m.replace(varName, mappedName))) continue;
+            // Reverse lookup: check if any MVU mapping covers this macro
+            const reverseMapped = Object.entries(mvuDictionary).find(([, v]) => v === varName)?.[0];
+            if (reverseMapped && transSet.has(m.replace(varName, reverseMapped))) continue;
+            // Partial match: check if translation has same macro type with any MVU-known variable
+            const macroType = varMatch[1];
+            const hasAnyMVUVariant = [...transSet].some(tm => {
+              const tmMatch = tm.match(new RegExp(`\\{\\{${macroType}::([^:}]+)`));
+              if (!tmMatch) return false;
+              const tmVar = tmMatch[1].trim();
+              return Object.keys(mvuDictionary).includes(tmVar) || Object.values(mvuDictionary).includes(tmVar);
+            });
+            if (hasAnyMVUVariant) continue;
           }
           missingMacros.push(m);
         }
@@ -383,38 +541,96 @@ export function verifyFields(
 
       for (const m of transSet) {
         if (!origSet.has(m)) {
-          const varMatch = m.match(/\{\{(?:getvar|setvar|addvar)::([^:}]+)/);
-          const isKnownMapping = varMatch && Object.values(mvuDictionary).includes(varMatch[1].trim());
+          const varMatch = m.match(/\{\{(?:getvar|setvar|addvar|getglobalvar|setglobalvar|addglobalvar)::([^:}]+)/);
+          const varName = varMatch?.[1]?.trim();
+          const isKnownMapping = varName && (
+            Object.values(mvuDictionary).includes(varName) ||
+            Object.keys(mvuDictionary).includes(varName)
+          );
           if (!isKnownMapping) {
             extraMacros.push(m);
           }
         }
       }
 
-      // Compute auto-fix: replace extra (translated) macros with missing (original) macros
+      // Compute auto-fix for missing macros (3-phase)
       let fixedTrans: string | null = null;
-      if (missingMacros.length > 0 && extraMacros.length > 0) {
-        fixedTrans = trans;
-        if (origMacros.length === transMacros.length) {
-          // Same macro count → positional 1:1 replacement
-          for (let i = 0; i < origMacros.length; i++) {
-            const om = origMacros[i], tm = transMacros[i];
-            if (om !== tm && !origSet.has(tm)) {
-              fixedTrans = fixedTrans.replace(tm, om);
+      if (missingMacros.length > 0) {
+        fixedTrans = currentAutoFix;
+
+        // Phase 1: Replace extra (translated) macros with missing (original) macros
+        if (extraMacros.length > 0) {
+          if (origMacros.length === transMacros.length) {
+            for (let i = 0; i < origMacros.length; i++) {
+              const om = origMacros[i], tm = transMacros[i];
+              if (om !== tm && !origSet.has(tm)) {
+                fixedTrans = fixedTrans.replace(tm, om);
+              }
+            }
+          } else {
+            const sortByPos = (arr: string[], text: string) =>
+              [...arr].sort((a, b) => text.indexOf(a) - text.indexOf(b));
+            const sortedMissing = sortByPos(missingMacros, orig);
+            const sortedExtra = sortByPos(extraMacros, currentAutoFix);
+            const n = Math.min(sortedMissing.length, sortedExtra.length);
+            for (let i = 0; i < n; i++) {
+              fixedTrans = fixedTrans!.replace(sortedExtra[i], sortedMissing[i]);
             }
           }
-        } else {
-          // Different counts → match missing↔extra by appearance order
-          const sortByPos = (arr: string[], text: string) =>
-            [...arr].sort((a, b) => text.indexOf(a) - text.indexOf(b));
-          const sortedMissing = sortByPos(missingMacros, orig);
-          const sortedExtra = sortByPos(extraMacros, trans);
-          const n = Math.min(sortedMissing.length, sortedExtra.length);
-          for (let i = 0; i < n; i++) {
-            fixedTrans = fixedTrans!.replace(sortedExtra[i], sortedMissing[i]);
+        }
+
+        // Phase 2: Find bare macro content (braces stripped) and re-wrap with {{}}
+        const stillMissing2 = missingMacros.filter(m => !fixedTrans!.includes(m));
+        for (const m of stillMissing2) {
+          const bare = m.slice(2, -2); // strip {{ and }}
+          if (bare && fixedTrans!.includes(bare) && !fixedTrans!.includes(`{{${bare}}}`)) {
+            fixedTrans = fixedTrans!.replace(bare, m);
           }
         }
-        if (fixedTrans === trans) fixedTrans = null; // no actual change
+
+        // Phase 3: Insert completely missing macros at approximate position
+        const stillMissing3 = missingMacros.filter(m => !fixedTrans!.includes(m));
+        for (const m of stillMissing3) {
+          const posInOrig = orig.indexOf(m);
+          if (posInOrig === -1) continue;
+          // Find surrounding context in original (up to 30 chars before)
+          const beforeCtx = orig.slice(Math.max(0, posInOrig - 30), posInOrig);
+          // Look for the last matching snippet in translated text
+          let bestPos = -1;
+          // Try progressively shorter context snippets
+          for (let len = Math.min(beforeCtx.length, 20); len >= 5; len--) {
+            const snippet = beforeCtx.slice(-len);
+            const idx = fixedTrans!.indexOf(snippet);
+            if (idx !== -1) {
+              bestPos = idx + snippet.length;
+              break;
+            }
+          }
+          if (bestPos !== -1) {
+            // Insert macro at the found position
+            fixedTrans = fixedTrans!.slice(0, bestPos) + m + fixedTrans!.slice(bestPos);
+          } else {
+            // Fallback: insert at proportional position
+            const ratio = posInOrig / orig.length;
+            const insertPos = Math.round(ratio * fixedTrans!.length);
+            // Find nearest whitespace or newline to insert cleanly
+            let cleanPos = insertPos;
+            for (let d = 0; d < 20; d++) {
+              if (cleanPos + d < fixedTrans!.length && /[\s\n]/.test(fixedTrans![cleanPos + d])) {
+                cleanPos = cleanPos + d + 1;
+                break;
+              }
+              if (cleanPos - d >= 0 && /[\s\n]/.test(fixedTrans![cleanPos - d])) {
+                cleanPos = cleanPos - d + 1;
+                break;
+              }
+            }
+            fixedTrans = fixedTrans!.slice(0, cleanPos) + m + fixedTrans!.slice(cleanPos);
+          }
+        }
+
+        if (fixedTrans === currentAutoFix) fixedTrans = null; // no actual change
+        else currentAutoFix = fixedTrans!;
       }
 
       // Create issues for missing macros (auto-fixable if we computed a fix)
@@ -429,7 +645,7 @@ export function verifyFields(
           suggestion: `Restore macro "${m}" in the translated text.`,
           autoFixable: fixedTrans !== null,
           fixPath: fixedTrans !== null ? field.path : undefined,
-          fixValue: fixedTrans ?? undefined,
+          fixValue: fixedTrans ? currentAutoFix : undefined,
         });
       }
 
@@ -446,7 +662,7 @@ export function verifyFields(
             suggestion: 'Verify this macro is intentional (MVU rename) or accidental.',
             autoFixable: fixedTrans !== null,
             fixPath: fixedTrans !== null ? field.path : undefined,
-            fixValue: fixedTrans ?? undefined,
+            fixValue: fixedTrans ? currentAutoFix : undefined,
           });
         }
       }
@@ -454,20 +670,23 @@ export function verifyFields(
 
     // ─── 5. JSON structure broken ───
     if (hasJsonContent(orig)) {
-      try { JSON.parse(orig); } catch { /* original wasn't valid JSON, skip */ continue; }
-      try {
-        JSON.parse(trans);
-      } catch (e) {
-        issues.push({
-          id: crypto.randomUUID(), fieldPath: field.path,
-          severity: 'error', category: 'json_broken',
-          location: field.label,
-          description: `Translation broke JSON structure: ${e instanceof Error ? e.message : String(e)}`,
-          original: orig.slice(0, 80),
-          current: trans.slice(0, 80),
-          suggestion: 'The translated content is no longer valid JSON. Fix the structure.',
-          autoFixable: false,
-        });
+      let origIsValidJson = false;
+      try { JSON.parse(orig); origIsValidJson = true; } catch { /* original wasn't valid JSON, skip check */ }
+      if (origIsValidJson) {
+        try {
+          JSON.parse(currentAutoFix);
+        } catch (e) {
+          issues.push({
+            id: crypto.randomUUID(), fieldPath: field.path,
+            severity: 'error', category: 'json_broken',
+            location: field.label,
+            description: `Translation broke JSON structure: ${e instanceof Error ? e.message : String(e)}`,
+            original: orig.slice(0, 80),
+            current: currentAutoFix.slice(0, 80),
+            suggestion: 'The translated content is no longer valid JSON. Fix the structure.',
+            autoFixable: false,
+          });
+        }
       }
     }
 
@@ -504,7 +723,8 @@ export function verifyFields(
       for (const [origVar, transVar] of Object.entries(mvuDictionary)) {
         if (!origVar || !transVar || origVar === transVar) continue;
         // If original has this variable and translation still has the original name (not renamed)
-        if (orig.includes(origVar) && trans.includes(origVar) && !trans.includes(transVar)) {
+        if (orig.includes(origVar) && currentAutoFix.includes(origVar) && !currentAutoFix.includes(transVar)) {
+          currentAutoFix = currentAutoFix.split(origVar).join(transVar);
           issues.push({
             id: crypto.randomUUID(), fieldPath: field.path,
             severity: 'warning', category: 'mvu_inconsistent',
@@ -515,7 +735,7 @@ export function verifyFields(
             suggestion: `Replace "${origVar}" with "${transVar}" in the translated text.`,
             autoFixable: true,
             fixPath: field.path,
-            fixValue: trans.split(origVar).join(transVar),
+            fixValue: currentAutoFix,
           });
         }
       }
@@ -536,7 +756,545 @@ export function applyAutoFix(issue: FieldIssue, fields: TranslationField[]): Tra
   });
 }
 
+/* ═══ Reusable LLM API call ═══ */
 
+async function callLLM(config: ProxySettings, systemPrompt: string, userPrompt: string, signal?: AbortSignal): Promise<string> {
+  const url = config.proxyUrl.replace(/\/+$/, '');
+  let apiUrl: string;
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  let body: any;
+
+  if (config.provider === 'anthropic') {
+    apiUrl = url + '/messages';
+    headers['x-api-key'] = config.apiKey;
+    headers['anthropic-version'] = '2023-06-01';
+    headers['anthropic-dangerous-direct-browser-access'] = 'true';
+    body = { model: config.model, max_tokens: config.maxTokens, system: systemPrompt, messages: [{ role: 'user', content: userPrompt }], temperature: 0.1 };
+  } else if (config.provider === 'google') {
+    apiUrl = `${url}/models/${config.model}:generateContent?key=${config.apiKey}`;
+    body = { system_instruction: { parts: [{ text: systemPrompt }] }, contents: [{ role: 'user', parts: [{ text: userPrompt }] }], generationConfig: { maxOutputTokens: config.maxTokens, temperature: 0.1 } };
+  } else {
+    apiUrl = url + '/chat/completions';
+    if (config.apiKey) headers['Authorization'] = `Bearer ${config.apiKey}`;
+    body = { model: config.model, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }], max_tokens: config.maxTokens, temperature: 0.1 };
+  }
+
+  const res = await fetch(apiUrl, { method: 'POST', headers, body: JSON.stringify(body), signal });
+  if (!res.ok) { const e = await res.text().catch(() => ''); throw new Error(`API ${res.status}: ${e.slice(0, 200)}`); }
+  const json = await res.json();
+
+  if (config.provider === 'anthropic') return json.content?.[0]?.text || '';
+  if (config.provider === 'google') return json.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  return json.choices?.[0]?.message?.content || '';
+}
+
+/* ═══ Map card-level issue location to field path ═══ */
+
+function locationToFieldPath(location: string, fields: TranslationField[]): string | null {
+  const lb = location.match(/lorebook\[(\d+)\]\.(\w+)/);
+  if (lb) { const p = `data.character_book.entries[${lb[1]}].${lb[2]}`; return fields.find(f => f.path === p) ? p : null; }
+  const rx = location.match(/regex\[(\d+)\]\.(\w+)/);
+  if (rx) { const p = `data.extensions.regex_scripts[${rx[1]}].${rx[2]}`; return fields.find(f => f.path === p) ? p : null; }
+  const th = location.match(/tavernHelper\[(\d+)\]\.(\w+)/);
+  if (th) { const p = `data.extensions.tavern_helper.scripts[${th[1]}].${th[2]}`; return fields.find(f => f.path === p) ? p : null; }
+  const direct: Record<string, string> = { system_prompt: 'data.system_prompt', description: 'data.description', first_mes: 'data.first_mes', mes_example: 'data.mes_example' };
+  if (direct[location]) return fields.find(f => f.path === direct[location]) ? direct[location] : null;
+  return fields.find(f => f.path === location)?.path || fields.find(f => f.label === location)?.path || null;
+}
+
+/* ═══ Category-specific fix hints for AI prompts ═══ */
+
+const CATEGORY_FIX_HINTS: Record<string, string> = {
+  macro_damaged: `MACRO FIX RULES:
+- Restore missing {{macros}} EXACTLY as they appear in the ORIGINAL text
+- Do NOT translate macro content (e.g. {{getvar::好感度}} must stay as-is or use MVU dictionary mapping)
+- Common macros: {{char}}, {{user}}, {{getvar::X}}, {{setvar::X::V}}, {{random}}, {{roll}}
+- If a macro was partially translated (e.g. "{{nhận biến::X}}"), restore it to original syntax`,
+
+  bracket_mismatch: `BRACKET FIX RULES:
+- Count ALL brackets in ORIGINAL: (), {}, []
+- Your output MUST have the EXACT same count of each bracket type
+- Do NOT add or remove brackets — match the original exactly
+- Pay special attention to nested brackets in code blocks`,
+
+  html_broken: `HTML FIX RULES:
+- Every opening tag must have a matching closing tag (or be self-closing)
+- Preserve ALL attributes: class, id, data-var, style, etc.
+- Do NOT translate attribute values (class names, ids, data-var values)
+- Keep the exact same HTML structure as the ORIGINAL`,
+
+  residual_source: `TRANSLATION FIX RULES:
+- Translate ALL remaining source language text to the target language
+- Do NOT leave any untranslated Chinese/Japanese/Korean characters
+- Keep all code, macros, HTML, and technical identifiers unchanged
+- Only translate natural language text portions`,
+
+  json_broken: `JSON FIX RULES:
+- The output MUST be valid JSON
+- Preserve all JSON keys exactly (do NOT translate keys)
+- Only translate string values that contain natural language
+- Ensure proper escaping of quotes and special characters`,
+
+  mvu_inconsistent: `MVU VARIABLE FIX RULES:
+- Replace original variable names with their MVU dictionary translations
+- Apply the replacement EVERYWHERE: data-var attributes, {{getvar::}}, {{setvar::}}, YAML keys, etc.
+- Use EXACTLY the dictionary mapping — do NOT invent your own translations`,
+
+  length_anomaly: `LENGTH FIX RULES:
+- If too short: the translation is likely truncated, restore the missing content
+- If too long: remove duplicate or excessive content
+- The output length should be proportional to the original`,
+};
+
+/* ═══ Validate fix quality — multi-layer checks ═══ */
+
+function validateFixQuality(
+  original: string,
+  currentTranslation: string,
+  fixedText: string,
+  mvuDictionary: Record<string, string>,
+  sourceLang: string,
+  field: TranslationField,
+  initialIssueCount = 0
+): { valid: boolean; reason?: string } {
+  // 1. Length ratio check: fix shouldn't be drastically different from current
+  const lengthRatio = fixedText.length / currentTranslation.length;
+  if (lengthRatio < 0.4) {
+    return { valid: false, reason: `Fix too short: ${fixedText.length} vs ${currentTranslation.length} chars (${(lengthRatio * 100).toFixed(0)}%)` };
+  }
+  if (lengthRatio > 3.0) {
+    return { valid: false, reason: `Fix too long: ${fixedText.length} vs ${currentTranslation.length} chars (${(lengthRatio * 100).toFixed(0)}%)` };
+  }
+
+  // 2. Macro preservation: fix must keep all macros from original
+  const origMacros = extractMacros(original);
+  const fixMacros = extractMacros(fixedText);
+  if (origMacros.length > 0) {
+    const origSet = new Set(origMacros);
+    const fixSet = new Set(fixMacros);
+    // Check standard macros ({{char}}, {{user}}, etc.) — these MUST be preserved
+    const stdMacroPattern = /^\{\{(char|user|random|roll|time|date|idle_duration|input|lastMessage|newline|trim|noop)\}\}$/i;
+    for (const m of origSet) {
+      if (stdMacroPattern.test(m) && !fixSet.has(m)) {
+        return { valid: false, reason: `Fix lost standard macro: ${m}` };
+      }
+    }
+    // For variable macros, allow MVU dictionary remapping
+    for (const m of origSet) {
+      if (!fixSet.has(m) && !stdMacroPattern.test(m)) {
+        const varMatch = m.match(/\{\{(getvar|setvar|addvar|getglobalvar|setglobalvar|addglobalvar)::([^:}]+)/);
+        if (varMatch) {
+          const varName = varMatch[2].trim();
+          // Forward lookup
+          const mapped = mvuDictionary[varName];
+          if (mapped && fixSet.has(m.replace(varName, mapped))) continue;
+          // Reverse lookup
+          const reverseMapped = Object.entries(mvuDictionary).find(([, v]) => v === varName)?.[0];
+          if (reverseMapped && fixSet.has(m.replace(varName, reverseMapped))) continue;
+          // Partial match: same macro type with MVU-known variable
+          const macroType = varMatch[1];
+          const hasAnyMVUVariant = [...fixSet].some(fm => {
+            const fmMatch = fm.match(new RegExp(`\\{\\{${macroType}::([^:}]+)`));
+            if (!fmMatch) return false;
+            const fmVar = fmMatch[1].trim();
+            return Object.keys(mvuDictionary).includes(fmVar) || Object.values(mvuDictionary).includes(fmVar);
+          });
+          if (hasAnyMVUVariant) continue;
+        }
+        // Missing non-standard macro — warning but not necessarily invalid
+      }
+    }
+    // Total macro count check: fix shouldn't have significantly fewer macros
+    if (fixMacros.length < origMacros.length * 0.5) {
+      return { valid: false, reason: `Fix lost too many macros: ${fixMacros.length} vs ${origMacros.length} original` };
+    }
+  }
+
+  // 3. Bracket integrity: fix should match original bracket counts
+  const origBrackets = countBrackets(original);
+  const fixBrackets = countBrackets(fixedText);
+  for (const [pair, [origOpen, origClose]] of Object.entries(origBrackets)) {
+    const [fixOpen, fixClose] = fixBrackets[pair];
+    const origBalance = origOpen - origClose;
+    const fixBalance = fixOpen - fixClose;
+    // Allow small deviation (±2) for complex fields
+    if (Math.abs(origBalance - fixBalance) > 2) {
+      return { valid: false, reason: `Fix broke ${pair} bracket balance: original ${origBalance}, fix ${fixBalance}` };
+    }
+  }
+
+  // 4. Issue regression check — weighted severity score with tolerance
+  const mockBefore = { ...field, translated: currentTranslation };
+  const mockAfter = { ...field, translated: fixedText };
+  const issuesBefore = verifyFields([mockBefore], mvuDictionary, sourceLang);
+  const issuesAfter = verifyFields([mockAfter], mvuDictionary, sourceLang);
+
+  const scoreIssues = (list: typeof issuesBefore) =>
+    list.reduce((s, i) => s + (i.severity === 'error' ? 3 : i.severity === 'warning' ? 1 : 0), 0);
+  const scoreBefore = scoreIssues(issuesBefore);
+  const scoreAfter = scoreIssues(issuesAfter);
+
+  // When field was structurally clean (scoreBefore=0), issues were content-level
+  // (VerifyIssues from AI verify, not FieldIssues from verifyFields).
+  // Allow proportional structural cost: up to 1 warning per 2 issues being fixed.
+  const tolerance = scoreBefore === 0
+    ? Math.max(3, Math.ceil(initialIssueCount / 2))
+    : 0;
+
+  if (scoreAfter > scoreBefore + tolerance) {
+    return { valid: false, reason: `Fix worsened severity score: ${scoreBefore} → ${scoreAfter} (tolerance: ${tolerance}, errors×3 + warnings×1)` };
+  }
+  if (issuesAfter.length > issuesBefore.length + Math.max(2, Math.ceil(initialIssueCount / 3))) {
+    return { valid: false, reason: `Fix increased total issues: ${issuesBefore.length} → ${issuesAfter.length}` };
+  }
+
+  return { valid: true };
+}
+
+/* ═══ Build category-aware fix prompt ═══ */
+
+function buildFixPrompt(
+  issueList: (FieldIssue | VerifyIssue)[],
+  field: TranslationField,
+  targetLang: string,
+  mvuBlock: string,
+  roundInfo?: { round: number; prevFixFeedback?: string }
+): { system: string; user: string } {
+  const issueDesc = issueList.map((i, idx) => {
+    const cat = 'category' in i ? (i as FieldIssue).category : null;
+    return `${idx + 1}. [${i.severity}${cat ? '/' + cat : ''}] ${i.description}${i.original ? ` | original: "${i.original}"` : ''}${i.suggestion ? ` | hint: ${i.suggestion}` : ''}`;
+  }).join('\n');
+
+  // Collect unique categories for category-specific hints
+  const categories = new Set<string>();
+  for (const i of issueList) {
+    if ('category' in i) categories.add((i as FieldIssue).category);
+  }
+  const categoryHints = [...categories]
+    .map(cat => CATEGORY_FIX_HINTS[cat])
+    .filter(Boolean)
+    .join('\n\n');
+
+  const roundNote = roundInfo && roundInfo.round > 1
+    ? `\n\nNOTE: This is fix attempt #${roundInfo.round}. Previous fix was rejected because: ${roundInfo.prevFixFeedback || 'validation failed'}. Please be more careful this time.`
+    : '';
+
+  const system = `You fix SPECIFIC translation errors in SillyTavern character card fields.
+Return ONLY the corrected translated text. No explanations, no markdown code fences, no extra text.
+
+CRITICAL RULES:
+- Fix ONLY the issues listed below. Do NOT modify any other part of the text.
+- Preserve ALL {{macros}} exactly as in ORIGINAL (e.g. {{user}}, {{char}}, {{getvar::xxx}})
+- Preserve ALL HTML tags, CSS classes/IDs, code blocks exactly
+- Preserve ALL bracket patterns {} [] () — match the ORIGINAL count exactly
+- Do NOT re-translate or rephrase parts that are already correctly translated
+- Do NOT change variable names, function names, or technical identifiers
+- Do NOT add or remove line breaks unless an issue specifically requires it
+- The output length should be very close to the input translation length
+${categoryHints ? '\n' + categoryHints : ''}${mvuBlock}${roundNote}`;
+
+  const user = `Fix this ${targetLang} translation. ONLY fix the listed issues.
+
+ORIGINAL:
+${field.original.slice(0, 6000)}
+
+CURRENT TRANSLATION:
+${field.translated.slice(0, 6000)}
+
+ISSUES TO FIX:
+${issueDesc}
+
+Return the corrected translation (fix ONLY the issues above, change nothing else):`;
+
+  return { system, user };
+}
+
+/* ═══ AI Fix Issues — multi-round LLM fix with quality validation ═══ */
+
+export async function aiFixIssues(
+  issues: (FieldIssue | VerifyIssue)[],
+  fields: TranslationField[],
+  config: ProxySettings,
+  targetLang: string,
+  onProgress?: (done: number, total: number, label: string, round?: number) => void,
+  signal?: AbortSignal,
+  mvuDictionary: Record<string, string> = {},
+  sourceLang = 'Chinese',
+  maxRounds = 3
+): Promise<AIFixReport> {
+  const report: AIFixReportEntry[] = [];
+  const bestFixes = new Map<string, { fixedText: string; issuesAfter: number; round: number }>();
+
+  // Group issues by field path
+  const byField = new Map<string, { issueList: (FieldIssue | VerifyIssue)[]; field: TranslationField }>();
+  for (const issue of issues) {
+    let path = 'fieldPath' in issue ? (issue as FieldIssue).fieldPath : null;
+    if (!path) path = locationToFieldPath(issue.location, fields);
+    if (!path) continue;
+    const field = fields.find(f => f.path === path);
+    if (!field?.translated) continue;
+    if (!byField.has(path)) byField.set(path, { issueList: [], field });
+    byField.get(path)!.issueList.push(issue);
+  }
+
+  const total = byField.size;
+  const mvuTerms = Object.entries(mvuDictionary).map(([k, v]) => `"${k}" → "${v}"`).slice(0, 50);
+  const mvuBlock = mvuTerms.length > 0 ? `\nMVU DICTIONARY (these term pairs MUST be preserved exactly):\n${mvuTerms.join('\n')}` : '';
+
+  // Track fields that still need fixing per round
+  let fieldsToFix = new Map(byField);
+  let roundsCompleted = 0;
+
+  for (let round = 1; round <= maxRounds && fieldsToFix.size > 0; round++) {
+    if (signal?.aborted) break;
+    roundsCompleted = round;
+    let done = 0;
+
+    for (const [path, { issueList, field: origField }] of fieldsToFix) {
+      if (signal?.aborted) break;
+      onProgress?.(done, fieldsToFix.size, origField.label, round);
+
+      // Use the best fix so far as the current translation for subsequent rounds
+      const currentTranslation = bestFixes.has(path)
+        ? bestFixes.get(path)!.fixedText
+        : origField.translated;
+      const workingField = { ...origField, translated: currentTranslation };
+
+      // Re-verify current state to get accurate issue list for round > 1
+      let currentIssueList = issueList;
+      if (round > 1) {
+        const recheck = verifyFields([workingField], mvuDictionary, sourceLang);
+        if (recheck.length === 0) {
+          // Already clean — skip
+          done++;
+          continue;
+        }
+        currentIssueList = recheck;
+      }
+
+      // Pre-fix: apply cumulative auto-fixes computed in verifyFields
+      let preFixedTranslation = currentTranslation;
+      const fieldIssueList = currentIssueList as FieldIssue[];
+      
+      const autoFixes = fieldIssueList.filter(
+        i => 'autoFixable' in i && i.autoFixable && i.fixValue
+      );
+      
+      if (autoFixes.length > 0) {
+        // Since verifyFields accumulates fixes sequentially into fixValue,
+        // we can simply take the fixValue from the last auto-fixable issue.
+        preFixedTranslation = autoFixes[autoFixes.length - 1].fixValue!;
+      }
+
+      if (preFixedTranslation !== currentTranslation) {
+        const postAutoFix = { ...workingField, translated: preFixedTranslation };
+        const remainingAfterAutoFix = verifyFields([postAutoFix], mvuDictionary, sourceLang);
+        if (remainingAfterAutoFix.length === 0) {
+          bestFixes.set(path, { fixedText: preFixedTranslation, issuesAfter: 0, round });
+          report.push({
+            path, label: origField.label, status: 'accepted', round,
+            reason: 'All issues auto-fixed without LLM',
+            issuesBefore: currentIssueList.length, issuesAfter: 0,
+          });
+          done++;
+          onProgress?.(done, fieldsToFix.size, origField.label, round);
+          continue;
+        }
+        // Update baseline for LLM and validation
+        workingField.translated = preFixedTranslation;
+        currentIssueList = remainingAfterAutoFix;
+      }
+
+      // IMPORTANT: use the actual working translation as baseline for validation
+      const effectiveTranslation = workingField.translated;
+
+      const prevFeedback = round > 1 && report.length > 0
+        ? report.filter(r => r.path === path && r.status === 'rejected').map(r => r.reason).pop()
+        : undefined;
+
+      const { system, user } = buildFixPrompt(
+        currentIssueList, workingField, targetLang, mvuBlock,
+        { round, prevFixFeedback: prevFeedback }
+      );
+
+      const issuesBefore = verifyFields([workingField], mvuDictionary, sourceLang);
+      const initialIssueCount = currentIssueList.length;
+
+      try {
+        let fixed = await callLLM(config, system, user, signal);
+        
+        // Strip markdown code fences if present anywhere
+        const mdMatch = fixed.match(/```(?:json)?\s*\n([\s\S]*?)\n```/);
+        if (mdMatch) fixed = mdMatch[1].trim();
+        else fixed = fixed.replace(/^```[\s\S]*?\n/, '').replace(/\n```\s*$/, '').trim();
+
+        if (!fixed || fixed.length < Math.max(10, effectiveTranslation.length * 0.3)) {
+          report.push({
+            path, label: origField.label, status: 'rejected', round,
+            reason: `Empty or too short response (${fixed?.length || 0} chars)`,
+            issuesBefore: issuesBefore.length, issuesAfter: issuesBefore.length,
+          });
+          done++;
+          onProgress?.(done, fieldsToFix.size, origField.label, round);
+          continue;
+        }
+
+        // Multi-layer validation — pass initialIssueCount for tolerance
+        const validation = validateFixQuality(
+          origField.original, effectiveTranslation, fixed, mvuDictionary, sourceLang, workingField, initialIssueCount
+        );
+
+        if (!validation.valid) {
+          report.push({
+            path, label: origField.label, status: 'rejected', round,
+            reason: validation.reason || 'Quality check failed',
+            issuesBefore: issuesBefore.length, issuesAfter: issuesBefore.length,
+          });
+          done++;
+          onProgress?.(done, fieldsToFix.size, origField.label, round);
+          continue;
+        }
+
+        // Count issues after fix
+        const mockAfter = { ...workingField, translated: fixed };
+        const issuesAfter = verifyFields([mockAfter], mvuDictionary, sourceLang);
+
+        // Accept if this is the best result so far
+        const currentBest = bestFixes.get(path);
+        if (!currentBest || issuesAfter.length < currentBest.issuesAfter) {
+          bestFixes.set(path, { fixedText: fixed, issuesAfter: issuesAfter.length, round });
+          report.push({
+            path, label: origField.label, status: 'accepted', round,
+            issuesBefore: issuesBefore.length, issuesAfter: issuesAfter.length,
+          });
+        } else {
+          report.push({
+            path, label: origField.label, status: 'rejected', round,
+            reason: `Not better than round ${currentBest.round} (${issuesAfter.length} issues vs ${currentBest.issuesAfter})`,
+            issuesBefore: issuesBefore.length, issuesAfter: issuesAfter.length,
+          });
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        report.push({
+          path, label: origField.label, status: 'error', round,
+          reason: msg.slice(0, 150),
+          issuesBefore: issuesBefore.length, issuesAfter: issuesBefore.length,
+        });
+      }
+
+      done++;
+      onProgress?.(done, fieldsToFix.size, origField.label, round);
+    }
+
+    // Remove fields that are now clean (0 issues)
+    const nextFieldsToFix = new Map<string, { issueList: (FieldIssue | VerifyIssue)[]; field: TranslationField }>();
+    for (const [path, data] of fieldsToFix) {
+      const best = bestFixes.get(path);
+      if (best && best.issuesAfter > 0) {
+        nextFieldsToFix.set(path, data);
+      } else if (!best) {
+        nextFieldsToFix.set(path, data);
+      }
+    }
+    fieldsToFix = nextFieldsToFix;
+  }
+
+  // Build final results from best fixes
+  const fixes = [...bestFixes.entries()].map(([path, { fixedText }]) => ({ path, fixedText }));
+
+  return {
+    fixes,
+    report,
+    roundsCompleted,
+    totalAccepted: report.filter(r => r.status === 'accepted').length,
+    totalRejected: report.filter(r => r.status === 'rejected').length,
+    totalErrors: report.filter(r => r.status === 'error').length,
+  };
+}
+
+/* ═══ AI Fix Single Issue — targeted fix for one specific issue ═══ */
+
+export async function aiFixSingleIssue(
+  issue: FieldIssue,
+  fields: TranslationField[],
+  config: ProxySettings,
+  targetLang: string,
+  signal?: AbortSignal,
+  mvuDictionary: Record<string, string> = {},
+  sourceLang = 'Chinese'
+): Promise<{ success: boolean; fixedText?: string; reason?: string }> {
+  const field = fields.find(f => f.path === issue.fieldPath);
+  if (!field?.translated) return { success: false, reason: 'Field not found or empty' };
+
+  const mvuTerms = Object.entries(mvuDictionary).map(([k, v]) => `"${k}" → "${v}"`).slice(0, 50);
+  const mvuBlock = mvuTerms.length > 0 ? `\nMVU DICTIONARY:\n${mvuTerms.join('\n')}` : '';
+
+  const categoryHint = CATEGORY_FIX_HINTS[issue.category] || '';
+
+  const systemPrompt = `You fix ONE SPECIFIC translation error in a SillyTavern character card field.
+Return ONLY the corrected translated text. No explanations, no markdown code fences.
+
+RULES:
+- Fix ONLY the ONE issue described below. Change NOTHING else.
+- Preserve ALL {{macros}}, HTML tags, brackets, code blocks exactly.
+- Output length must be very close to input length.
+${categoryHint ? '\n' + categoryHint : ''}${mvuBlock}`;
+
+  const userPrompt = `Fix this ONE issue in the ${targetLang} translation.
+
+ISSUE: [${issue.severity}/${issue.category}] ${issue.description}
+${issue.original ? `Original snippet: "${issue.original}"` : ''}
+${issue.suggestion ? `Hint: ${issue.suggestion}` : ''}
+
+ORIGINAL TEXT:
+${field.original.slice(0, 6000)}
+
+CURRENT TRANSLATION:
+${field.translated.slice(0, 6000)}
+
+Return the corrected translation:`;
+
+  try {
+    let fixed = await callLLM(config, systemPrompt, userPrompt, signal);
+    
+    // Strip markdown code fences if present anywhere
+    const mdMatch = fixed.match(/```(?:json)?\s*\n([\s\S]*?)\n```/);
+    if (mdMatch) fixed = mdMatch[1].trim();
+    else fixed = fixed.replace(/^```[\s\S]*?\n/, '').replace(/\n```\s*$/, '').trim();
+
+    if (!fixed || fixed.length < Math.max(10, field.translated.length * 0.3)) {
+      return { success: false, reason: 'AI returned empty or truncated result' };
+    }
+
+    // Validate quality
+    const validation = validateFixQuality(
+      field.original, field.translated, fixed, mvuDictionary, sourceLang, field, 1
+    );
+
+    if (!validation.valid) {
+      return { success: false, reason: validation.reason };
+    }
+
+    // Specific check: did this particular issue get resolved?
+    const mockBefore = { ...field, translated: field.translated };
+    const mockAfter = { ...field, translated: fixed };
+    const issuesBefore = verifyFields([mockBefore], mvuDictionary, sourceLang);
+    const issuesAfter = verifyFields([mockAfter], mvuDictionary, sourceLang);
+
+    // Check if the specific category was reduced
+    const catBefore = issuesBefore.filter(i => i.category === issue.category).length;
+    const catAfter = issuesAfter.filter(i => i.category === issue.category).length;
+
+    if (catAfter >= catBefore && issuesAfter.length >= issuesBefore.length) {
+      return { success: false, reason: `Issue not resolved (${issue.category}: ${catBefore} → ${catAfter})` };
+    }
+
+    return { success: true, fixedText: fixed };
+  } catch (err) {
+    return { success: false, reason: err instanceof Error ? err.message : String(err) };
+  }
+}
 
 export async function aiVerifyCard(
   originalCard: CharacterCard,

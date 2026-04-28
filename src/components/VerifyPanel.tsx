@@ -1,10 +1,10 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useRef } from 'react';
 import { useStore } from '../store';
 import { useTranslation } from '../hooks/useTranslation';
 import { useT } from '../i18n/useLocale';
-import { aiVerifyCard, quickVerify, extractSystemReferences, verifyFields, applyAutoFix } from '../utils/aiVerify';
-import type { VerifyIssue, VerifyResult, FieldIssue } from '../utils/aiVerify';
-import { ShieldCheck, AlertTriangle, AlertCircle, Info, Loader2, Zap, Eye, ChevronDown, ChevronUp, Wrench, FileWarning, Code2, Braces, Hash, Type, ArrowLeftRight, CheckCircle2 } from 'lucide-react';
+import { aiVerifyCard, quickVerify, extractSystemReferences, verifyFields, applyAutoFix, aiFixIssues, aiFixSingleIssue } from '../utils/aiVerify';
+import type { VerifyIssue, VerifyResult, FieldIssue, AIFixReport } from '../utils/aiVerify';
+import { ShieldCheck, AlertTriangle, AlertCircle, Info, Loader2, Zap, Eye, ChevronDown, ChevronUp, Wrench, FileWarning, Code2, Braces, Hash, Type, ArrowLeftRight, CheckCircle2, Pencil, Save, Bot, XCircle } from 'lucide-react';
 
 const SEVERITY_CONFIG = {
   error: { color: 'var(--accent-danger)', bg: 'rgba(255,82,82,0.06)', icon: AlertCircle, label: 'Error' },
@@ -47,6 +47,11 @@ export default function VerifyPanel() {
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
   const [severityFilter, setSeverityFilter] = useState<string | null>(null);
   const [refStats, setRefStats] = useState<{ total: number; types: Record<string, number> } | null>(null);
+  const [isAIFixing, setIsAIFixing] = useState(false);
+  const [aiFixProgress, setAiFixProgress] = useState('');
+  const [aiFixReport, setAiFixReport] = useState<AIFixReport | null>(null);
+  const [aiFixingIssueId, setAiFixingIssueId] = useState<string | null>(null);
+  const aiFixAbortRef = useRef<AbortController | null>(null);
 
   const doneCount = fields.filter(f => f.status === 'done').length;
 
@@ -155,6 +160,108 @@ export default function VerifyPanel() {
     addToast('success', t.verifyAutoFixed.replace('{count}', String(fixCount)));
   }, [fieldIssues, updateField, addLog, addToast, isVi]);
 
+  // ─── AI Fix all issues (multi-round) ───
+  const handleAIFix = useCallback(async () => {
+    aiFixAbortRef.current = new AbortController();
+    setIsAIFixing(true);
+    setAiFixReport(null);
+    setAiFixProgress(isVi ? 'Đang chuẩn bị...' : 'Preparing...');
+    try {
+      const allIssues: (FieldIssue | VerifyIssue)[] = [
+        ...fieldIssues,
+        ...(verifyResult?.issues || []),
+      ];
+      if (allIssues.length === 0) {
+        addToast('info', isVi ? 'Không có lỗi để sửa' : 'No issues to fix');
+        return;
+      }
+      addLog('active', isVi ? `🤖 AI đang sửa ${allIssues.length} lỗi (tối đa 3 round)...` : `🤖 AI fixing ${allIssues.length} issues (up to 3 rounds)...`);
+
+      const report = await aiFixIssues(
+        allIssues, fields, proxy, translationConfig.targetLanguage,
+        (done, total, label, round) => {
+          setAiFixProgress(isVi
+            ? `Round ${round || 1}/3 — Sửa ${done}/${total}: ${label}`
+            : `Round ${round || 1}/3 — Fixing ${done}/${total}: ${label}`);
+        },
+        aiFixAbortRef.current.signal,
+        translationConfig.mvuDictionary,
+        translationConfig.sourceLanguage
+      );
+
+      setAiFixReport(report);
+
+      // Apply accepted fixes
+      for (const { path, fixedText } of report.fixes) {
+        updateField(path, { translated: fixedText });
+      }
+
+      const summary = isVi
+        ? `🤖 AI: ${report.fixes.length} sửa, ${report.totalRejected} từ chối, ${report.roundsCompleted} rounds`
+        : `🤖 AI: ${report.fixes.length} fixed, ${report.totalRejected} rejected, ${report.roundsCompleted} rounds`;
+      addLog(report.fixes.length > 0 ? 'success' : 'warning', summary);
+      addToast(report.fixes.length > 0 ? 'success' : 'info', summary);
+
+      // Log rejected reasons
+      for (const entry of report.report.filter(r => r.status === 'rejected')) {
+        addLog('info', `❌ Rejected ${entry.label}: ${entry.reason}`);
+      }
+
+      // Re-verify
+      if (report.fixes.length > 0) {
+        const updatedFields = fields.map(f => {
+          const fix = report.fixes.find(fx => fx.path === f.path);
+          return fix ? { ...f, translated: fix.fixedText } : f;
+        });
+        const remaining = verifyFields(updatedFields, translationConfig.mvuDictionary, translationConfig.sourceLanguage);
+        setFieldIssues(remaining);
+        setVerifyResult(null);
+        setActiveTab('field');
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg !== 'The operation was aborted.' && msg !== 'AbortError') {
+        addToast('error', `AI Fix failed: ${msg}`);
+      }
+    } finally {
+      setIsAIFixing(false);
+      setAiFixProgress('');
+      aiFixAbortRef.current = null;
+    }
+  }, [fieldIssues, verifyResult, fields, proxy, translationConfig, updateField, addLog, addToast, isVi]);
+
+  // ─── Cancel AI Fix ───
+  const handleCancelAIFix = useCallback(() => {
+    aiFixAbortRef.current?.abort();
+    addLog('warning', isVi ? '🛑 AI Fix đã bị hủy' : '🛑 AI Fix cancelled');
+  }, [addLog, isVi]);
+
+  // ─── AI Fix single issue ───
+  const handleAISingleFix = useCallback(async (issue: FieldIssue) => {
+    setAiFixingIssueId(issue.id);
+    try {
+      const result = await aiFixSingleIssue(
+        issue, fields, proxy, translationConfig.targetLanguage,
+        undefined,
+        translationConfig.mvuDictionary,
+        translationConfig.sourceLanguage
+      );
+      if (result.success && result.fixedText) {
+        updateField(issue.fieldPath, { translated: result.fixedText });
+        setFieldIssues(prev => prev.filter(i => i.id !== issue.id));
+        addLog('success', `🤖 AI fixed: ${issue.location} — ${issue.category}`);
+        addToast('success', isVi ? `AI đã sửa ${issue.location}` : `AI fixed ${issue.location}`);
+      } else {
+        addLog('warning', `🤖 AI could not fix ${issue.location}: ${result.reason}`);
+        addToast('info', isVi ? `AI không sửa được: ${result.reason}` : `AI could not fix: ${result.reason}`);
+      }
+    } catch (err) {
+      addToast('error', `AI Fix failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setAiFixingIssueId(null);
+    }
+  }, [fields, proxy, translationConfig, updateField, addLog, addToast, isVi]);
+
   // ─── Derived data ───
   const categoryCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -222,9 +329,57 @@ export default function VerifyPanel() {
       {/* Auto-fix all button */}
       {autoFixableCount > 0 && (
         <button className="btn btn-primary" onClick={handleFixAll}
-          style={{ width: '100%', padding: '8px', fontSize: '0.78rem', marginBottom: '12px', background: 'var(--accent-success)', border: 'none' }}>
+          style={{ width: '100%', padding: '8px', fontSize: '0.78rem', marginBottom: '6px', background: 'var(--accent-success)', border: 'none' }}>
           <Wrench size={14} /> {t.verifyAutoFixAll.replace('{count}', String(autoFixableCount))}
         </button>
+      )}
+
+      {/* AI Fix button */}
+      {(fieldIssues.length > 0 || (verifyResult && verifyResult.issues.length > 0)) && (
+        <div style={{ display: 'flex', gap: '4px', marginBottom: '6px' }}>
+          <button className="btn btn-primary" onClick={handleAIFix} disabled={isAIFixing || isVerifying}
+            style={{ flex: 1, padding: '8px', fontSize: '0.78rem',
+              background: 'linear-gradient(135deg, var(--accent-primary), #a78bfa)', border: 'none', opacity: isAIFixing ? 0.8 : 1 }}>
+            {isAIFixing
+              ? <><Loader2 size={14} className="spin" /> {aiFixProgress}</>
+              : <><Bot size={14} /> {isVi ? '🤖 AI Sửa Tất Cả (3 Rounds)' : '🤖 AI Fix All (3 Rounds)'}</>}
+          </button>
+          {isAIFixing && (
+            <button className="btn btn-secondary" onClick={handleCancelAIFix}
+              style={{ padding: '8px 12px', fontSize: '0.78rem', color: 'var(--accent-danger)' }}>
+              <XCircle size={14} />
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* AI Fix Report */}
+      {aiFixReport && (
+        <div style={{ padding: '8px 10px', background: 'rgba(124,106,240,0.04)', border: '1px solid rgba(124,106,240,0.12)',
+          borderRadius: 'var(--radius-sm)', marginBottom: '10px', fontSize: '0.68rem', lineHeight: 1.5 }}>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ fontWeight: 600, color: 'var(--text-secondary)' }}>
+              {isVi ? `🤖 Kết quả AI Fix (${aiFixReport.roundsCompleted} rounds):` : `🤖 AI Fix Report (${aiFixReport.roundsCompleted} rounds):`}
+            </span>
+            <Badge color="var(--accent-success)" bg="rgba(76,175,80,0.1)" text={`✅ ${aiFixReport.totalAccepted}`} />
+            <Badge color="var(--accent-danger)" bg="rgba(255,82,82,0.1)" text={`❌ ${aiFixReport.totalRejected}`} />
+            {aiFixReport.totalErrors > 0 && <Badge color="var(--accent-warning)" bg="rgba(240,196,106,0.1)" text={`⚠️ ${aiFixReport.totalErrors}`} />}
+          </div>
+          {aiFixReport.totalRejected > 0 && (
+            <details style={{ marginTop: '4px' }}>
+              <summary style={{ cursor: 'pointer', color: 'var(--text-muted)', fontSize: '0.62rem' }}>
+                {isVi ? 'Xem lý do từ chối' : 'View rejection reasons'}
+              </summary>
+              <div style={{ marginTop: '3px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                {aiFixReport.report.filter(r => r.status === 'rejected').map((r, i) => (
+                  <div key={i} style={{ fontSize: '0.6rem', color: 'var(--text-muted)', padding: '2px 4px', background: 'rgba(255,82,82,0.03)', borderRadius: '4px' }}>
+                    <span style={{ color: 'var(--accent-danger)' }}>R{r.round}</span> {r.label}: {r.reason}
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
+        </div>
       )}
 
       {/* Category filter chips */}
@@ -244,7 +399,16 @@ export default function VerifyPanel() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', maxHeight: '450px', overflowY: 'auto' }}>
           {filteredFieldIssues.map(issue => <IssueRow key={issue.id} issue={issue} isVi={isVi}
             expanded={expandedIssues.has(issue.id)} onToggle={() => toggleIssue(issue.id)}
-            onAutoFix={issue.autoFixable ? () => handleAutoFix(issue) : undefined} />)}
+            onAutoFix={issue.autoFixable ? () => handleAutoFix(issue) : undefined}
+            onAIFix={() => handleAISingleFix(issue)}
+            isAIFixing={aiFixingIssueId === issue.id}
+            onManualEdit={(newValue) => {
+              updateField(issue.fieldPath, { translated: newValue });
+              setFieldIssues(prev => prev.filter(i => i.id !== issue.id));
+              addLog('success', `✏️ Manual fix: ${issue.location}`);
+              addToast('success', t.verifyFixed.replace('{location}', issue.location));
+            }}
+            fields={fields} />)}
         </div>
       )}
 
@@ -313,14 +477,34 @@ function FilterChip({ label, count, active, onClick }: { label: string; count: n
   );
 }
 
-function IssueRow({ issue, isVi, expanded, onToggle, onAutoFix }: {
+function IssueRow({ issue, isVi, expanded, onToggle, onAutoFix, onAIFix, isAIFixing, onManualEdit, fields }: {
   issue: VerifyIssue | FieldIssue; isVi: boolean; expanded: boolean; onToggle: () => void; onAutoFix?: () => void;
+  onAIFix?: () => void; isAIFixing?: boolean;
+  onManualEdit?: (newValue: string) => void; fields?: { path: string; translated: string }[];
 }) {
   const cfg = SEVERITY_CONFIG[issue.severity] || SEVERITY_CONFIG.info;
   const Icon = cfg.icon;
   const t = useT() as Record<string, string>;
   const category = 'category' in issue ? (issue as FieldIssue).category : null;
   const catLabel = category && CATEGORY_I18N_KEY[category] ? t[CATEGORY_I18N_KEY[category]] : null;
+  const fieldPath = 'fieldPath' in issue ? (issue as FieldIssue).fieldPath : null;
+
+  const [editing, setEditing] = useState(false);
+  const [editValue, setEditValue] = useState('');
+
+  const startEdit = () => {
+    if (!fieldPath || !fields) return;
+    const field = fields.find(f => f.path === fieldPath);
+    setEditValue(field?.translated || '');
+    setEditing(true);
+  };
+
+  const saveEdit = () => {
+    if (onManualEdit && editValue) {
+      onManualEdit(editValue);
+    }
+    setEditing(false);
+  };
 
   return (
     <div style={{ border: `1px solid ${cfg.color}20`, borderRadius: 'var(--radius-md)', background: cfg.bg, overflow: 'hidden' }}>
@@ -340,6 +524,18 @@ function IssueRow({ issue, isVi, expanded, onToggle, onAutoFix }: {
             <button onClick={(e) => { e.stopPropagation(); onAutoFix(); }}
               className="btn btn-ghost btn-xs" style={{ padding: '2px 6px', fontSize: '0.6rem', color: 'var(--accent-success)' }}>
               <Wrench size={11} /> Fix
+            </button>
+          )}
+          {fieldPath && onAIFix && (
+            <button onClick={(e) => { e.stopPropagation(); onAIFix(); }} disabled={isAIFixing}
+              className="btn btn-ghost btn-xs" style={{ padding: '2px 6px', fontSize: '0.6rem', color: 'var(--accent-primary)', opacity: isAIFixing ? 0.6 : 1 }}>
+              {isAIFixing ? <Loader2 size={11} className="spin" /> : <Bot size={11} />} AI
+            </button>
+          )}
+          {fieldPath && onManualEdit && (
+            <button onClick={(e) => { e.stopPropagation(); if (!editing) { if (!expanded) onToggle(); startEdit(); } }}
+              className="btn btn-ghost btn-xs" style={{ padding: '2px 6px', fontSize: '0.6rem', color: 'var(--accent-primary)' }}>
+              <Pencil size={11} />
             </button>
           )}
           {expanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
@@ -366,6 +562,24 @@ function IssueRow({ issue, isVi, expanded, onToggle, onAutoFix }: {
                 💡 {t.verifySuggestFix}
               </span>
               <div style={{ marginTop: '2px', color: 'var(--text-secondary)', lineHeight: 1.4 }}>{issue.suggestion}</div>
+            </div>
+          )}
+          {editing && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '4px' }}>
+              <textarea value={editValue} onChange={e => setEditValue(e.target.value)}
+                style={{ width: '100%', minHeight: '80px', padding: '6px 8px', fontSize: '0.68rem', fontFamily: 'monospace',
+                  background: 'var(--bg-primary)', color: 'var(--text-primary)', border: '1px solid var(--accent-primary)',
+                  borderRadius: 'var(--radius-sm)', resize: 'vertical', lineHeight: 1.4 }} />
+              <div style={{ display: 'flex', gap: '4px', justifyContent: 'flex-end' }}>
+                <button onClick={() => setEditing(false)} className="btn btn-ghost btn-xs"
+                  style={{ padding: '3px 8px', fontSize: '0.6rem' }}>
+                  {isVi ? 'Hủy' : 'Cancel'}
+                </button>
+                <button onClick={saveEdit} className="btn btn-xs"
+                  style={{ padding: '3px 8px', fontSize: '0.6rem', background: 'var(--accent-success)', color: '#fff', border: 'none', borderRadius: 'var(--radius-sm)' }}>
+                  <Save size={11} /> {isVi ? 'Lưu' : 'Save'}
+                </button>
+              </div>
             </div>
           )}
         </div>
