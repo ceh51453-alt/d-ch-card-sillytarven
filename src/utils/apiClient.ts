@@ -172,7 +172,8 @@ function buildTranslationMessages(
     regexInstruction = `\n\nREGEX SCRIPT INSTRUCTION: You are translating a Regular Expression pattern or Replacement String.
 - Translate any natural language text (e.g., Chinese) inside the string to ${targetLang}.
 - STRICTLY PRESERVE all regex syntax, slashes, flags, brackets, and capture groups (e.g., /.../g, $1, \\s, \\d).
-- DO NOT remove the outer slashes (like /pattern/s) if they exist.`;
+- DO NOT remove the outer slashes (like /pattern/s) if they exist.
+- IMPORTANT: Nếu có CSS hoặc thẻ HTML thay đổi font chữ (font-family) chứa tên font tiếng Trung (như SimSun, KaiTi, v.v.), BẮT BUỘC thay thế bằng font chữ tiếng Việt tương ứng (ví dụ: 'Be Vietnam Pro', 'Inter', 'Arial', sans-serif).`;
   }
 
   const systemPrompt = `${systemPromptPrefix ? systemPromptPrefix + '\n\n' : ''}${basePrompt}${safetyRule}${regexInstruction}${schemaInstructions}${glossaryInstructions}`;
