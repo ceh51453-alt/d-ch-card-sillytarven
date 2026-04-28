@@ -453,7 +453,27 @@ export function verifyFields(
       }
     }
 
-    // ─── 3. Bracket mismatch (for code-heavy fields) ───
+    // ─── 3. Regex Script Validity (findRegex) ───
+    if (field.label.includes('findRegex')) {
+      const origMatch = orig.match(/^\/([\s\S]+)\/([a-z]*)$/i);
+      if (origMatch) {
+        const transMatch = currentAutoFix.match(/^\/([\s\S]+)\/([a-z]*)$/i);
+        if (!transMatch) {
+          issues.push({
+            id: crypto.randomUUID(), fieldPath: field.path,
+            severity: 'error', category: 'regex_broken',
+            location: field.label,
+            description: `findRegex lost its boundary slashes. Original was a valid regex pattern (/.../).`,
+            original: orig,
+            current: currentAutoFix,
+            suggestion: 'Restore the surrounding / / slashes and flags to make it a valid regex pattern.',
+            autoFixable: false,
+          });
+        }
+      }
+    }
+
+    // ─── 4. Bracket mismatch (for code-heavy fields) ───
     if (field.group === 'tavern_helper' || field.group === 'lorebook' || field.group === 'regex') {
       const origBrackets = countBrackets(orig);
       const transBrackets = countBrackets(currentAutoFix);
@@ -497,13 +517,12 @@ export function verifyFields(
           if (iss.category === 'bracket_mismatch' && iss.fixPath === field.path) {
             iss.autoFixable = false;
             iss.fixPath = undefined;
-            iss.fixValue = undefined;
           }
         }
       }
     }
 
-    // ─── 4. SillyTavern macro damage ───
+    // ─── 5. SillyTavern macro damage ───
     const origMacros = extractMacros(orig);
     const transMacros = extractMacros(currentAutoFix);
     if (origMacros.length > 0) {
@@ -845,6 +864,13 @@ const CATEGORY_FIX_HINTS: Record<string, string> = {
 - If too short: the translation is likely truncated, restore the missing content
 - If too long: remove duplicate or excessive content
 - The output length should be proportional to the original`,
+
+  regex_broken: `REGEX FIX RULES:
+- The output MUST be a valid Javascript Regular Expression literal
+- It MUST start with a slash (/) and end with a slash (/), optionally followed by flags (e.g. /g, /i, /s)
+- If the ORIGINAL regex had boundary slashes, the TRANSLATION must have exactly matching boundary slashes
+- DO NOT wrap the regex in quotes or markdown (no backticks)
+- Only translate the natural language (e.g. Chinese) text inside the regex pattern`,
 };
 
 /* ═══ Validate fix quality — multi-layer checks ═══ */
@@ -911,7 +937,16 @@ function validateFixQuality(
     }
   }
 
-  // 3. Bracket integrity: fix should match original bracket counts
+  // 3. Regex preservation check: if original was a regex literal, the fix must also be a regex literal
+  if (field.label.includes('findRegex')) {
+    if (/^\/[\s\S]+\/[a-z]*$/i.test(original)) {
+      if (!/^\/[\s\S]+\/[a-z]*$/i.test(fixedText)) {
+        return { valid: false, reason: `Fix failed to restore regex boundary slashes (/.../).` };
+      }
+    }
+  }
+
+  // 4. Bracket integrity: fix should match original bracket counts
   const origBrackets = countBrackets(original);
   const fixBrackets = countBrackets(fixedText);
   for (const [pair, [origOpen, origClose]] of Object.entries(origBrackets)) {
@@ -924,7 +959,7 @@ function validateFixQuality(
     }
   }
 
-  // 4. Issue regression check — weighted severity score with tolerance
+  // 5. Issue regression check — weighted severity score with tolerance
   const mockBefore = { ...field, translated: currentTranslation };
   const mockAfter = { ...field, translated: fixedText };
   const issuesBefore = verifyFields([mockBefore], mvuDictionary, sourceLang);
