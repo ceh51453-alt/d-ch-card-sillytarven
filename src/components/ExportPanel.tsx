@@ -3,6 +3,7 @@ import { useTranslation } from '../hooks/useTranslation';
 import { useT } from '../i18n/useLocale';
 import { Download, AlertTriangle, Image as ImageIcon, KeyRound } from 'lucide-react';
 import { embedCharaToPNG } from '../utils/pngHandler';
+import { cardToWorldbook } from '../utils/worldbookParser';
 import type { ExportKeyMode } from '../types/card';
 
 const KEY_MODE_OPTIONS: { value: ExportKeyMode; labelEn: string; labelVi: string; desc: string }[] = [
@@ -12,9 +13,10 @@ const KEY_MODE_OPTIONS: { value: ExportKeyMode; labelEn: string; labelVi: string
 ];
 
 export default function ExportPanel() {
-  const { card, fields, cardFileName, originalImage, translationConfig, setTranslationConfig, phase, saveTranslationCache, locale } = useStore();
+  const { card, fields, cardFileName, originalImage, translationConfig, setTranslationConfig, phase, saveTranslationCache, locale, contentType, originalWorldbook } = useStore();
   const { getExportCard } = useTranslation();
   const t = useT();
+  const isWorldbook = contentType === 'worldbook';
 
   if (!card || fields.length === 0) return null;
 
@@ -31,7 +33,15 @@ export default function ExportPanel() {
     const exportCard = getExportCard();
     if (!exportCard) return;
 
-    const json = JSON.stringify(exportCard, null, 2);
+    // If worldbook mode, convert back to worldbook format
+    let exportData: unknown;
+    if (isWorldbook && originalWorldbook) {
+      exportData = cardToWorldbook(exportCard, originalWorldbook);
+    } else {
+      exportData = exportCard;
+    }
+
+    const json = JSON.stringify(exportData, null, 2);
     const blob = new Blob([json], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
 
@@ -179,7 +189,7 @@ export default function ExportPanel() {
           {t.downloadJson}
         </button>
 
-        {originalImage && (
+        {originalImage && !isWorldbook && (
           <button
             className="btn btn-secondary"
             onClick={handleExportPng}

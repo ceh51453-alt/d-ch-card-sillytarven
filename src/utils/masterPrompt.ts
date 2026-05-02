@@ -18,6 +18,7 @@ export type TranslationFieldType =
   | 'lorebook'    // Lorebook entries: prose + code + EJS mixed
   | 'ejs_code'    // TavernHelper scripts: heavy EJS + JS code
   | 'json_state'  // MVU/Zod JSON state objects
+  | 'json_patch'  // JSON Patch (RFC 6902) operations
   | 'mixed';      // System prompts, depth prompts: may contain any combination
 
 /* ─── Build Options ─── */
@@ -256,6 +257,31 @@ RULE C2 — JSON Key Translation Integrity:
     { "Trạng thái nhân vật": "Khỏe mạnh", "Tinh thần lực": 100 }`;
 }
 
+/** JSON Patch (RFC 6902) translation rules */
+function buildJsonPatchRules(): string {
+  return `
+RULE JP1 — JSON Patch Structure Integrity:
+  You are translating an array of JSON Patch operations (RFC 6902).
+  A patch looks like: {"op": "replace", "path": "/好感度", "value": 10}
+  
+  RULES:
+    - ONLY translate the field names inside the "path" (e.g. "/好感度" -> "/Hảo_Cảm").
+    - If the "op" is "replace", "add", or "test", and "value" is a STRING, translate the string content.
+    - NEVER translate or modify the "op" field (must remain "add", "remove", "replace", etc.).
+    - Keep array brackets and JSON syntax EXACTLY as they are.
+  
+  Example (Before):
+    [
+      {"op": "replace", "path": "/好感度", "value": "亲密"},
+      {"op": "add", "path": "/inventory/0/名称", "value": "铁剑"}
+    ]
+  Example (After - CORRECT):
+    [
+      {"op": "replace", "path": "/Hảo_Cảm", "value": "Thân mật"},
+      {"op": "add", "path": "/inventory/0/Tên", "value": "Kiếm sắt"}
+    ]`;
+}
+
 /** EJS/TavernHelper rules: code protection, variable sync */
 function buildEjsRules(): string {
   return `
@@ -376,6 +402,7 @@ function buildFailureModes(fieldType: TranslationFieldType): string {
     lorebook: ['json_key_spaces', 'ejs_desync', 'macro_translation'],
     ejs_code: ['js_keyword_translation', 'ejs_desync', 'macro_translation', 'html_attr_translation'],
     json_state: ['json_key_spaces', 'ejs_desync', 'markdown_fences'],
+    json_patch: ['json_key_spaces', 'ejs_desync', 'markdown_fences'],
     mixed: ['macro_translation', 'ejs_desync', 'truncation', 'js_keyword_translation', 'json_key_spaces'],
   };
 
@@ -523,6 +550,10 @@ export function buildMasterSystemPrompt(options: MasterPromptOptions): string {
       layers.push(buildLorebookRules()); // JSON key rules
       layers.push(buildEjsRules());     // Zod sync
       break;
+    case 'json_patch':
+      layers.push(buildJsonPatchRules());
+      layers.push(buildLorebookRules());
+      break;
     case 'mixed':
     default:
       // Include all relevant rules for mixed/unknown content
@@ -643,6 +674,7 @@ export function fieldGroupToFieldType(
     case 'lorebook':
       // Sub-classify based on entry type
       if (entryType === 'initvar') return 'json_state';
+      if (entryType === 'json_patch') return 'json_patch';
       if (entryType === 'mvu_logic' || entryType === 'controller') return 'ejs_code';
       return 'lorebook'; // Default: mixed lorebook content
 

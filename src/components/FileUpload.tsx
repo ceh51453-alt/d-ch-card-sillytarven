@@ -4,6 +4,7 @@ import { useCardParser } from '../hooks/useCardParser';
 import { useStore } from '../store';
 import { useT } from '../i18n/useLocale';
 import { getCardSummary } from '../utils/cardFields';
+import { getWorldbookSummary } from '../utils/worldbookParser';
 import {
   Upload,
   FileJson,
@@ -13,11 +14,13 @@ import {
   Layers,
   Puzzle,
   X,
+  Globe,
+  Loader,
 } from 'lucide-react';
 
 export default function FileUpload() {
-  const { parseCardFile, updateCardFromOriginal, clearCard } = useCardParser();
-  const { card, cardFileName, loadTranslationCache, addLog } = useStore();
+  const { parseCardFile, updateCardFromOriginal, clearCard, isParsing, parseProgress } = useCardParser();
+  const { card, cardFileName, contentType, originalWorldbook, loadTranslationCache, addLog } = useStore();
   const t = useT();
 
   const onDrop = useCallback(
@@ -52,6 +55,7 @@ export default function FileUpload() {
     onDrop,
     accept: { 'application/json': ['.json'], 'image/png': ['.png'] },
     multiple: false,
+    disabled: isParsing,
   });
 
   const { getRootProps: getUpdateProps, getInputProps: getUpdateInputProps } = useDropzone({
@@ -62,6 +66,8 @@ export default function FileUpload() {
   });
 
   const summary = card ? getCardSummary(card) : null;
+  const wbSummary = (contentType === 'worldbook' && originalWorldbook) ? getWorldbookSummary(originalWorldbook) : null;
+  const isWorldbook = contentType === 'worldbook';
 
   return (
     <div className="section">
@@ -85,6 +91,44 @@ export default function FileUpload() {
       </div>
       <div className="section-body">
         {!card ? (
+          isParsing ? (
+            /* Loading state while Worker parses large file */
+            <div
+              className="dropzone"
+              style={{ pointerEvents: 'none', opacity: 0.9 }}
+            >
+              <Loader
+                size={32}
+                style={{
+                  color: 'var(--accent-primary)',
+                  marginBottom: '8px',
+                  animation: 'spin 1s linear infinite',
+                }}
+              />
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '6px' }}>
+                {parseProgress?.stage === 'reading' && 'Reading file...'}
+                {parseProgress?.stage === 'parsing' && 'Parsing JSON...'}
+                {parseProgress?.stage === 'extracting' && 'Extracting data...'}
+                {parseProgress?.stage === 'fields' && 'Building field list...'}
+                {parseProgress?.stage === 'done' && 'Almost done...'}
+                {!parseProgress?.stage && 'Processing...'}
+              </p>
+              <div style={{
+                width: '120px', height: '4px',
+                background: 'var(--bg-primary)',
+                borderRadius: '2px',
+                overflow: 'hidden',
+              }}>
+                <div style={{
+                  width: `${parseProgress?.percent || 0}%`,
+                  height: '100%',
+                  background: 'var(--accent-primary)',
+                  borderRadius: '2px',
+                  transition: 'width 0.3s ease',
+                }} />
+              </div>
+            </div>
+          ) : (
           <div
             {...getRootProps()}
             className={`dropzone ${isDragActive ? 'dropzone-active' : ''} ${isDragAccept ? 'dropzone-accepted' : ''}`}
@@ -104,6 +148,7 @@ export default function FileUpload() {
               {t.orClickBrowse}
             </p>
           </div>
+          )
         ) : (
           <div className="fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             {/* Card Name */}
@@ -148,27 +193,41 @@ export default function FileUpload() {
                   {summary?.name}
                 </div>
                 <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-                  {cardFileName} · {t.specVersion}: {summary?.spec}
+               {cardFileName} · {isWorldbook ? t.worldbookBadge : `${t.specVersion}: ${summary?.spec}`}
                 </div>
               </div>
             </div>
 
-            {/* Stats */}
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: '1fr 1fr',
-                gap: '6px',
-              }}
-            >
-              <StatItem icon={<BookOpen size={13} />} label={t.lorebookEntries} value={`${summary?.lorebookCount || 0}`} />
-              <StatItem icon={<MessageSquare size={13} />} label={t.altGreetings} value={`${summary?.altGreetingsCount || 0}`} />
-              <StatItem icon={<Code size={13} />} label={t.regexScripts} value={`${summary?.regexCount || 0}`} />
-              <StatItem icon={<Layers size={13} />} label={t.depthPrompt} value={summary?.hasDepthPrompt ? '✓' : '—'} />
-              {(summary?.tavernHelperCount ?? 0) > 0 && (
-                <StatItem icon={<Puzzle size={13} />} label="TavernHelper" value={`${summary?.tavernHelperCount}`} />
-              )}
-            </div>
+            {isWorldbook ? (
+              /* Worldbook-specific stats */
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr',
+                  gap: '6px',
+                }}
+              >
+                <StatItem icon={<Globe size={13} />} label={t.worldbookEntries} value={`${wbSummary?.entryCount || 0}`} />
+                <StatItem icon={<BookOpen size={13} />} label={t.worldbookWithContent} value={`${wbSummary?.withContent || 0}`} />
+              </div>
+            ) : (
+              /* Card-specific stats */
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr',
+                  gap: '6px',
+                }}
+              >
+                <StatItem icon={<BookOpen size={13} />} label={t.lorebookEntries} value={`${summary?.lorebookCount || 0}`} />
+                <StatItem icon={<MessageSquare size={13} />} label={t.altGreetings} value={`${summary?.altGreetingsCount || 0}`} />
+                <StatItem icon={<Code size={13} />} label={t.regexScripts} value={`${summary?.regexCount || 0}`} />
+                <StatItem icon={<Layers size={13} />} label={t.depthPrompt} value={summary?.hasDepthPrompt ? '✓' : '—'} />
+                {(summary?.tavernHelperCount ?? 0) > 0 && (
+                  <StatItem icon={<Puzzle size={13} />} label="TavernHelper" value={`${summary?.tavernHelperCount}`} />
+                )}
+              </div>
+            )}
 
             {/* Replace / Update Actions */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>

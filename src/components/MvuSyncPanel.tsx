@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { useStore } from '../store';
 import { useT } from '../i18n/useLocale';
 import { extractPotentialMvuKeys, aiTranslateMvuKeys, extractZodDescriptions, type MvuKeyInfo } from '../utils/mvuSync';
-import { isMvuCard, getMvuCardSummary } from '../utils/mvuDetector';
+import { isMvuCard, getMvuZodSummary } from '../utils/mvuDetector';
 import { Settings, Plus, Trash2, Wand2, Info, Loader2, Bot, Search, Download, Upload, BarChart3, Zap, AlertTriangle } from 'lucide-react';
 
 export default function MvuSyncPanel() {
@@ -21,7 +21,7 @@ export default function MvuSyncPanel() {
   if (!card) return null;
 
   // ─── MVU Card Detection Summary ───
-  const mvuSummary = useMemo(() => getMvuCardSummary(card), [card]);
+  const mvuSummary = useMemo(() => getMvuZodSummary(card), [card]);
 
   const toggleSync = () => setTranslationConfig({ enableMvuSync: !enableMvuSync });
 
@@ -299,8 +299,8 @@ export default function MvuSyncPanel() {
               <Zap size={14} color="#818cf8" style={{ flexShrink: 0 }} />
               <span>
                 {isVi 
-                  ? `Phát hiện: ${mvuSummary.variableCount} biến, ${mvuSummary.initvarCount} initvar, Zod: ${mvuSummary.hasZodSchema ? '✓' : '✗'}, Conf: ${(mvuSummary.confidence * 100).toFixed(0)}%`
-                  : `Detected: ${mvuSummary.variableCount} vars, ${mvuSummary.initvarCount} initvar, Zod: ${mvuSummary.hasZodSchema ? '✓' : '✗'}, Conf: ${(mvuSummary.confidence * 100).toFixed(0)}%`}
+                  ? `Phát hiện: ${mvuSummary.variableCount} biến, ${mvuSummary.initvarCount} initvar, Patch: ${mvuSummary.jsonPatchEntries || 0}, Zod: ${mvuSummary.hasZodSchema ? '✓' : '✗'}, Conf: ${(mvuSummary.confidence * 100).toFixed(0)}%`
+                  : `Detected: ${mvuSummary.variableCount} vars, ${mvuSummary.initvarCount} initvar, Patch: ${mvuSummary.jsonPatchEntries || 0}, Zod: ${mvuSummary.hasZodSchema ? '✓' : '✗'}, Conf: ${(mvuSummary.confidence * 100).toFixed(0)}%`}
               </span>
             </div>
           )}

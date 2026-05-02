@@ -925,7 +925,7 @@ export function useTranslation() {
     store.addLog('info', `Translation complete: ${doneCount} done, ${failCount} failed`);
     store.addToast('success', `Translation complete! ${doneCount}/${fields.length} fields translated`);
 
-    // ═══ Post-Translation MVU Sync Verification Report ═══
+    // ═══ Post-Translation MVU-ZOD Sync Verification Report ═══
     if (store.translationConfig.enableMvuSync && Object.keys(store.translationConfig.mvuDictionary).length > 0) {
       const syncReport = generateSyncReport(
         store.fields.filter(f => f.status === 'done').map(f => ({
@@ -937,17 +937,18 @@ export function useTranslation() {
         })),
         store.translationConfig.mvuDictionary
       );
-      store.addLog('info', `📊 MVU Sync Report: ${syncReport.replaced}/${syncReport.totalVars} variables correctly replaced`);
-      if (syncReport.unreplaced > 0) {
-        store.addLog('warning', `⚠️ ${syncReport.unreplaced} variables not replaced in translated output`);
-        for (const detail of syncReport.details.slice(0, 10)) {
-          store.addLog('warning', detail);
+      
+      const missingVars = syncReport.unreplaced;
+      if (missingVars === 0) {
+        store.addLog('success', `✅ MVU Sync: All ${syncReport.totalVars} variables correctly replaced!`);
+      } else {
+        store.addLog('warning', `⚠️ MVU Sync: ${missingVars} variables were NOT replaced! Check Verify panel for details.`);
+        for (const detail of syncReport.details) {
+           store.addLog('error', detail);
         }
       }
-      if (syncReport.warnings.length > 0) {
-        for (const warn of syncReport.warnings.slice(0, 5)) {
-          store.addLog('warning', warn);
-        }
+      for (const warning of syncReport.warnings) {
+         store.addLog('warning', warning);
       }
     }
   }, [prepareFields, store]);

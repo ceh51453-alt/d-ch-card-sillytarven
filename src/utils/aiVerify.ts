@@ -792,7 +792,7 @@ async function callLLM(config: ProxySettings, systemPrompt: string, userPrompt: 
     body = { model: config.model, max_tokens: config.maxTokens, system: systemPrompt, messages: [{ role: 'user', content: userPrompt }], temperature: 0.1 };
   } else if (config.provider === 'google') {
     apiUrl = `${url}/models/${config.model}:generateContent?key=${config.apiKey}`;
-    body = { system_instruction: { parts: [{ text: systemPrompt }] }, contents: [{ role: 'user', parts: [{ text: userPrompt }] }], generationConfig: { maxOutputTokens: config.maxTokens, temperature: 0.1 } };
+    body = { system_instruction: { parts: [{ text: systemPrompt }] }, contents: [{ role: 'user', parts: [{ text: userPrompt }] }], generationConfig: { maxOutputTokens: config.maxTokens, temperature: 0.1 }, safetySettings: [{ category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' }, { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' }, { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' }, { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' }] };
   } else {
     apiUrl = url + '/chat/completions';
     if (config.apiKey) headers['Authorization'] = `Bearer ${config.apiKey}`;
@@ -1478,6 +1478,12 @@ ${sections.join('\n\n---\n\n')}`;
         system_instruction: { parts: [{ text: systemPrompt }] },
         contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
         generationConfig: { maxOutputTokens: config.maxTokens, temperature: 0.2 },
+        safetySettings: [
+          { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+          { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+          { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+          { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
+        ],
       };
     } else {
       apiUrl = url + '/chat/completions';

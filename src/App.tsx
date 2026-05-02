@@ -1,16 +1,18 @@
-import { useEffect } from 'react';
+import { useEffect, lazy, Suspense } from 'react';
 import ProxyConfig from './components/ProxyConfig';
 import FileUpload from './components/FileUpload';
 import TranslateConfig from './components/TranslateConfig';
 import CardPreview from './components/CardPreview';
 import TranslationProgress from './components/TranslationProgress';
-import FieldEditor from './components/FieldEditor';
-import ExportPanel from './components/ExportPanel';
-import VerifyPanel from './components/VerifyPanel';
 import { useStore } from './store';
 import { useT } from './i18n/useLocale';
 import type { Locale } from './i18n/translations';
 import { Languages, X, Globe } from 'lucide-react';
+
+// Lazy-load heavy components — only loaded after card is imported
+const FieldEditor = lazy(() => import('./components/FieldEditor'));
+const ExportPanel = lazy(() => import('./components/ExportPanel'));
+const VerifyPanel = lazy(() => import('./components/VerifyPanel'));
 
 export default function App() {
   const { toasts, removeToast, card, locale, setLocale, loadStateFromIDB } = useStore();
@@ -121,9 +123,15 @@ export default function App() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', maxWidth: '1200px' }}>
             <CardPreview />
             <TranslationProgress />
-            <FieldEditor />
-            <VerifyPanel />
-            <ExportPanel />
+            <Suspense fallback={<LazyFallback />}>
+              <FieldEditor />
+            </Suspense>
+            <Suspense fallback={<LazyFallback />}>
+              <VerifyPanel />
+            </Suspense>
+            <Suspense fallback={<LazyFallback />}>
+              <ExportPanel />
+            </Suspense>
           </div>
         )}
 
@@ -194,6 +202,33 @@ function Step({ num, text }: { num: number; text: string }) {
         {num}
       </div>
       <span>{text}</span>
+    </div>
+  );
+}
+
+/** Skeleton placeholder shown while lazy components load */
+function LazyFallback() {
+  return (
+    <div
+      className="card"
+      style={{
+        padding: '20px',
+        minHeight: '80px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+    >
+      <div
+        style={{
+          width: '20px',
+          height: '20px',
+          border: '2px solid var(--border-subtle)',
+          borderTopColor: 'var(--accent-primary)',
+          borderRadius: '50%',
+          animation: 'spin 0.8s linear infinite',
+        }}
+      />
     </div>
   );
 }

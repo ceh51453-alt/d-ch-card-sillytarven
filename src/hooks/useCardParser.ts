@@ -1,11 +1,24 @@
-import { useCallback } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { useStore } from '../store';
-import { validateCard, getCardSummary } from '../utils/cardFields';
+import { validateCard, getCardSummary, extractTranslatableFields } from '../utils/cardFields';
 import { extractCharaFromPNG } from '../utils/pngHandler';
-import type { CharacterCard } from '../types/card';
+import { isWorldbookFormat, worldbookToCard, getWorldbookSummary } from '../utils/worldbookParser';
+import type { CharacterCard, FieldGroup, FieldGroupConfig } from '../types/card';
+import CardParserWorker from '../workers/cardParser.worker.ts?worker';
 
 export function useCardParser() {
   const { setCard, addToast, clearCard } = useStore();
+  const [isParsing, setIsParsing] = useState(false);
+  const [parseProgress, setParseProgress] = useState<{ stage: string; percent: number } | null>(null);
+  const workerRef = useRef<Worker | null>(null);
+
+  // Get or create the shared worker instance
+  const getWorker = useCallback(() => {
+    if (!workerRef.current) {
+      workerRef.current = new CardParserWorker();
+    }
+    return workerRef.current;
+  }, []);
 
   const parseCardFile = useCallback(
     async (file: File) => {
@@ -16,6 +29,94 @@ export function useCardParser() {
         addToast('error', 'Only .json and .png files are accepted');
         return null;
       }
+
+      // For small files (<2MB), parse on main thread (worker overhead not worth it)
+      const WORKER_THRESHOLD = 2 * 1024 * 1024; // 2MB
+
+      if (file.size < WORKER_THRESHOLD) {
+        return parseOnMainThread(file);
+      }
+
+      // Large files → use Web Worker
+      setIsParsing(true);
+      setParseProgress({ stage: 'reading', percent: 0 });
+
+      try {
+        const buffer = await file.arrayBuffer();
+        const worker = getWorker();
+
+        // Get enabled groups for field extraction in worker
+        const enabledGroups = useStore.getState().translationConfig.fieldGroups
+          .filter((g: FieldGroupConfig) => g.enabled)
+          .map((g: FieldGroupConfig) => g.id) as FieldGroup[];
+
+        const result = await new Promise<any>((resolve, reject) => {
+          const requestId = crypto.randomUUID();
+
+          const handler = (e: MessageEvent) => {
+            const data = e.data;
+            if (data.id !== requestId) return;
+
+            if (data.type === 'progress') {
+              setParseProgress(data.progress);
+              return;
+            }
+
+            worker.removeEventListener('message', handler);
+
+            if (data.type === 'error') {
+              reject(new Error(data.error));
+              return;
+            }
+
+            resolve(data);
+          };
+
+          worker.addEventListener('message', handler);
+
+          // Transfer ArrayBuffer to worker (zero-copy)
+          worker.postMessage(
+            { type: 'parse', id: requestId, buffer, fileName: file.name, enabledGroups },
+            [buffer]
+          );
+        });
+
+        // Convert Blob to Blob URL on main thread
+        let blobUrl: string | null = null;
+        if (result.pngBlob) {
+          blobUrl = URL.createObjectURL(result.pngBlob);
+        }
+
+        // Store the original ArrayBuffer reference for PNG export
+        if (isPng && result.pngBlob) {
+          useStore.getState()._pngArrayBuffer = await result.pngBlob.arrayBuffer();
+        }
+
+        setCard(result.card, file.name, blobUrl, result.contentType, result.originalWorldbook);
+
+        // Set pre-extracted fields if available
+        if (result.fields && result.fields.length > 0) {
+          useStore.getState().setFields(result.fields);
+        }
+
+        addToast('success', result.toastMessage || `Loaded: ${file.name}`);
+        return result.card;
+
+      } catch (err) {
+        addToast('error', `Failed to parse: ${err instanceof Error ? err.message : String(err)}`);
+        return null;
+      } finally {
+        setIsParsing(false);
+        setParseProgress(null);
+      }
+    },
+    [setCard, addToast, getWorker]
+  );
+
+  // Original main-thread parsing for small files
+  const parseOnMainThread = useCallback(
+    async (file: File) => {
+      const isPng = file.name.toLowerCase().endsWith('.png');
 
       try {
         let text = '';
@@ -37,13 +138,20 @@ export function useCardParser() {
         const validation = validateCard(json);
 
         if (!validation.valid) {
+          if (isWorldbookFormat(json)) {
+            const wbSummary = getWorldbookSummary(json);
+            const pseudoCard = worldbookToCard(json, file.name);
+            setCard(pseudoCard, file.name, dataUrl, 'worldbook', json);
+            addToast('success', `📖 Loaded Worldbook: ${wbSummary.name} (${wbSummary.entryCount} entries, ${wbSummary.withContent} with content)`);
+            return pseudoCard;
+          }
           addToast('error', validation.error || 'Invalid card format');
           return null;
         }
 
         const card = json as CharacterCard;
         const summary = getCardSummary(card);
-        setCard(card, file.name, dataUrl);
+        setCard(card, file.name, dataUrl, 'card', null);
         addToast('success', `Loaded: ${summary.name} (${summary.lorebookCount} lorebook entries)`);
         return card;
       } catch (err) {
@@ -141,5 +249,5 @@ export function useCardParser() {
     [setCard, addToast]
   );
 
-  return { parseCardFile, clearCard, updateCardFromOriginal };
+  return { parseCardFile, clearCard, updateCardFromOriginal, isParsing, parseProgress };
 }

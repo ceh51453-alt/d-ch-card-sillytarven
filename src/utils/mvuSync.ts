@@ -1,4 +1,5 @@
 import type { CharacterCard, ProxySettings } from '../types/card';
+import { extractPatchFieldNames } from './jsonPatchValidator';
 
 /**
  * Áp dụng Chiến Lược B: Đồng bộ hóa tên biến MVU/Zod trên toàn bộ thẻ.
@@ -240,7 +241,7 @@ function isNoiseKey(key: string): boolean {
 /** Rich key info for MVU Panel display */
 export interface MvuKeyInfo {
   key: string;
-  sources: ('yaml' | 'macro' | 'zod' | 'datavar')[];
+  sources: ('yaml' | 'macro' | 'zod' | 'datavar' | 'jsonpatch')[];
   description?: string; // from Zod .describe()
   occurrences: number;  // how many times it appears in card
 }
@@ -353,6 +354,9 @@ export function extractPotentialMvuKeys(card: CharacterCard): MvuKeyInfo[] {
       scanZodFields(entry.content);
       scanDataVar(entry.content);
     } else if (entry.content) {
+      // Scan for JSON Patch field names
+      const patchFields = extractPatchFieldNames(entry.content);
+      for (const pf of patchFields) trackKey(pf, 'jsonpatch');
       // Other entries: macros + data-var only (NO YAML — too noisy)
       scanMacros(entry.content);
       scanDataVar(entry.content);
@@ -570,6 +574,12 @@ ${varList}`;
           system_instruction: { parts: [{ text: systemPrompt }] },
           contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
           generationConfig: { maxOutputTokens: Math.min(proxy.maxTokens, 4096), temperature: 0.1 },
+          safetySettings: [
+            { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+            { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+            { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+            { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
+          ],
         };
       } else {
         apiUrl = url + '/chat/completions';
@@ -706,6 +716,12 @@ RULES:
         system_instruction: { parts: [{ text: systemPrompt }] },
         contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
         generationConfig: { maxOutputTokens: Math.min(proxy.maxTokens, 4096), temperature: 0.1 },
+        safetySettings: [
+          { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+          { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+          { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+          { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
+        ],
       };
     } else {
       apiUrl = url + '/chat/completions';

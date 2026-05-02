@@ -1,7 +1,8 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef, useCallback } from 'react';
 import { useStore } from '../store';
 import { useTranslation } from '../hooks/useTranslation';
 import { useT } from '../i18n/useLocale';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import type { FieldGroup } from '../types/card';
 import { RotateCcw, AlertTriangle, CheckCircle2, Clock, ArrowLeftRight, BarChart3, Ban } from 'lucide-react';
 
@@ -120,6 +121,254 @@ function DiffView({ original, translated }: { original: string; translated: stri
   );
 }
 
+/** Virtualized Table View — only renders visible rows */
+function VirtualTableView({
+  fields,
+  updateField,
+  retranslateField,
+  phase,
+  t,
+}: {
+  fields: any[];
+  updateField: (path: string, update: any) => void;
+  retranslateField: (path: string) => void;
+  phase: string;
+  t: Record<string, string>;
+}) {
+  const parentRef = useRef<HTMLDivElement>(null);
+
+  const virtualizer = useVirtualizer({
+    count: fields.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: useCallback(() => 80, []),
+    overscan: 8,
+  });
+
+  return (
+    <div
+      ref={parentRef}
+      style={{
+        maxHeight: '600px',
+        overflowY: 'auto',
+        overflowX: 'auto',
+      }}
+    >
+      {/* Sticky header */}
+      <table className="field-table" style={{ tableLayout: 'fixed', width: '100%' }}>
+        <thead>
+          <tr>
+            <th style={{ width: '180px' }}>{t.field}</th>
+            <th style={{ width: '40%' }}>{t.original}</th>
+            <th>{t.translated}</th>
+            <th style={{ width: '60px' }}>{t.actions}</th>
+          </tr>
+        </thead>
+      </table>
+
+      {/* Virtualized body */}
+      <div
+        style={{
+          height: `${virtualizer.getTotalSize()}px`,
+          width: '100%',
+          position: 'relative',
+        }}
+      >
+        {virtualizer.getVirtualItems().map((virtualRow) => {
+          const field = fields[virtualRow.index];
+          return (
+            <div
+              key={field.path}
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '100%',
+                transform: `translateY(${virtualRow.start}px)`,
+              }}
+            >
+              <table className="field-table" style={{ tableLayout: 'fixed', width: '100%' }}>
+                <tbody>
+                  <tr className={field.status === 'error' ? 'field-error' : ''}>
+                    {/* Field name */}
+                    <td style={{ width: '180px' }}>
+                      <div className="field-name">{field.label}</div>
+                      <div style={{ marginTop: '4px', display: 'flex', flexWrap: 'wrap', gap: '3px', alignItems: 'center' }}>
+                        {field.entryType === 'json_patch' && (
+                          <span style={{ fontSize: '0.55rem', padding: '1px 4px', background: 'rgba(236,72,153,0.1)', color: '#f472b6', borderRadius: '3px', fontWeight: 600 }}>PATCH</span>
+                        )}
+                        <StatusBadge status={field.status} t={t} />
+                        <CharRatio original={field.original} translated={field.translated} />
+                      </div>
+                      {field.error && (
+                        <div
+                          style={{
+                            fontSize: '0.65rem',
+                            color: 'var(--accent-danger)',
+                            marginTop: '4px',
+                            wordBreak: 'break-word',
+                          }}
+                        >
+                          {field.error}
+                        </div>
+                      )}
+                    </td>
+
+                    {/* Original */}
+                    <td style={{ width: '40%' }}>
+                      <div className="field-original">
+                        {field.original.length > 500
+                          ? field.original.slice(0, 500) + '...'
+                          : field.original}
+                      </div>
+                    </td>
+
+                    {/* Translated */}
+                    <td className="field-translated">
+                      <textarea
+                        value={field.translated}
+                        onChange={(e) => updateField(field.path, { translated: e.target.value })}
+                        placeholder={field.status === 'pending' ? 'Not translated yet' : ''}
+                        rows={Math.min(Math.max(field.original.split('\n').length, 2), 8)}
+                      />
+                    </td>
+
+                    {/* Actions */}
+                    <td style={{ width: '60px', display: 'flex', gap: '4px' }}>
+                      <button
+                        className="btn btn-ghost btn-xs tooltip"
+                        data-tooltip={t.ignored}
+                        onClick={() => updateField(field.path, { status: field.status === 'ignored' ? 'pending' : 'ignored' })}
+                        disabled={phase === 'translating'}
+                        style={{ padding: '4px' }}
+                      >
+                        {field.status === 'ignored' ? <RotateCcw size={13} /> : <Ban size={13} />}
+                      </button>
+                      <button
+                        className="btn btn-ghost btn-xs tooltip"
+                        data-tooltip={t.retranslate}
+                        onClick={() => retranslateField(field.path)}
+                        disabled={phase === 'translating'}
+                        style={{ padding: '4px' }}
+                      >
+                        <RotateCcw size={13} />
+                      </button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** Virtualized Diff View */
+function VirtualDiffView({
+  fields,
+  updateField,
+  retranslateField,
+  phase,
+  t,
+}: {
+  fields: any[];
+  updateField: (path: string, update: any) => void;
+  retranslateField: (path: string) => void;
+  phase: string;
+  t: Record<string, string>;
+}) {
+  const parentRef = useRef<HTMLDivElement>(null);
+
+  const virtualizer = useVirtualizer({
+    count: fields.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: useCallback(() => 160, []),
+    overscan: 5,
+  });
+
+  return (
+    <div
+      ref={parentRef}
+      style={{ padding: '12px 20px', maxHeight: '700px', overflowY: 'auto' }}
+    >
+      <div
+        style={{
+          height: `${virtualizer.getTotalSize()}px`,
+          width: '100%',
+          position: 'relative',
+        }}
+      >
+        {virtualizer.getVirtualItems().map((virtualRow) => {
+          const field = fields[virtualRow.index];
+          return (
+            <div
+              key={field.path}
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '100%',
+                transform: `translateY(${virtualRow.start}px)`,
+                paddingBottom: '16px',
+              }}
+            >
+              <div
+                style={{
+                  padding: '12px',
+                  background: 'var(--bg-primary)',
+                  borderRadius: 'var(--radius-md)',
+                  border: `1px solid ${field.status === 'error' ? 'var(--accent-danger)' : 'var(--border-subtle)'}`,
+                }}
+              >
+                <div style={{
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  marginBottom: '8px',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ fontWeight: 600, fontSize: '0.8rem' }}>{field.label}</span>
+                    {field.entryType === 'json_patch' && (
+                      <span style={{ fontSize: '0.55rem', padding: '1px 4px', background: 'rgba(236,72,153,0.1)', color: '#f472b6', borderRadius: '3px', fontWeight: 600 }}>PATCH</span>
+                    )}
+                    <StatusBadge status={field.status} t={t} />
+                    <CharRatio original={field.original} translated={field.translated} />
+                  </div>
+                  <div style={{ display: 'flex', gap: '4px' }}>
+                    <button
+                      className="btn btn-ghost btn-xs tooltip"
+                      data-tooltip={t.ignored}
+                      onClick={() => updateField(field.path, { status: field.status === 'ignored' ? 'pending' : 'ignored' })}
+                      disabled={phase === 'translating'}
+                      style={{ padding: '3px 6px' }}
+                    >
+                      {field.status === 'ignored' ? <RotateCcw size={12} /> : <Ban size={12} />}
+                    </button>
+                    <button
+                      className="btn btn-ghost btn-xs tooltip"
+                      data-tooltip={t.retranslate}
+                      onClick={() => retranslateField(field.path)}
+                      disabled={phase === 'translating'}
+                      style={{ padding: '3px 6px' }}
+                    >
+                      <RotateCcw size={12} />
+                    </button>
+                  </div>
+                </div>
+                <DiffView original={field.original} translated={field.translated} />
+                {field.error && (
+                  <div style={{ fontSize: '0.65rem', color: 'var(--accent-danger)', marginTop: '6px' }}>
+                    {field.error}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function FieldEditor() {
   const { fields, updateField, phase } = useStore();
   const { retranslateField } = useTranslation();
@@ -151,6 +400,9 @@ export default function FieldEditor() {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
           <h3 style={{ fontSize: '1rem', fontWeight: 600 }}>
             {t.fieldEditor}
+            <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 400, marginLeft: '8px' }}>
+              ({filteredFields.length} fields)
+            </span>
           </h3>
           {/* View mode toggle */}
           <div style={{
@@ -222,142 +474,26 @@ export default function FieldEditor() {
         </div>
       </div>
 
-      {/* Diff View */}
+      {/* Virtualized Diff View */}
       {viewMode === 'diff' && (
-        <div style={{ padding: '12px 20px', maxHeight: '700px', overflowY: 'auto' }}>
-          {filteredFields.map((field) => (
-            <div
-              key={field.path}
-              style={{
-                marginBottom: '16px',
-                padding: '12px',
-                background: 'var(--bg-primary)',
-                borderRadius: 'var(--radius-md)',
-                border: `1px solid ${field.status === 'error' ? 'var(--accent-danger)' : 'var(--border-subtle)'}`,
-              }}
-            >
-              <div style={{
-                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                marginBottom: '8px',
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span style={{ fontWeight: 600, fontSize: '0.8rem' }}>{field.label}</span>
-                  <StatusBadge status={field.status} t={t} />
-                  <CharRatio original={field.original} translated={field.translated} />
-                </div>
-                <div style={{ display: 'flex', gap: '4px' }}>
-                  <button
-                    className="btn btn-ghost btn-xs tooltip"
-                    data-tooltip={t.ignored}
-                    onClick={() => updateField(field.path, { status: field.status === 'ignored' ? 'pending' : 'ignored' })}
-                    disabled={phase === 'translating'}
-                    style={{ padding: '3px 6px' }}
-                  >
-                    {field.status === 'ignored' ? <RotateCcw size={12} /> : <Ban size={12} />}
-                  </button>
-                  <button
-                    className="btn btn-ghost btn-xs tooltip"
-                    data-tooltip={t.retranslate}
-                    onClick={() => retranslateField(field.path)}
-                    disabled={phase === 'translating'}
-                    style={{ padding: '3px 6px' }}
-                  >
-                    <RotateCcw size={12} />
-                  </button>
-                </div>
-              </div>
-              <DiffView original={field.original} translated={field.translated} />
-              {field.error && (
-                <div style={{ fontSize: '0.65rem', color: 'var(--accent-danger)', marginTop: '6px' }}>
-                  {field.error}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
+        <VirtualDiffView
+          fields={filteredFields}
+          updateField={updateField}
+          retranslateField={retranslateField}
+          phase={phase}
+          t={t}
+        />
       )}
 
-      {/* Table View */}
+      {/* Virtualized Table View */}
       {viewMode === 'table' && (
-        <div style={{ overflowX: 'auto', maxHeight: '600px', overflowY: 'auto' }}>
-          <table className="field-table">
-            <thead>
-              <tr>
-                <th style={{ width: '180px' }}>{t.field}</th>
-                <th style={{ width: '40%' }}>{t.original}</th>
-                <th>{t.translated}</th>
-                <th style={{ width: '60px' }}>{t.actions}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredFields.map((field) => (
-                <tr key={field.path} className={field.status === 'error' ? 'field-error' : ''}>
-                  {/* Field name */}
-                  <td>
-                    <div className="field-name">{field.label}</div>
-                    <div style={{ marginTop: '4px', display: 'flex', flexWrap: 'wrap', gap: '3px', alignItems: 'center' }}>
-                      <StatusBadge status={field.status} t={t} />
-                      <CharRatio original={field.original} translated={field.translated} />
-                    </div>
-                    {field.error && (
-                      <div
-                        style={{
-                          fontSize: '0.65rem',
-                          color: 'var(--accent-danger)',
-                          marginTop: '4px',
-                          wordBreak: 'break-word',
-                        }}
-                      >
-                        {field.error}
-                      </div>
-                    )}
-                  </td>
-
-                  {/* Original */}
-                  <td>
-                    <div className="field-original">
-                      {field.original.length > 500
-                        ? field.original.slice(0, 500) + '...'
-                        : field.original}
-                    </div>
-                  </td>
-
-                  {/* Translated */}
-                  <td className="field-translated">
-                    <textarea
-                      value={field.translated}
-                      onChange={(e) => updateField(field.path, { translated: e.target.value })}
-                      placeholder={field.status === 'pending' ? 'Not translated yet' : ''}
-                      rows={Math.min(Math.max(field.original.split('\n').length, 2), 8)}
-                    />
-                  </td>
-
-                  {/* Actions */}
-                  <td style={{ display: 'flex', gap: '4px' }}>
-                    <button
-                      className="btn btn-ghost btn-xs tooltip"
-                      data-tooltip={t.ignored}
-                      onClick={() => updateField(field.path, { status: field.status === 'ignored' ? 'pending' : 'ignored' })}
-                      disabled={phase === 'translating'}
-                      style={{ padding: '4px' }}
-                    >
-                      {field.status === 'ignored' ? <RotateCcw size={13} /> : <Ban size={13} />}
-                    </button>
-                    <button
-                      className="btn btn-ghost btn-xs tooltip"
-                      data-tooltip={t.retranslate}
-                      onClick={() => retranslateField(field.path)}
-                      disabled={phase === 'translating'}
-                      style={{ padding: '4px' }}
-                    >
-                      <RotateCcw size={13} />
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <VirtualTableView
+          fields={filteredFields}
+          updateField={updateField}
+          retranslateField={retranslateField}
+          phase={phase}
+          t={t}
+        />
       )}
     </div>
   );

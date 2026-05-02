@@ -13,6 +13,7 @@ import type {
   ExportKeyMode,
   GlossaryEntry,
 } from './types/card';
+import type { Worldbook } from './utils/worldbookParser';
 import { DEFAULT_FIELD_GROUPS } from './utils/cardFields';
 import { IDB } from './utils/idb';
 
@@ -33,13 +34,20 @@ const LS = {
 
 /* ─── Translation State ─── */
 type TranslationPhase = 'idle' | 'translating' | 'paused' | 'done' | 'cancelled';
+export type ContentType = 'card' | 'worldbook';
 
 interface AppState {
   // Card
   card: CharacterCard | null;
   cardFileName: string;
   originalImage: string | null;
-  setCard: (card: CharacterCard, fileName: string, originalImage?: string | null) => void;
+  contentType: ContentType;
+  originalWorldbook: Worldbook | null;
+  /** Raw PNG ArrayBuffer kept for export — avoids re-reading file */
+  _pngArrayBuffer: ArrayBuffer | null;
+  /** Blob URL for preview — must be revoked on clearCard */
+  _blobUrl: string | null;
+  setCard: (card: CharacterCard, fileName: string, originalImage?: string | null, contentType?: ContentType, originalWorldbook?: Worldbook | null) => void;
   clearCard: () => void;
   loadStateFromIDB: () => Promise<void>;
 
@@ -99,24 +107,48 @@ export const useStore = create<AppState>((set) => ({
   card: null,
   cardFileName: '',
   originalImage: null,
-  setCard: (card, fileName, originalImage = null) => {
+  contentType: 'card',
+  originalWorldbook: null,
+  _pngArrayBuffer: null,
+  _blobUrl: null,
+  setCard: (card, fileName, originalImage = null, contentType = 'card', originalWorldbook = null) => {
+    // Revoke previous Blob URL if any
+    const prev = useStore.getState()._blobUrl;
+    if (prev) URL.revokeObjectURL(prev);
+
     set((s) => ({
       card,
       cardFileName: fileName,
       originalImage,
+      _blobUrl: originalImage?.startsWith('blob:') ? originalImage : null,
+      contentType,
+      originalWorldbook,
       translationConfig: {
         ...s.translationConfig,
         mvuDictionary: {}, // Clear dictionary for new card
       },
     }));
     LS.set('st-translator-mvu-dict', {});
-    IDB.set('st-translator-card-data', { card, cardFileName: fileName, originalImage });
+    // Separate image from card data in IDB — avoids serializing huge base64/blob
+    IDB.set('st-translator-card-data', { card, cardFileName: fileName, contentType, originalWorldbook });
+    if (originalImage && !originalImage.startsWith('blob:')) {
+      // Only persist data URLs (Blob URLs are not persistable)
+      IDB.set('st-translator-image-data', originalImage);
+    }
   },
   clearCard: () => {
+    // Revoke Blob URL to free memory
+    const prev = useStore.getState()._blobUrl;
+    if (prev) URL.revokeObjectURL(prev);
+
     set((s) => ({
       card: null,
       cardFileName: '',
       originalImage: null,
+      _pngArrayBuffer: null,
+      _blobUrl: null,
+      contentType: 'card' as ContentType,
+      originalWorldbook: null,
       fields: [],
       phase: 'idle',
       logs: [],
@@ -128,11 +160,20 @@ export const useStore = create<AppState>((set) => ({
     LS.set('st-translator-mvu-dict', {});
     IDB.remove('st-translator-card-data');
     IDB.remove('st-translator-fields-data');
+    IDB.remove('st-translator-image-data');
   },
   loadStateFromIDB: async () => {
-    const cardData = await IDB.get<{card: CharacterCard, cardFileName: string, originalImage: string | null} | null>('st-translator-card-data', null);
+    const cardData = await IDB.get<{card: CharacterCard, cardFileName: string, contentType?: ContentType, originalWorldbook?: Worldbook | null} | null>('st-translator-card-data', null);
     if (cardData) {
-      set({ card: cardData.card, cardFileName: cardData.cardFileName, originalImage: cardData.originalImage });
+      // Load image separately
+      const savedImage = await IDB.get<string | null>('st-translator-image-data', null);
+      set({
+        card: cardData.card,
+        cardFileName: cardData.cardFileName,
+        originalImage: savedImage,
+        contentType: cardData.contentType || 'card',
+        originalWorldbook: cardData.originalWorldbook || null,
+      });
     }
     const fieldsData = await IDB.get<{fields: TranslationField[], phase: TranslationPhase} | null>('st-translator-fields-data', null);
     if (fieldsData) {
@@ -240,14 +281,17 @@ export const useStore = create<AppState>((set) => ({
   setFields: (fields) => {
     set({ fields });
     set((s) => {
-      IDB.set('st-translator-fields-data', { fields: s.fields, phase: s.phase });
+      // Debounce IDB write — fields can be set rapidly during extraction
+      IDB.setDebounced('st-translator-fields-data', { fields: s.fields, phase: s.phase }, 2000);
       return s;
     });
   },
   updateField: (path, update) =>
     set((s) => {
       const nextFields = s.fields.map((f) => (f.path === path ? { ...f, ...update } : f));
-      IDB.set('st-translator-fields-data', { fields: nextFields, phase: s.phase });
+      // Debounce: during translation loop, updateField fires per-field (every ~1-3s).
+      // Coalesce into single IDB write every 3s instead of each call.
+      IDB.setDebounced('st-translator-fields-data', { fields: nextFields, phase: s.phase }, 3000);
       return { fields: nextFields };
     }),
   phase: 'idle',

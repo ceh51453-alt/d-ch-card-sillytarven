@@ -6,7 +6,14 @@
  * 1. Original variable names still present (should have been translated)
  * 2. Expected translated names missing (AI forgot to include)
  * 3. Structural integrity (YAML format, macro syntax preserved)
+ * 4. [MVU-ZOD] Zod schema conformance for state objects
+ * 5. [MVU-ZOD] JSON Patch path validity
  */
+
+import type { z } from 'zod';
+import type { DetectedZodSchema, MvuZodValidationReport, JsonPatchOp } from '../types/mvuZodTypes';
+import { buildRuntimeSchema, validateStateAgainstSchema } from './zodSchemaEngine';
+import { extractJsonPatches, validatePatchAgainstSchema } from './jsonPatchValidator';
 
 export interface MvuValidationResult {
   valid: boolean;
@@ -18,6 +25,12 @@ export interface MvuValidationResult {
   warnings: string[];
   /** Summary message */
   summary: string;
+  /** [MVU-ZOD] Schema validation errors */
+  zodErrors?: { field: string; expected: string; received: string }[];
+  /** [MVU-ZOD] JSON Patch validation errors */
+  patchErrors?: { path: string; reason: string }[];
+  /** [MVU-ZOD] Whether schema validation passed */
+  schemaValid?: boolean;
 }
 
 /**
@@ -191,4 +204,186 @@ export function generateSyncReport(
     warnings,
     details,
   };
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   MVU-ZOD Enhanced Validation
+   ═══════════════════════════════════════════════════════════════ */
+
+/**
+ * Validate translated text containing JSON state against a compiled Zod schema.
+ * Extracts JSON objects from the text, then validates each against the schema.
+ */
+export function validateWithZodSchema(
+  translated: string,
+  schemas: DetectedZodSchema[]
+): { valid: boolean; errors: { field: string; expected: string; received: string }[] } {
+  if (!translated || schemas.length === 0) {
+    return { valid: true, errors: [] };
+  }
+
+  const allErrors: { field: string; expected: string; received: string }[] = [];
+
+  // Try to extract JSON objects from the translated text
+  const jsonObjects = extractJsonObjects(translated);
+
+  for (const obj of jsonObjects) {
+    for (const schema of schemas) {
+      if (!schema.compiled || schema.fields.length === 0) continue;
+      try {
+        const runtimeSchema = buildRuntimeSchema(schema.fields);
+        const result = validateStateAgainstSchema(obj, runtimeSchema);
+        if (!result.valid) {
+          allErrors.push(...result.errors);
+        }
+      } catch {
+        // Schema compilation failed — skip
+      }
+    }
+  }
+
+  return { valid: allErrors.length === 0, errors: allErrors };
+}
+
+/**
+ * Validate JSON Patch operations found in translated text.
+ */
+export function validateJsonPatchIntegrity(
+  translated: string,
+  schemas: DetectedZodSchema[]
+): { valid: boolean; errors: { path: string; reason: string }[] } {
+  if (!translated || schemas.length === 0) {
+    return { valid: true, errors: [] };
+  }
+
+  const patchArrays = extractJsonPatches(translated);
+  if (patchArrays.length === 0) return { valid: true, errors: [] };
+
+  const allErrors: { path: string; reason: string }[] = [];
+
+  for (const patches of patchArrays) {
+    for (const schema of schemas) {
+      if (!schema.compiled || schema.fields.length === 0) continue;
+      try {
+        const runtimeSchema = buildRuntimeSchema(schema.fields);
+        const result = validatePatchAgainstSchema(patches, runtimeSchema);
+        for (const invalid of result.invalidOps) {
+          allErrors.push({ path: invalid.op.path, reason: invalid.reason });
+        }
+      } catch { /* skip */ }
+    }
+  }
+
+  return { valid: allErrors.length === 0, errors: allErrors };
+}
+
+/**
+ * Build a comprehensive MVU-ZOD validation report for a translated card.
+ */
+export function buildMvuZodReport(
+  fields: { original: string; translated: string; label: string; group: string; entryType?: string }[],
+  dictionary: Record<string, string>,
+  schemas: DetectedZodSchema[]
+): MvuZodValidationReport {
+  // Legacy variable sync report
+  const syncReport = generateSyncReport(fields, dictionary);
+
+  const report: MvuZodValidationReport = {
+    valid: syncReport.unreplaced === 0,
+    variableSync: {
+      replaced: syncReport.replaced,
+      unreplaced: syncReport.unreplaced,
+      warnings: syncReport.warnings,
+    },
+    summary: '',
+  };
+
+  // Zod schema validation
+  if (schemas.length > 0 && schemas.some(s => s.compiled)) {
+    let schemasChecked = 0, passed = 0, failed = 0;
+    const schemaErrors: { field: string; expected: string; received: string }[] = [];
+
+    for (const field of fields) {
+      if (!field.translated || (field.entryType !== 'initvar' && field.entryType !== 'json_patch')) continue;
+      const result = validateWithZodSchema(field.translated, schemas);
+      schemasChecked++;
+      if (result.valid) passed++;
+      else {
+        failed++;
+        schemaErrors.push(...result.errors);
+      }
+    }
+
+    if (schemasChecked > 0) {
+      report.schemaValidation = { schemasChecked, passed, failed, errors: schemaErrors };
+      if (failed > 0) report.valid = false;
+    }
+  }
+
+  // JSON Patch validation
+  const patchFields = fields.filter(f => f.translated && f.entryType === 'json_patch');
+  if (patchFields.length > 0 && schemas.length > 0) {
+    let totalOps = 0, validOps = 0, invalidOps = 0;
+    const patchErrors: { path: string; reason: string }[] = [];
+
+    for (const field of patchFields) {
+      const result = validateJsonPatchIntegrity(field.translated, schemas);
+      const patches = extractJsonPatches(field.translated);
+      const opCount = patches.reduce((sum, p) => sum + p.length, 0);
+      totalOps += opCount;
+      if (result.valid) validOps += opCount;
+      else {
+        invalidOps += result.errors.length;
+        validOps += opCount - result.errors.length;
+        patchErrors.push(...result.errors);
+      }
+    }
+
+    report.patchValidation = { totalOps, validOps, invalidOps, errors: patchErrors };
+    if (invalidOps > 0) report.valid = false;
+  }
+
+  // Build summary
+  const parts: string[] = [];
+  parts.push(`Vars: ${syncReport.replaced}✅ ${syncReport.unreplaced}❌`);
+  if (report.schemaValidation) {
+    parts.push(`Schema: ${report.schemaValidation.passed}✅ ${report.schemaValidation.failed}❌`);
+  }
+  if (report.patchValidation) {
+    parts.push(`Patch: ${report.patchValidation.validOps}✅ ${report.patchValidation.invalidOps}❌`);
+  }
+  report.summary = parts.join(' | ');
+
+  return report;
+}
+
+/**
+ * Extract JSON objects from text content.
+ * Handles both standalone JSON and JSON embedded in YAML/text.
+ */
+function extractJsonObjects(text: string): Record<string, unknown>[] {
+  const objects: Record<string, unknown>[] = [];
+
+  // Strategy 1: Try parsing the entire text as JSON
+  try {
+    const parsed = JSON.parse(text.trim());
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+      objects.push(parsed);
+      return objects;
+    }
+  } catch { /* not pure JSON */ }
+
+  // Strategy 2: Find JSON objects within text using brace matching
+  const regex = /\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g;
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(text)) !== null) {
+    try {
+      const parsed = JSON.parse(match[0]);
+      if (typeof parsed === 'object' && parsed !== null) {
+        objects.push(parsed);
+      }
+    } catch { /* not valid JSON */ }
+  }
+
+  return objects;
 }

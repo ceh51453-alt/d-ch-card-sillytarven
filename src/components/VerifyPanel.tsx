@@ -22,12 +22,15 @@ const CATEGORY_I18N_KEY: Record<string, string> = {
   mvu_inconsistent: 'catMvuInconsistent',
   length_anomaly: 'catLengthAnomaly',
   empty_translation: 'catEmpty',
+  json_patch_broken: 'catJsonPatchBroken',
+  zod_schema_mismatch: 'catZodSchemaMismatch',
 };
 
 const CATEGORY_ICON: Record<string, typeof Code2> = {
   residual_source: Type, html_broken: Code2, bracket_mismatch: Braces,
   macro_damaged: Hash, json_broken: FileWarning, mvu_inconsistent: ArrowLeftRight,
   length_anomaly: AlertTriangle, empty_translation: AlertCircle,
+  json_patch_broken: FileWarning, zod_schema_mismatch: Braces,
 };
 
 type VerifyTab = 'field' | 'card';
@@ -486,7 +489,7 @@ function IssueRow({ issue, isVi, expanded, onToggle, onAutoFix, onAIFix, isAIFix
   const Icon = cfg.icon;
   const t = useT() as Record<string, string>;
   const category = 'category' in issue ? (issue as FieldIssue).category : null;
-  const catLabel = category && CATEGORY_I18N_KEY[category] ? t[CATEGORY_I18N_KEY[category]] : null;
+  const catLabel = category ? (CATEGORY_I18N_KEY[category] && t[CATEGORY_I18N_KEY[category]] ? t[CATEGORY_I18N_KEY[category]] : category.replace(/_/g, ' ')) : null;
   const fieldPath = 'fieldPath' in issue ? (issue as FieldIssue).fieldPath : null;
 
   const [editing, setEditing] = useState(false);

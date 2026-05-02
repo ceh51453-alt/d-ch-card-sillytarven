@@ -57,6 +57,11 @@ const en = {
   lorebookEntries: 'Lorebook entries',
   altGreetings: 'Alt greetings',
   regexScripts: 'Regex scripts',
+  worldbookMode: 'Worldbook',
+  worldbookEntries: 'Worldbook entries',
+  worldbookWithContent: 'With content',
+  worldbookBadge: '📖 Worldbook',
+  cardBadge: '🃏 Card',
   depthPrompt: 'Depth prompt',
   specVersion: 'Spec',
 
@@ -233,6 +238,11 @@ const vi: TranslationKeys = {
   lorebookEntries: 'Mục lorebook',
   altGreetings: 'Lời chào phụ',
   regexScripts: 'Script regex',
+  worldbookMode: 'Worldbook',
+  worldbookEntries: 'Mục Worldbook',
+  worldbookWithContent: 'Có nội dung',
+  worldbookBadge: '📖 Worldbook',
+  cardBadge: '🃏 Thẻ nhân vật',
   depthPrompt: 'Depth prompt',
   specVersion: 'Phiên bản spec',
 

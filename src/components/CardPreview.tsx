@@ -1,6 +1,6 @@
 import { useStore } from '../store';
 import { useT } from '../i18n/useLocale';
-import { Eye, ChevronDown, ChevronRight, Languages } from 'lucide-react';
+import { Eye, ChevronDown, ChevronRight, Languages, BookOpen } from 'lucide-react';
 import { useState, useMemo } from 'react';
 
 /* ─── Map field paths to translated values ─── */
@@ -18,17 +18,18 @@ function useTranslatedFields(): Map<string, string> {
 }
 
 export default function CardPreview() {
-  const { card } = useStore();
+  const { card, contentType } = useStore();
   const t = useT();
   const translated = useTranslatedFields();
   if (!card) return null;
+
+  const isWorldbook = contentType === 'worldbook';
+  const hasTranslations = translated.size > 0;
 
   // Helper: get translated text or original
   const tv = (dataPath: string, rootPath: string, original?: string) => {
     return translated.get(dataPath) || translated.get(rootPath) || original || '';
   };
-
-  const hasTranslations = translated.size > 0;
 
   return (
     <div className="card fade-in" style={{ padding: '20px' }}>
@@ -42,8 +43,12 @@ export default function CardPreview() {
             gap: '8px',
           }}
         >
-          <Eye size={18} style={{ color: 'var(--accent-secondary)' }} />
-          {t.cardPreview}
+          {isWorldbook ? (
+            <BookOpen size={18} style={{ color: 'var(--accent-secondary)' }} />
+          ) : (
+            <Eye size={18} style={{ color: 'var(--accent-secondary)' }} />
+          )}
+          {isWorldbook ? t.worldbookMode : t.cardPreview}
         </h3>
         {hasTranslations && (
           <span style={{
@@ -57,23 +62,96 @@ export default function CardPreview() {
         )}
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-        <PreviewField label="Name" value={tv('data.name', 'name', card.data?.name || card.name)} />
-        <PreviewField label="Description" value={tv('data.description', 'description', card.data?.description || card.description)} truncate />
-        <PreviewField label="Personality" value={tv('data.personality', 'personality', card.data?.personality || card.personality)} truncate />
-        <PreviewField label="Scenario" value={tv('data.scenario', 'scenario', card.data?.scenario || card.scenario)} truncate />
-        <PreviewField label="First Message" value={tv('data.first_mes', 'first_mes', card.data?.first_mes || card.first_mes)} truncate />
-        {(translated.has('data.system_prompt') || card.data?.system_prompt) && (
-          <PreviewField label="System Prompt" value={tv('data.system_prompt', 'system_prompt', card.data?.system_prompt)} truncate />
-        )}
-        {card.data?.alternate_greetings && card.data.alternate_greetings.length > 0 && (
-          <PreviewField
-            label={`Alt Greetings (${card.data.alternate_greetings.length})`}
-            value={translated.get('data.alternate_greetings[0]') || card.data.alternate_greetings[0]}
-            truncate
-          />
-        )}
-      </div>
+      {isWorldbook ? (
+        <WorldbookPreview card={card} translated={translated} />
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          <PreviewField label="Name" value={tv('data.name', 'name', card.data?.name || card.name)} />
+          <PreviewField label="Description" value={tv('data.description', 'description', card.data?.description || card.description)} truncate />
+          <PreviewField label="Personality" value={tv('data.personality', 'personality', card.data?.personality || card.personality)} truncate />
+          <PreviewField label="Scenario" value={tv('data.scenario', 'scenario', card.data?.scenario || card.scenario)} truncate />
+          <PreviewField label="First Message" value={tv('data.first_mes', 'first_mes', card.data?.first_mes || card.first_mes)} truncate />
+          {(translated.has('data.system_prompt') || card.data?.system_prompt) && (
+            <PreviewField label="System Prompt" value={tv('data.system_prompt', 'system_prompt', card.data?.system_prompt)} truncate />
+          )}
+          {card.data?.alternate_greetings && card.data.alternate_greetings.length > 0 && (
+            <PreviewField
+              label={`Alt Greetings (${card.data.alternate_greetings.length})`}
+              value={translated.get('data.alternate_greetings[0]') || card.data.alternate_greetings[0]}
+              truncate
+            />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── Worldbook Preview: shows first N entries ─── */
+function WorldbookPreview({ card, translated }: { card: any; translated: Map<string, string> }) {
+  const entries = card.data?.character_book?.entries || [];
+  const [showAll, setShowAll] = useState(false);
+  const maxPreview = 5;
+  const displayEntries = showAll ? entries : entries.slice(0, maxPreview);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+      {displayEntries.map((entry: any, i: number) => {
+        const name = translated.get(`data.character_book.entries[${i}].name`) || entry.name || `Entry ${i}`;
+        const content = translated.get(`data.character_book.entries[${i}].content`) || entry.content || '';
+        const keys = entry.keys?.join(', ') || '';
+
+        return (
+          <div
+            key={i}
+            style={{
+              padding: '8px 10px',
+              background: 'var(--bg-primary)',
+              borderRadius: 'var(--radius-sm)',
+              border: '1px solid var(--border-subtle)',
+            }}
+          >
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              marginBottom: '3px',
+            }}>
+              <span style={{
+                fontSize: '0.75rem', fontWeight: 600, color: 'var(--accent-secondary)',
+              }}>
+                #{i} {name}
+              </span>
+              {keys && (
+                <span style={{
+                  fontSize: '0.6rem', color: 'var(--text-muted)',
+                  maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                }}>
+                  🔑 {keys}
+                </span>
+              )}
+            </div>
+            <div style={{
+              fontSize: '0.75rem', color: 'var(--text-secondary)',
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }}>
+              {content.slice(0, 150) || '(empty)'}
+            </div>
+          </div>
+        );
+      })}
+
+      {entries.length > maxPreview && (
+        <button
+          className="btn btn-ghost btn-xs"
+          onClick={() => setShowAll(!showAll)}
+          style={{ alignSelf: 'center', fontSize: '0.7rem', marginTop: '4px' }}
+        >
+          {showAll ? (
+            <><ChevronDown size={12} /> Show less</>
+          ) : (
+            <><ChevronRight size={12} /> Show all {entries.length} entries</>
+          )}
+        </button>
+      )}
     </div>
   );
 }

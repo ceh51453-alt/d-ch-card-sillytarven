@@ -134,7 +134,7 @@ export interface TranslationField {
   /** Previous translation for updating/merging */
   previousTranslation?: string;
   /** MVU entry classification for per-type translation strategy */
-  entryType?: 'initvar' | 'mvu_logic' | 'rules' | 'narrative' | 'controller';
+  entryType?: 'initvar' | 'mvu_logic' | 'rules' | 'narrative' | 'controller' | 'json_patch';
 }
 
 export type FieldGroup =

@@ -1,4 +1,7 @@
 import type { CharacterCard } from '../types/card';
+import type { MvuZodSummary } from '../types/mvuZodTypes';
+import { extractZodSchemas, getAllSchemaFieldNames } from './zodSchemaEngine';
+import { hasJsonPatchOps } from './jsonPatchValidator';
 
 /**
  * Auto-detect whether a card uses MVU/Zod architecture.
@@ -132,4 +135,64 @@ export function getMvuCardSummary(card: CharacterCard): MvuCardSummary {
   }
 
   return result;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   MVU-ZOD Enhanced Detection
+   ═══════════════════════════════════════════════════════════════ */
+
+/**
+ * Extended detection with Zod schema extraction and JSON Patch support.
+ * Backward-compatible: includes all legacy MvuCardSummary fields.
+ */
+export function getMvuZodSummary(card: CharacterCard): MvuZodSummary {
+  const legacy = getMvuCardSummary(card);
+
+  // Extract Zod schemas from TavernHelper
+  const zodSchemas = extractZodSchemas(card);
+  const allFieldNames = getAllSchemaFieldNames(zodSchemas);
+
+  // Count lorebook entries with JSON Patch operations
+  let jsonPatchEntries = 0;
+  const entries = card.data?.character_book?.entries || [];
+  for (const entry of entries) {
+    if (entry.content && hasJsonPatchOps(entry.content)) {
+      jsonPatchEntries++;
+    }
+  }
+
+  // Detect structured output support
+  const supportsStructuredOutput = zodSchemas.some(s => s.compiled && s.fields.length > 0);
+
+  // Boost confidence if ZOD schemas are real
+  let confidence = legacy.confidence;
+  if (zodSchemas.length > 0 && zodSchemas.some(s => s.compiled)) {
+    confidence = Math.min(confidence + 0.2, 1);
+  }
+  if (jsonPatchEntries > 0) {
+    confidence = Math.min(confidence + 0.1, 1);
+  }
+
+  return {
+    ...legacy,
+    confidence,
+    hasZodSchema: legacy.hasZodSchema || zodSchemas.some(s => s.compiled),
+    zodSchemas,
+    jsonPatchEntries,
+    zodFieldCount: allFieldNames.length,
+    supportsStructuredOutput,
+    reasons: [
+      ...legacy.reasons,
+      ...(zodSchemas.length > 0 ? [`${zodSchemas.length} Zod schema(s) extracted (${allFieldNames.length} fields)`] : []),
+      ...(jsonPatchEntries > 0 ? [`${jsonPatchEntries} JSON Patch entries detected`] : []),
+    ],
+  };
+}
+
+/**
+ * Quick check: does this card contain JSON Patch operations?
+ */
+export function hasJsonPatchSupport(card: CharacterCard): boolean {
+  const entries = card.data?.character_book?.entries || [];
+  return entries.some(e => e.content && hasJsonPatchOps(e.content));
 }
