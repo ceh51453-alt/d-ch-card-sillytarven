@@ -316,7 +316,7 @@ function VirtualDiffView({
                 left: 0,
                 width: '100%',
                 transform: `translateY(${virtualRow.start}px)`,
-                paddingBottom: '16px',
+                paddingBottom: '8px',
               }}
             >
               <div

@@ -47,8 +47,19 @@ export function getMvuCardSummary(card: CharacterCard): MvuCardSummary {
 
   // ─── Check TavernHelper scripts for Zod schema ───
   const tavernHelper = data.extensions?.tavern_helper as { scripts?: { content: string }[] } | undefined;
-  const scripts = tavernHelper?.scripts || (data.extensions?.TavernHelper_scripts as { content: string }[] | undefined) || [];
+  const scripts: { content: string }[] = [...(tavernHelper?.scripts || (data.extensions?.TavernHelper_scripts as { content: string }[] | undefined) || [])];
   
+  if (data.extensions?.regex_scripts) {
+    for (const rs of data.extensions.regex_scripts) {
+      if (rs.replaceString) scripts.push({ content: rs.replaceString });
+    }
+  }
+  if (data.character_book?.entries) {
+    for (const e of data.character_book.entries) {
+      if (e.content) scripts.push({ content: e.content });
+    }
+  }
+
   for (const script of scripts) {
     if (!script.content) continue;
     // Zod patterns

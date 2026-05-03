@@ -37,6 +37,18 @@ export function extractZodSchemas(card: CharacterCard): DetectedZodSchema[] {
     legacy.forEach((s, i) => { if (s.content) allScripts.push({ content: s.content, index: 1000 + i }); });
   }
 
+  // Regex Scripts
+  const regexScripts = data.extensions?.regex_scripts as { replaceString?: string }[] | undefined;
+  if (Array.isArray(regexScripts)) {
+    regexScripts.forEach((s, i) => { if (s.replaceString) allScripts.push({ content: s.replaceString, index: 2000 + i }); });
+  }
+
+  // Lorebook / Worldbook Entries
+  const entries = data.character_book?.entries;
+  if (Array.isArray(entries)) {
+    entries.forEach((e, i) => { if (e.content) allScripts.push({ content: e.content, index: 3000 + i }); });
+  }
+
   for (const script of allScripts) {
     // Find z.object({...}) blocks using balanced brace matching
     const objectBlocks = extractZodObjectBlocks(script.content);
@@ -69,7 +81,7 @@ export function extractZodSchemas(card: CharacterCard): DetectedZodSchema[] {
  */
 function extractZodObjectBlocks(source: string): string[] {
   const blocks: string[] = [];
-  const regex = /z\.object\s*\(/g;
+  const regex = /(?:z|Zod)\.object\s*\(/g;
   let match: RegExpExecArray | null;
 
   while ((match = regex.exec(source)) !== null) {
@@ -126,13 +138,28 @@ export function parseZodFields(objectBody: string): ZodFieldDef[] {
 
   // Simpler line-by-line approach for reliability
   const lines = objectBody.split('\n');
+  const mergedLines: string[] = [];
+  
   for (const line of lines) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith('//') || trimmed.startsWith('/*')) continue;
 
+    // Detect if this line starts a new field (key: z.something)
+    const newFieldMatch = /^(?:["'][^"']+["']|[\w\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]+)\s*:\s*(?:z|Zod)\./.test(trimmed);
+    
+    if (newFieldMatch) {
+      mergedLines.push(trimmed);
+    } else if (mergedLines.length > 0) {
+      // It's a continuation of the previous field (e.g. .describe("..."))
+      mergedLines[mergedLines.length - 1] += ' ' + trimmed;
+    }
+  }
+
+  for (const line of mergedLines) {
     // Match: key: z.something(...)
-    const lineMatch = trimmed.match(
-      /^(?:["']([^"']+)["']|([\w\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]+))\s*:\s*(z\..+?)(?:,\s*(?:\/\/.*)?)?$/
+    // Using (?:z|Zod)\. to support alternative import names
+    const lineMatch = line.match(
+      /^(?:["']([^"']+)["']|([\w\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]+))\s*:\s*((?:z|Zod)\..+?)(?:,\s*(?:\/\/.*)?)?$/
     );
     if (!lineMatch) continue;
 
@@ -170,41 +197,41 @@ function parseZodExpression(name: string, expr: string): ZodFieldDef {
   };
 
   // Detect base type
-  if (/^z\.string\b/.test(expr)) field.type = 'string';
-  else if (/^z\.number\b/.test(expr)) field.type = 'number';
-  else if (/^z\.boolean\b/.test(expr)) field.type = 'boolean';
-  else if (/^z\.enum\b/.test(expr)) {
+  if (/^(?:z|Zod)\.string\b/.test(expr)) field.type = 'string';
+  else if (/^(?:z|Zod)\.number\b/.test(expr)) field.type = 'number';
+  else if (/^(?:z|Zod)\.boolean\b/.test(expr)) field.type = 'boolean';
+  else if (/^(?:z|Zod)\.enum\b/.test(expr)) {
     field.type = 'enum';
-    const enumMatch = expr.match(/z\.enum\(\s*\[([^\]]+)\]/);
+    const enumMatch = expr.match(/(?:z|Zod)\.enum\(\s*\[([^\]]+)\]/);
     if (enumMatch) {
       field.constraints = {
         enumValues: enumMatch[1].split(',').map(v => v.trim().replace(/^["']|["']$/g, '')),
       };
     }
   }
-  else if (/^z\.literal\b/.test(expr)) {
+  else if (/^(?:z|Zod)\.literal\b/.test(expr)) {
     field.type = 'literal';
-    const litMatch = expr.match(/z\.literal\(\s*(.+?)\s*\)/);
+    const litMatch = expr.match(/(?:z|Zod)\.literal\(\s*(.+?)\s*\)/);
     if (litMatch) {
       field.constraints = { literalValue: parseLiteralValue(litMatch[1]) };
     }
   }
-  else if (/^z\.array\b/.test(expr)) {
+  else if (/^(?:z|Zod)\.array\b/.test(expr)) {
     field.type = 'array';
-    const itemMatch = expr.match(/z\.array\(\s*z\.(\w+)/);
+    const itemMatch = expr.match(/(?:z|Zod)\.array\(\s*(?:z|Zod)\.(\w+)/);
     if (itemMatch) {
       field.constraints = { arrayItemType: itemMatch[1] as ZodFieldType };
     }
   }
-  else if (/^z\.object\b/.test(expr)) {
+  else if (/^(?:z|Zod)\.object\b/.test(expr)) {
     field.type = 'object';
     // Nested objects: extract body and recurse
-    const bodyMatch = expr.match(/z\.object\(\s*\{([\s\S]*)\}\s*\)/);
+    const bodyMatch = expr.match(/(?:z|Zod)\.object\(\s*\{([\s\S]*)\}\s*\)/);
     if (bodyMatch) {
       field.children = parseZodFields(bodyMatch[1]);
     }
   }
-  else if (/^z\.union\b/.test(expr)) field.type = 'union';
+  else if (/^(?:z|Zod)\.union\b/.test(expr)) field.type = 'union';
 
   // Chain modifiers
   field.isOptional = expr.includes('.optional()');
