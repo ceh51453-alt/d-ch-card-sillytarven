@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { useCardParser } from '../hooks/useCardParser';
 import { useStore } from '../store';
@@ -16,12 +16,55 @@ import {
   X,
   Globe,
   Loader,
+  Link as LinkIcon,
 } from 'lucide-react';
 
 export default function FileUpload() {
   const { parseCardFile, updateCardFromOriginal, clearCard, isParsing, parseProgress } = useCardParser();
   const { card, cardFileName, contentType, originalWorldbook, loadTranslationCache, addLog } = useStore();
   const t = useT();
+
+  const [urlInput, setUrlInput] = useState('');
+  const [isFetchingUrl, setIsFetchingUrl] = useState(false);
+
+  const handleUrlLoad = async () => {
+    if (!urlInput.trim()) return;
+    setIsFetchingUrl(true);
+    try {
+      const response = await fetch(urlInput.trim());
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const blob = await response.blob();
+      
+      let fileName = 'url_card';
+      try {
+        const urlPath = new URL(urlInput.trim()).pathname;
+        const urlFile = urlPath.split('/').pop();
+        if (urlFile && (urlFile.endsWith('.json') || urlFile.endsWith('.png'))) {
+          fileName = urlFile;
+        } else {
+          if (blob.type === 'application/json') fileName += '.json';
+          else if (blob.type === 'image/png') fileName += '.png';
+          else fileName += '.json';
+        }
+      } catch (e) {
+        fileName += '.json';
+      }
+
+      const file = new File([blob], fileName, { type: blob.type });
+      parseCardFile(file);
+      
+      setTimeout(async () => {
+        const restored = await loadTranslationCache(file.name);
+        if (restored) addLog('info', `♻️ Restored cached translation progress for "${file.name}"`);
+      }, 500);
+      
+      setUrlInput('');
+    } catch (err: any) {
+      addLog('error', `❌ Lỗi tải link: ${err.message || String(err)} (có thể do CORS)`);
+    } finally {
+      setIsFetchingUrl(false);
+    }
+  };
 
   const onDrop = useCallback(
     async (acceptedFiles: File[]) => {
@@ -129,25 +172,50 @@ export default function FileUpload() {
               </div>
             </div>
           ) : (
-          <div
-            {...getRootProps()}
-            className={`dropzone ${isDragActive ? 'dropzone-active' : ''} ${isDragAccept ? 'dropzone-accepted' : ''}`}
-          >
-            <input {...getInputProps()} />
-            <Upload
-              size={32}
-              style={{
-                color: isDragActive ? 'var(--accent-primary)' : 'var(--text-muted)',
-                marginBottom: '8px',
-              }}
-            />
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '4px' }}>
-              {isDragActive ? '...' : t.dragDropCard}
-            </p>
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>
-              {t.orClickBrowse}
-            </p>
-          </div>
+          <>
+            <div
+              {...getRootProps()}
+              className={`dropzone ${isDragActive ? 'dropzone-active' : ''} ${isDragAccept ? 'dropzone-accepted' : ''}`}
+            >
+              <input {...getInputProps()} />
+              <Upload
+                size={32}
+                style={{
+                  color: isDragActive ? 'var(--accent-primary)' : 'var(--text-muted)',
+                  marginBottom: '8px',
+                }}
+              />
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '4px' }}>
+                {isDragActive ? '...' : t.dragDropCard}
+              </p>
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>
+                {t.orClickBrowse}
+              </p>
+            </div>
+            
+            <div style={{ marginTop: '12px', display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <div style={{ position: 'relative', flex: 1 }}>
+                <LinkIcon size={14} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                <input 
+                  type="text" 
+                  className="input" 
+                  style={{ paddingLeft: '32px' }}
+                  placeholder="Nhập link card (JSON/PNG)..." 
+                  value={urlInput}
+                  onChange={(e) => setUrlInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleUrlLoad(); }}
+                  disabled={isParsing || isFetchingUrl}
+                />
+              </div>
+              <button 
+                className="btn btn-secondary" 
+                onClick={handleUrlLoad}
+                disabled={!urlInput.trim() || isParsing || isFetchingUrl}
+              >
+                {isFetchingUrl ? <Loader size={14} className="spin" /> : 'Tải'}
+              </button>
+            </div>
+          </>
           )
         ) : (
           <div className="fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
