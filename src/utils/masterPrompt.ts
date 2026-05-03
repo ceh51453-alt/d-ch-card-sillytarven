@@ -123,9 +123,9 @@ If you translate a JSON key, you MUST also translate:
   - The matching string literal in getvar('key')/setvar('key', val)
   - The matching data-var="key" HTML attribute
   - The matching {{getvar::key}} / {{setvar::key::value}} macros
-ALL of these must use the EXACT SAME translated string with underscores.
-If you translate 修为 → Tu_vi in JSON, then ALL of these must change:
-  getvar('修为') → getvar('Tu_vi'), {{getvar::修为}} → {{getvar::Tu_vi}}, data-var="修为" → data-var="Tu_vi", 修为: z.string() → Tu_vi: z.string()
+ALL of these must use the EXACT SAME translated string.
+If you translate 修为 → Tu Vi in JSON, then ALL of these must change:
+  getvar('修为') → getvar('Tu Vi'), {{getvar::修为}} → {{getvar::Tu Vi}}, data-var="修为" → data-var="Tu Vi", 修为: z.string() → "Tu Vi": z.string()
 A single mismatch = total system crash.`;
 }
 
@@ -161,7 +161,7 @@ When the source language is Chinese, ALL proper nouns MUST be rendered in their 
   if (isJapanese && isVietnamese) {
     rules += `
 P1 — Japanese Proper Nouns:
-When source is Japanese, use standard Romaji or widely accepted loanwords (桜 → Sakura, 田中 → Tanaka). Do NOT apply Hán Việt to Japanese names. Honorifics (-san, -chan, -sama) can be kept as-is or mapped to Vietnamese equivalents based on context.`;
+When source is Japanese, use standard Romaji transliteration (桜 → Sakura, 田中 → Tanaka). Do NOT apply Hán Việt to Japanese names. Honorifics (-san, -chan, -sama) can be kept as-is or mapped to Vietnamese equivalents based on context.`;
   }
 
   if (isVietnamese) {
@@ -239,21 +239,22 @@ P5 — YAML-like Structured Data:
     Cultivation_Level: 筑基期
   RULES for structured data:
     - If the KEY name (left side of the colon) is in Chinese/Japanese (e.g., "外貌", "主色调衍生"), you MUST TRANSLATE the KEY as well as the value (e.g., "Ngoại hình: Xinh đẹp").
-    - If the KEY name is in English, especially with underscores (e.g., "Cultivation_Level"), PRESERVE the key exactly and only translate the value (e.g., "Cultivation_Level: Trúc Cơ Kỳ").
-    - Do NOT add underscores to the translated value text.
+    - If the KEY name is in English, PRESERVE the key exactly and only translate the value (e.g., "Cultivation_Level: Trúc Cơ Kỳ").
 
 RULE C2 — JSON Key Translation Integrity:
   When translating JSON structures used for MVU (Multi-Variable Update) state tracking, the keys themselves are variable names.
+  Dịch tiếng trung sang tiếng việt, không dịch tiếng anh. Dịch phù hợp quy tắc mvu và đồng biến với Schema. Nếu là tên riêng tiếng nhật thì dịch ra theo dạng phiên âm Romaji.
   RULES FOR KEYS:
-    - Must use underscores instead of spaces.
-    - Must not contain special characters other than underscores.
-    - Must be consistent. If "修为" is translated as "Tu_vi" in one place, it must be "Tu_vi" everywhere.
+    - Use natural spaces, NOT underscores.
+    - Must be consistent. If "修为" is translated as "Tu Vi" in one place, it must be "Tu Vi" everywhere.
+    - Do NOT translate English keys.
+    - Japanese proper nouns should use Romaji transliteration.
   Example (Before):
     { "角色状态": "健康", "精神力": 100 }
   Example (After - CORRECT):
-    { "Trạng_thái_nhân_vật": "Khỏe mạnh", "Tinh_thần_lực": 100 }
-  Example (After - WRONG - Spaces used in key):
-    { "Trạng thái nhân vật": "Khỏe mạnh", "Tinh thần lực": 100 }`;
+    { "Trạng thái nhân vật": "Khỏe mạnh", "Tinh thần lực": 100 }
+  Example (After - WRONG - Underscores used in key):
+    { "Trạng_thái_nhân_vật": "Khỏe mạnh", "Tinh_thần_lực": 100 }`;
 }
 
 /** JSON Patch (RFC 6902) translation rules */
@@ -264,10 +265,11 @@ RULE JP1 — JSON Patch Structure Integrity:
   A patch looks like: {"op": "replace", "path": "/好感度", "value": 10}
   
   RULES:
-    - ONLY translate the field names inside the "path" (e.g. "/好感度" -> "/Hảo_Cảm").
+    - ONLY translate the field names inside the "path" (e.g. "/好感度" -> "/Hảo Cảm").
     - If the "op" is "replace", "add", or "test", and "value" is a STRING, translate the string content.
     - NEVER translate or modify the "op" field (must remain "add", "remove", "replace", etc.).
     - Keep array brackets and JSON syntax EXACTLY as they are.
+    - Do NOT translate English field names. Japanese proper nouns use Romaji.
   
   Example (Before):
     [
@@ -276,7 +278,7 @@ RULE JP1 — JSON Patch Structure Integrity:
     ]
   Example (After - CORRECT):
     [
-      {"op": "replace", "path": "/Hảo_Cảm", "value": "Thân mật"},
+      {"op": "replace", "path": "/Hảo Cảm", "value": "Thân mật"},
       {"op": "add", "path": "/inventory/0/Tên", "value": "Kiếm sắt"}
     ]`;
 }
@@ -287,22 +289,22 @@ function buildEjsRules(): string {
 CODE PRESERVATION RULES (TAVERNHELPER / EJS / ZOD):
 RULE C3 — Synchronized Variable Translation (KEY-EJS SYNC):
   This is the most critical rule for system stability.
-  If you translated a JSON key in RULE C2 (e.g., "修为" → "Tu_vi"), you MUST apply the EXACT SAME translated string to the following code constructs:
+  If you translated a JSON key in RULE C2 (e.g., "修为" → "Tu Vi"), you MUST apply the EXACT SAME translated string to the following code constructs:
     1. Zod Schema Definitions:
        Before: z.object({ 修为: z.string() })
-       After:  z.object({ Tu_vi: z.string() })
+       After:  z.object({ "Tu Vi": z.string() })
     
     2. EJS getvar / setvar String Literals:
        Before: <% if (getvar('修为') == '筑基') { %>
-       After:  <% if (getvar('Tu_vi') == 'Trúc Cơ') { %>
+       After:  <% if (getvar('Tu Vi') == 'Trúc Cơ') { %>
        
     3. HTML data-var Attributes:
        Before: <div data-var="修为">
-       After:  <div data-var="Tu_vi">
+       After:  <div data-var="Tu Vi">
        
     4. Macro Arguments:
        Before: {{getvar::修为}}
-       After:  {{getvar::Tu_vi}}
+       After:  {{getvar::Tu Vi}}
 
   FAILURE TO SYNC THESE IDENTIFIERS WILL CAUSE THE RPG ENGINE TO CRASH.
   Do not guess translations. If a Glossary or MVU Dictionary is provided, use it rigorously.
@@ -331,14 +333,14 @@ RULE C3.1 — Preserve Javascript Logic:
     <% } %>
     
   EXAMPLE (After - CORRECT):
-    <% if (getvar('Tâm_trạng') > 50) { %>
+    <% if (getvar('Tâm trạng') > 50) { %>
       <div class="happy-ui">Vui vẻ</div>
     <% } else { %>
       <div class="sad-ui">Buồn bã</div>
     <% } %>
     
   EXAMPLE (After - WRONG - translated JS keywords):
-    <% nếu (getvar('Tâm_trạng') > 50) { %>  <-- FATAL ERROR
+    <% nếu (getvar('Tâm trạng') > 50) { %>  <-- FATAL ERROR
       <div class="happy-ui">Vui vẻ</div>
     <% } ngược lại { %>                     <-- FATAL ERROR
       <div class="sad-ui">Buồn bã</div>
@@ -391,9 +393,9 @@ RULE C10 — Do NOT translate text already in ${targetLang}.
    ════════════════════════════════════════════════════════════════════ */
 function buildFailureModes(fieldType: TranslationFieldType): string {
   const allFailures: Record<string, string> = {
-    macro_translation: `  [FATAL] Translating Macros: Changing {{char}} to {{nhân vật}} or {{getvar::修为}} to {{lấy_biến::Tu_vi}}. Macros are machine tokens. NEVER translate anything inside {{ }}.`,
+    macro_translation: `  [FATAL] Translating Macros: Changing {{char}} to {{nhân vật}} or {{getvar::修为}} to {{lấy_biến::Tu Vi}}. Macros are machine tokens. NEVER translate anything inside {{ }}.`,
     regex_modification: `  [FATAL] Regex Modification: Altering findRegex patterns. /hello/i becoming /xin chào/i. Regex is executed by the engine, not read by the user. Output it verbatim.`,
-    json_key_spaces: `  [FATAL] JSON Key Spaces: Outputting {"Cảnh giới": "Trúc Cơ"} instead of {"Cảnh_giới": "Trúc Cơ"}. Variable keys MUST use underscores and no spaces.`,
+    json_key_inconsistency: `  [FATAL] JSON Key Inconsistency: If "修为" is translated as "Tu Vi" in one place, it must be "Tu Vi" everywhere. Inconsistent translations cause EJS desync and system crashes.`,
     ejs_desync: `  [FATAL] EJS Desync: Translating a JSON key but forgetting to translate the corresponding getvar() call, resulting in getvar('original_chinese') returning null because the JSON now holds 'translated_vietnamese'. SYNC IS MANDATORY.`,
     js_keyword_translation: `  [FATAL] Translating Javascript: Changing <% if (x) %> to <% nếu (x) %>. This causes immediate syntax errors and crashes the card.`,
     markdown_fences: `  [FATAL] Markdown Fencing: Wrapping the output in \`\`\`json or \`\`\`. The parser will read the backticks as literal text, corrupting the save file.`,
@@ -404,11 +406,11 @@ function buildFailureModes(fieldType: TranslationFieldType): string {
   const fieldFailureMap: Record<TranslationFieldType, string[]> = {
     narrative: ['macro_translation', 'truncation', 'markdown_fences'],
     regex: ['regex_modification', 'html_attr_translation', 'macro_translation'],
-    lorebook: ['json_key_spaces', 'ejs_desync', 'macro_translation'],
+    lorebook: ['json_key_inconsistency', 'ejs_desync', 'macro_translation'],
     ejs_code: ['js_keyword_translation', 'ejs_desync', 'macro_translation', 'html_attr_translation'],
-    json_state: ['json_key_spaces', 'ejs_desync', 'markdown_fences'],
-    json_patch: ['json_key_spaces', 'ejs_desync', 'markdown_fences'],
-    mixed: ['macro_translation', 'ejs_desync', 'truncation', 'js_keyword_translation', 'json_key_spaces'],
+    json_state: ['json_key_inconsistency', 'ejs_desync', 'markdown_fences'],
+    json_patch: ['json_key_inconsistency', 'ejs_desync', 'markdown_fences'],
+    mixed: ['macro_translation', 'ejs_desync', 'truncation', 'js_keyword_translation', 'json_key_inconsistency'],
   };
 
   const relevantKeys = fieldFailureMap[fieldType] || fieldFailureMap.mixed;
@@ -449,8 +451,9 @@ ${dictList}
 
 Rules:
 - Replace ALL occurrences consistently. Use EXACTLY the target strings above.
-- Keep underscores, no spaces in variable names.
-- Do NOT invent your own translations for these variables. Use the dictionary.`;
+- Variable names use natural spaces, NOT underscores.
+- Do NOT invent your own translations for these variables. Use the dictionary.
+- Do NOT translate English variable names. Japanese proper nouns use Romaji.`;
   }
 
   return `
@@ -497,7 +500,7 @@ You MUST output your response using the following XML structure. This forces you
       1. Are all {{MACRO}} tokens intact byte-for-byte?
       2. Are all <% EJS %> blocks completely preserved?
       3. Is the /REGEX/ pattern totally unchanged?
-      4. Do JSON keys have NO SPACES (underscores only)?
+      4. Are JSON keys consistently translated (same key = same translation everywhere)?
       5. Is the KEY MAP applied to getvar/setvar literals?
       6. Are there ZERO markdown code fences (\`\`\`) in the output?
       7. Was the CSS Font swapped correctly?

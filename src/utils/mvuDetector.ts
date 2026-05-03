@@ -83,9 +83,9 @@ export function getMvuCardSummary(card: CharacterCard): MvuCardSummary {
   const varNames = new Set<string>();
 
   for (const entry of entries) {
-    const content = entry.content || '';
-    const comment = entry.comment || '';
-    const name = entry.name || '';
+    const content = String(entry.content || '');
+    const comment = String(entry.comment || '');
+    const name = String(entry.name || '');
 
     // [initvar] detection
     if (content.includes('[initvar]') || comment.toLowerCase().includes('initvar') || name.toLowerCase().includes('initvar')) {

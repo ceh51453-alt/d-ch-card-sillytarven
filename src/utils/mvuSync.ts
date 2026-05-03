@@ -342,10 +342,13 @@ export function extractPotentialMvuKeys(card: CharacterCard): MvuKeyInfo[] {
   // ═══════════════════════════════════════════════════════════
   const entries = data.character_book?.entries || [];
   for (const entry of entries) {
-    const isInitvar = (entry.comment && entry.comment.toLowerCase().includes('initvar')) ||
-      (entry.content && entry.content.includes('[initvar]'));
-    const isMvu = (entry.comment && /mvu|variable|var_init|zod/i.test(entry.comment)) ||
-      (entry.name && /mvu|variable|var_init|zod|initvar/i.test(entry.name));
+    const commentStr = String(entry.comment || '');
+    const nameStr = String(entry.name || '');
+    const contentStr = String(entry.content || '');
+    const isInitvar = commentStr.toLowerCase().includes('initvar') ||
+      contentStr.includes('[initvar]');
+    const isMvu = /mvu|variable|var_init|zod/i.test(commentStr) ||
+      /mvu|variable|var_init|zod|initvar/i.test(nameStr);
 
     if (isInitvar || isMvu) {
       // Full scan for MVU/initvar entries: YAML + macros + Zod + data-var
@@ -501,27 +504,28 @@ export async function aiTranslateMvuKeys(
 
   if (keysToTranslate.length === 0) return result;
 
-  const systemPrompt = `You are a variable name translator for SillyTavern character cards.
-Your job: translate variable names from the source language to ${targetLang}, formatted as code-friendly identifiers.
+  const systemPrompt = `Dịch tiếng trung sang tiếng việt, không dịch tiếng anh. Dịch phù hợp quy tắc mvu và đồng biến với Schema. Nếu là tên riêng tiếng nhật thì dịch ra theo dạng phiên âm Romaji.
+
+You are a variable name translator for SillyTavern character cards.
+Your job: translate variable names from the source language to ${targetLang}.
 
 STRICT RULES:
-1. Use Latin letters WITH diacritics if the target language requires them (e.g. Vietnamese: Độ_Hảo_Cảm, Sức_Tấn_Công).
-2. Replace spaces with underscores (_). No spaces allowed in variable names.
-3. Keep the names SHORT but meaningful (2-4 words max).
-4. NO spaces, NO special characters except underscores and diacritics.
-5. Be CONSISTENT: similar concepts MUST have similar naming patterns.
-   - All emotion/feeling variables should follow the same pattern (e.g. Mức_X, Độ_X)
+1. Use natural spacing with diacritics (e.g. Vietnamese: Độ Hảo Cảm, Sức Tấn Công). Do NOT use underscores.
+2. Keep the names SHORT but meaningful (2-4 words max).
+3. Be CONSISTENT: similar concepts MUST have similar naming patterns.
+   - All emotion/feeling variables should follow the same pattern (e.g. Mức X, Độ X)
    - All stat variables should follow the same pattern
-6. If a key is already in Latin/ASCII, keep it AS IS.
-7. Proper nouns (character names) should be transliterated, not translated.
-8. Keep numeric suffixes and prefixes intact (e.g. "攻击力2" → "Sức_Tấn_Công_2").
-9. For Vietnamese specifically:
-   - Use Title_Case with diacritics: Hảo_Cảm, Thể_Lực, Trí_Tuệ
+4. If a key is already in Latin/ASCII or English, keep it AS IS. Do NOT translate English.
+5. Chinese proper nouns (character names) should use Hán Việt (Sino-Vietnamese) reading.
+6. Japanese proper nouns should use Romaji transliteration (e.g. 田中 → Tanaka, 桜 → Sakura).
+7. Keep numeric suffixes and prefixes intact (e.g. "攻击力2" → "Sức Tấn Công 2").
+8. For Vietnamese specifically:
+   - Use Title Case with diacritics: Hảo Cảm, Thể Lực, Trí Tuệ
    - Each word should be properly capitalized
-   - Common patterns: 好感 → Hảo_Cảm, 体力 → Thể_Lực, 攻击 → Tấn_Công
-10. IMPORTANT: The translated names will be used as variable names in code. They must be valid identifiers (letters, digits, underscores only + diacritics).
+   - Common patterns: 好感 → Hảo Cảm, 体力 → Thể Lực, 攻击 → Tấn Công
+9. The translated names must be covariant with the Zod Schema — matching the field structure and semantics.
 
-RESPOND in EXACT JSON format (no markdown): {"translations": {"original_key": "Translated_Key", ...}}`;
+RESPOND in EXACT JSON format (no markdown): {"translations": {"original_key": "Translated Key", ...}}`;
 
   // ─── Batch chunking for large key sets ───
   const BATCH_SIZE = 25;
@@ -628,15 +632,7 @@ ${varList}`;
 
       for (const [k, v] of Object.entries(translations)) {
         if (typeof v === 'string' && v.trim()) {
-          const cleaned = v.trim();
-          // ─── Validation: reject names with spaces or invalid chars ───
-          const hasSpaces = /\s/.test(cleaned);
-          if (hasSpaces) {
-            // Auto-fix: replace spaces with underscores
-            result[k] = cleaned.replace(/\s+/g, '_');
-          } else {
-            result[k] = cleaned;
-          }
+          result[k] = v.trim();
         }
       }
 
@@ -806,51 +802,17 @@ const CHINESE_FONT_MAP: [RegExp, string][] = [
 ];
 
 /**
- * CSS snippet tự động ẩn dấu _ thành dấu cách trong hiển thị.
- * Hoạt động bằng cách thay thế underscore trong text nodes qua JS nhỏ.
- */
-const UNDERSCORE_DISPLAY_SCRIPT = `<script>
-(function(){
-  function fixUnderscores(el){
-    var walker=document.createTreeWalker(el,NodeFilter.SHOW_TEXT,null);
-    var node;
-    while(node=walker.nextNode()){
-      var p=node.parentElement;
-      if(p&&(p.tagName==='SCRIPT'||p.tagName==='STYLE'||p.hasAttribute('data-var')||p.hasAttribute('data-keep-underscore')))continue;
-      if(node.textContent&&node.textContent.indexOf('_')!==-1){
-        node.textContent=node.textContent.replace(/_/g,' ');
-      }
-    }
-  }
-  var root=document.currentScript?document.currentScript.parentElement:document.body;
-  if(root)fixUnderscores(root);
-})();
-</script>`;
-
-/**
  * Hậu xử lý HTML trong regex replaceString sau khi dịch:
  * 1. Thay font chữ Trung/Nhật → font tương thích tiếng Việt
- * 2. Inject script ẩn dấu _ thành dấu cách trong hiển thị
  */
 export function postProcessRegexHtml(html: string): string {
   if (!html || typeof html !== 'string') return html;
 
   let result = html;
 
-  // 1. Thay font Trung/Nhật → font Việt
+  // Thay font Trung/Nhật → font Việt
   for (const [pattern, replacement] of CHINESE_FONT_MAP) {
     result = result.replace(pattern, replacement);
-  }
-
-  // 2. Inject underscore display script (chỉ thêm 1 lần, kiểm tra đã có chưa)
-  if (!result.includes('fixUnderscores') && result.includes('_')) {
-    // Tìm vị trí thích hợp để chèn: trước </div> cuối cùng, hoặc cuối chuỗi
-    const lastDivClose = result.lastIndexOf('</div>');
-    if (lastDivClose !== -1) {
-      result = result.slice(0, lastDivClose) + UNDERSCORE_DISPLAY_SCRIPT + result.slice(lastDivClose);
-    } else {
-      result += UNDERSCORE_DISPLAY_SCRIPT;
-    }
   }
 
   return result;
