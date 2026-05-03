@@ -234,14 +234,13 @@ function buildLorebookRules(): string {
 CODE PRESERVATION RULES (LOREBOOK & JSON STATE):
 P5 — YAML-like Structured Data:
   Some lorebook entries use a structured format:
-    Name: 李雪
-    Age: 18
+    外貌: 美丽
+    主色调衍生 (可爱的美少女): ...
     Cultivation_Level: 筑基期
   RULES for structured data:
-    - Translate the VALUES (right side of colon) normally.
-    - Preserve the KEY names (left side) exactly, including underscores.
+    - If the KEY name (left side of the colon) is in Chinese/Japanese (e.g., "外貌", "主色调衍生"), you MUST TRANSLATE the KEY as well as the value (e.g., "Ngoại hình: Xinh đẹp").
+    - If the KEY name is in English, especially with underscores (e.g., "Cultivation_Level"), PRESERVE the key exactly and only translate the value (e.g., "Cultivation_Level: Trúc Cơ Kỳ").
     - Do NOT add underscores to the translated value text.
-    - Example: "Cultivation_Level: Trúc Cơ Kỳ" (NOT "Trúc_Cơ_Kỳ" in the value)
 
 RULE C2 — JSON Key Translation Integrity:
   When translating JSON structures used for MVU (Multi-Variable Update) state tracking, the keys themselves are variable names.
@@ -315,8 +314,14 @@ RULE C3.1 — Preserve Javascript Logic:
   NEVER translate: Math.random(), Math.floor(), Array.push(), String.replace().
   
   ONLY TRANSLATE:
-    1. Human-readable string literals intended for UI display.
+    1. Human-readable string literals intended for UI display (especially values of "label", "name", "help", "title", "text").
     2. Variable identifiers (ONLY if following RULE C3 sync rules).
+    
+  RULE C3.2 — Translate UI Labels and Display Text:
+    When you encounter object properties like \`label\`, \`name\`, \`help\`, \`text\`, or \`description\` inside JSON, arrays, or Javascript code, you MUST translate their string values. These are UI elements meant for the user.
+    Do NOT translate the property key itself (e.g. keep \`label:\`), only the value.
+    EXAMPLE (Before): { label: "点击这里", value: "click_here" }
+    EXAMPLE (After - CORRECT): { label: "Nhấn vào đây", value: "click_here" }
     
   EXAMPLE (Before):
     <% if (getvar('心情') > 50) { %>

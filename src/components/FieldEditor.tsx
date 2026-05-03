@@ -160,7 +160,7 @@ function VirtualTableView({
             <th style={{ width: '180px' }}>{t.field}</th>
             <th style={{ width: '40%' }}>{t.original}</th>
             <th>{t.translated}</th>
-            <th style={{ width: '60px' }}>{t.actions}</th>
+            <th style={{ width: '100px', textAlign: 'center' }}>{t.actions}</th>
           </tr>
         </thead>
       </table>
@@ -178,6 +178,8 @@ function VirtualTableView({
           return (
             <div
               key={field.path}
+              ref={virtualizer.measureElement}
+              data-index={virtualRow.index}
               style={{
                 position: 'absolute',
                 top: 0,
@@ -233,25 +235,27 @@ function VirtualTableView({
                     </td>
 
                     {/* Actions */}
-                    <td style={{ width: '60px', display: 'flex', gap: '4px' }}>
-                      <button
-                        className="btn btn-ghost btn-xs tooltip"
-                        data-tooltip={t.ignored}
-                        onClick={() => updateField(field.path, { status: field.status === 'ignored' ? 'pending' : 'ignored' })}
-                        disabled={phase === 'translating'}
-                        style={{ padding: '4px' }}
-                      >
-                        {field.status === 'ignored' ? <RotateCcw size={13} /> : <Ban size={13} />}
-                      </button>
-                      <button
-                        className="btn btn-ghost btn-xs tooltip"
-                        data-tooltip={t.retranslate}
-                        onClick={() => retranslateField(field.path)}
-                        disabled={phase === 'translating'}
-                        style={{ padding: '4px' }}
-                      >
-                        <RotateCcw size={13} />
-                      </button>
+                    <td style={{ width: '100px' }}>
+                      <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+                        <button
+                          className="btn btn-ghost btn-xs tooltip"
+                          data-tooltip={t.ignored}
+                          onClick={() => updateField(field.path, { status: field.status === 'ignored' ? 'pending' : 'ignored' })}
+                          disabled={phase === 'translating'}
+                          style={{ padding: '4px' }}
+                        >
+                          {field.status === 'ignored' ? <RotateCcw size={14} /> : <Ban size={14} />}
+                        </button>
+                        <button
+                          className="btn btn-ghost btn-xs tooltip"
+                          data-tooltip={t.retranslate}
+                          onClick={() => retranslateField(field.path)}
+                          disabled={phase === 'translating'}
+                          style={{ padding: '4px' }}
+                        >
+                          <RotateCcw size={14} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 </tbody>
@@ -304,6 +308,8 @@ function VirtualDiffView({
           return (
             <div
               key={field.path}
+              ref={virtualizer.measureElement}
+              data-index={virtualRow.index}
               style={{
                 position: 'absolute',
                 top: 0,
