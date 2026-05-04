@@ -352,7 +352,9 @@ RULE C3.1 — Preserve Javascript Logic:
    Always included regardless of field type
    ════════════════════════════════════════════════════════════════════ */
 function buildUniversalRules(targetLang: string): string {
-  return `
+  const isVietnamese = targetLang.toLowerCase().includes('việt') || targetLang.toLowerCase().includes('vietnamese');
+
+  let rules = `
 UNIVERSAL FORMATTING RULES:
 
 RULE C5 — NEVER wrap your output in Markdown code fences.
@@ -385,6 +387,22 @@ RULE C9 — Completeness.
 RULE C10 — Do NOT translate text already in ${targetLang}.
   If the source text already contains ${targetLang} or English words
   used as proper nouns/system names, keep them.`;
+
+  if (isVietnamese) {
+    rules += `
+
+RULE C11 — XML/YAML/Markdown Structure & Key Translation (Vietnamese Specific):
+  Nhiệm vụ của bạn là dịch TOÀN BỘ các từ/cụm từ tiếng Trung sang tiếng Việt, giữ nguyên toàn bộ cấu trúc và phần tiếng Việt đã có sẵn.
+  Quy tắc dịch:
+  1. Chỉ dịch phần tiếng Trung, GIỮ NGUYÊN phần tiếng anh đã có. Không thay đổi bất kỳ thứ gì ngoài phần tiếng Trung.
+  2. Giữ nguyên toàn bộ cấu trúc XML/YAML/Markdown (tên tag như <palette_zhaoyutang>, thụt lề, dấu \`-\`, dấu \`:\`...).
+  3. Dịch sát nghĩa, tự nhiên, phù hợp ngữ cảnh.
+  4. Nếu một từ tiếng Trung đóng vai trò là **key/nhãn** (ví dụ: \`主色调:\`, \`衍生一\`), BẮT BUỘC phải dịch thành nhãn tiếng Việt tương ứng. Có thể thay thế hoàn toàn hoặc đặt trong ngoặc đơn ngay sau nếu cần giữ cả hai.
+  5. Không thêm, không bớt nội dung, không giải thích thêm.
+  6. Trả về toàn bộ đoạn văn bản gốc sau khi đã thay thế tất cả tiếng Trung bằng tiếng Việt.`;
+  }
+
+  return rules;
 }
 
 /* ════════════════════════════════════════════════════════════════════

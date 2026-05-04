@@ -343,21 +343,48 @@ function extractTranslatableFields(card: any, enabledGroups: string[]): any[] {
     });
   }
 
-  // TavernHelper scripts
-  const tavernHelper = data.extensions?.tavern_helper as { scripts?: { name?: string; content: string }[] } | undefined;
-  if (tavernHelper?.scripts) {
-    tavernHelper.scripts.forEach((script: any, i: number) => {
-      if (enabledGroups.includes('tavern_helper') && typeof script.content === 'string' && script.content.trim() !== '' && hasTranslatableText(script.content)) {
-        fields.push({ path: `data.extensions.tavern_helper.scripts[${i}].content`, label: `tavernHelper[${i}].content${script.name ? ` (${script.name})` : ''}`, group: 'tavern_helper', original: script.content, translated: '', status: 'pending', retries: 0 });
+  // TavernHelper scripts (JS-Slash-Runner)
+  if (enabledGroups.includes('tavern_helper')) {
+    const possibleKeys = ['tavern_helper', 'TavernHelper', 'js_slash_runner', 'TavernHelper_scripts'];
+    
+    possibleKeys.forEach(key => {
+      const extData = data.extensions?.[key];
+      if (!extData) return;
+      
+      let scriptsArray: any[] = [];
+      let isDirectArray = false;
+      
+      if (Array.isArray(extData)) {
+        scriptsArray = extData;
+        isDirectArray = true;
+      } else if (extData && typeof extData === 'object' && 'scripts' in extData && Array.isArray((extData as any).scripts)) {
+        scriptsArray = (extData as any).scripts;
       }
-    });
-  }
-  const tavernHelperLegacy = data.extensions?.TavernHelper_scripts as { name?: string; content: string }[] | undefined;
-  if (Array.isArray(tavernHelperLegacy)) {
-    tavernHelperLegacy.forEach((script: any, i: number) => {
-      if (enabledGroups.includes('tavern_helper') && typeof script.content === 'string' && script.content.trim() !== '' && hasTranslatableText(script.content)) {
-        fields.push({ path: `data.extensions.TavernHelper_scripts[${i}].content`, label: `tavernHelper_legacy[${i}].content${script.name ? ` (${script.name})` : ''}`, group: 'tavern_helper', original: script.content, translated: '', status: 'pending', retries: 0 });
-      }
+      
+      scriptsArray.forEach((script: any, i: number) => {
+        if (!script || typeof script !== 'object') return;
+        
+        const contentKey = typeof script.content === 'string' ? 'content' : 
+                          (typeof script.script === 'string' ? 'script' : 
+                          (typeof script.code === 'string' ? 'code' : null));
+                          
+        if (contentKey && script[contentKey].trim() !== '') {
+          // Skipping hasTranslatableText
+          const path = isDirectArray 
+            ? `data.extensions.${key}[${i}].${contentKey}`
+            : `data.extensions.${key}.scripts[${i}].${contentKey}`;
+            
+          fields.push({
+            path,
+            label: `tavernHelper[${i}]${script.name ? ` (${script.name})` : ''}`,
+            group: 'tavern_helper',
+            original: script[contentKey],
+            translated: '',
+            status: 'pending',
+            retries: 0
+          });
+        }
+      });
     });
   }
 

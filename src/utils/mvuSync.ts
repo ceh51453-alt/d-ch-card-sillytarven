@@ -11,7 +11,8 @@ import { extractPatchFieldNames } from './jsonPatchValidator';
  */
 export function syncMvuVariables(
   card: CharacterCard,
-  variableDictionary: Record<string, string>
+  variableDictionary: Record<string, string>,
+  enabledGroups?: string[]
 ): CharacterCard {
   // Deep clone thẻ để tránh tham chiếu
   const result = JSON.parse(JSON.stringify(card)) as CharacterCard;
@@ -86,67 +87,81 @@ export function syncMvuVariables(
   };
 
   // 1. Xử lý TavernHelper Scripts (Zod Schema) — code context
-  const tavernHelper = result.data.extensions?.tavern_helper as any;
-  if (tavernHelper?.scripts) {
-    tavernHelper.scripts = tavernHelper.scripts.map((script: any) => ({
-      ...script,
-      content: replaceInCode(script.content)
-    }));
-  }
-  // Hỗ trợ phiên bản cũ của TavernHelper
-  const tavernHelperLegacy = result.data.extensions?.TavernHelper_scripts as any;
-  if (Array.isArray(tavernHelperLegacy)) {
-    result.data.extensions!.TavernHelper_scripts = tavernHelperLegacy.map((script: any) => ({
-      ...script,
-      content: replaceInCode(script.content)
-    }));
+  if (!enabledGroups || enabledGroups.includes('tavern_helper')) {
+    const tavernHelper = result.data.extensions?.tavern_helper as any;
+    if (tavernHelper?.scripts) {
+      tavernHelper.scripts = tavernHelper.scripts.map((script: any) => ({
+        ...script,
+        content: replaceInCode(script.content)
+      }));
+    }
+    // Hỗ trợ phiên bản cũ của TavernHelper
+    const tavernHelperLegacy = result.data.extensions?.TavernHelper_scripts as any;
+    if (Array.isArray(tavernHelperLegacy)) {
+      result.data.extensions!.TavernHelper_scripts = tavernHelperLegacy.map((script: any) => ({
+        ...script,
+        content: replaceInCode(script.content)
+      }));
+    }
   }
 
   // 2. Xử lý Regex Scripts (HTML UI, class, id, data-var) — code context
-  if (result.data.extensions?.regex_scripts) {
-    result.data.extensions.regex_scripts = result.data.extensions.regex_scripts.map((script) => ({
-      ...script,
-      findRegex: typeof script.findRegex === 'string' ? replaceInCode(script.findRegex) : script.findRegex,
-      replaceString: typeof script.replaceString === 'string' ? replaceInCode(script.replaceString) : script.replaceString
-    }));
+  if (!enabledGroups || enabledGroups.includes('regex')) {
+    if (result.data.extensions?.regex_scripts) {
+      result.data.extensions.regex_scripts = result.data.extensions.regex_scripts.map((script) => ({
+        ...script,
+        findRegex: typeof script.findRegex === 'string' ? replaceInCode(script.findRegex) : script.findRegex,
+        replaceString: typeof script.replaceString === 'string' ? replaceInCode(script.replaceString) : script.replaceString
+      }));
+    }
   }
 
   // 3. Xử lý Lorebook Entries (Rules, [initvar], JSON Patch) — code context
-  if (result.data.character_book?.entries) {
-    result.data.character_book.entries = result.data.character_book.entries.map((entry) => ({
-      ...entry,
-      content: replaceInCode(entry.content)
-    }));
-  }
+  if (!enabledGroups || enabledGroups.includes('lorebook')) {
+    if (result.data.character_book?.entries) {
+      result.data.character_book.entries = result.data.character_book.entries.map((entry) => ({
+        ...entry,
+        content: replaceInCode(entry.content)
+      }));
+    }
 
-  // Cập nhật backup lorebook nếu có
-  const extCharBook = result.data.extensions?.character_book as any;
-  if (extCharBook?.entries) {
-    extCharBook.entries = extCharBook.entries.map((entry: any) => ({
-      ...entry,
-      content: replaceInCode(entry.content)
-    }));
+    // Cập nhật backup lorebook nếu có
+    const extCharBook = result.data.extensions?.character_book as any;
+    if (extCharBook?.entries) {
+      extCharBook.entries = extCharBook.entries.map((entry: any) => ({
+        ...entry,
+        content: replaceInCode(entry.content)
+      }));
+    }
   }
 
   // 4. Xử lý narrative fields — structured replacement only (chỉ thay trong macro/data-var/YAML)
   // Không replace bừa bãi trong văn xuôi
-  if (result.data.system_prompt) {
-    result.data.system_prompt = replaceInStructured(result.data.system_prompt);
+  if (!enabledGroups || enabledGroups.includes('system')) {
+    if (result.data.system_prompt) {
+      result.data.system_prompt = replaceInStructured(result.data.system_prompt);
+    }
+    if (result.data.post_history_instructions) {
+      result.data.post_history_instructions = replaceInStructured(result.data.post_history_instructions);
+    }
   }
-  if (result.data.post_history_instructions) {
-    result.data.post_history_instructions = replaceInStructured(result.data.post_history_instructions);
+
+  if (!enabledGroups || enabledGroups.includes('core')) {
+    if (result.data.description) {
+      result.data.description = replaceInStructured(result.data.description);
+    }
+    if (result.data.personality) {
+      result.data.personality = replaceInStructured(result.data.personality);
+    }
+    if (result.data.scenario) {
+      result.data.scenario = replaceInStructured(result.data.scenario);
+    }
   }
-  if (result.data.description) {
-    result.data.description = replaceInStructured(result.data.description);
-  }
-  if (result.data.personality) {
-    result.data.personality = replaceInStructured(result.data.personality);
-  }
-  if (result.data.scenario) {
-    result.data.scenario = replaceInStructured(result.data.scenario);
-  }
-  if (result.data.first_mes) {
-    result.data.first_mes = replaceInStructured(result.data.first_mes);
+
+  if (!enabledGroups || enabledGroups.includes('messages')) {
+    if (result.data.first_mes) {
+      result.data.first_mes = replaceInStructured(result.data.first_mes);
+    }
   }
 
   return result;

@@ -327,42 +327,48 @@ export function extractTranslatableFields(
   }
 
   // TavernHelper scripts (JS-Slash-Runner)
-  // New format: data.extensions.tavern_helper.scripts[]
-  const tavernHelper = data.extensions?.tavern_helper as { scripts?: { name?: string; content: string; enabled?: boolean }[] } | undefined;
-  if (tavernHelper?.scripts) {
-    tavernHelper.scripts.forEach((script, i) => {
-      if (enabledGroups.includes('tavern_helper') && typeof script.content === 'string' && script.content.trim() !== '') {
-        if (hasTranslatableText(script.content)) {
+  if (enabledGroups.includes('tavern_helper')) {
+    const possibleKeys = ['tavern_helper', 'TavernHelper', 'js_slash_runner', 'TavernHelper_scripts'];
+    
+    possibleKeys.forEach(key => {
+      const extData = data.extensions?.[key];
+      if (!extData) return;
+      
+      let scriptsArray: any[] = [];
+      let isDirectArray = false;
+      
+      if (Array.isArray(extData)) {
+        scriptsArray = extData;
+        isDirectArray = true;
+      } else if (extData && typeof extData === 'object' && 'scripts' in extData && Array.isArray((extData as any).scripts)) {
+        scriptsArray = (extData as any).scripts;
+      }
+      
+      scriptsArray.forEach((script, i) => {
+        if (!script || typeof script !== 'object') return;
+        
+        const contentKey = typeof script.content === 'string' ? 'content' : 
+                          (typeof script.script === 'string' ? 'script' : 
+                          (typeof script.code === 'string' ? 'code' : null));
+                          
+        if (contentKey && script[contentKey].trim() !== '') {
+          // Intentionally skipping hasTranslatableText and isCodeOnly for TavernHelper 
+          // because JS scripts contain heavily stripped syntax that causes false negatives
+          const path = isDirectArray 
+            ? `data.extensions.${key}[${i}].${contentKey}`
+            : `data.extensions.${key}.scripts[${i}].${contentKey}`;
+            
           fields.push({
-            path: `data.extensions.tavern_helper.scripts[${i}].content`,
-            label: `tavernHelper[${i}].content${script.name ? ` (${script.name})` : ''}`,
+            path,
+            label: `tavernHelper[${i}]${script.name ? ` (${script.name})` : ''}`,
             group: 'tavern_helper',
-            original: script.content,
+            original: script[contentKey],
             translated: '',
             status: 'pending',
             retries: 0,
           });
         }
-      }
-    });
-  }
-  // Legacy format: data.extensions.TavernHelper_scripts[]
-  const tavernHelperLegacy = data.extensions?.TavernHelper_scripts as { name?: string; content: string; enabled?: boolean }[] | undefined;
-  if (Array.isArray(tavernHelperLegacy)) {
-    tavernHelperLegacy.forEach((script, i) => {
-      if (enabledGroups.includes('tavern_helper') && typeof script.content === 'string' && script.content.trim() !== '') {
-        if (hasTranslatableText(script.content)) {
-          fields.push({
-            path: `data.extensions.TavernHelper_scripts[${i}].content`,
-            label: `tavernHelper_legacy[${i}].content${script.name ? ` (${script.name})` : ''}`,
-            group: 'tavern_helper',
-            original: script.content,
-            translated: '',
-            status: 'pending',
-            retries: 0,
-          });
-        }
-      }
+      });
     });
   }
 

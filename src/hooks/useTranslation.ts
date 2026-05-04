@@ -1086,7 +1086,10 @@ export function useTranslation() {
     let exportCard = applyTranslationsToCard(store.card, store.fields, store.translationConfig.exportKeyMode);
     
     if (store.translationConfig.enableMvuSync && Object.keys(store.translationConfig.mvuDictionary).length > 0) {
-      exportCard = syncMvuVariables(exportCard, store.translationConfig.mvuDictionary);
+      const enabledGroups = store.translationConfig.fieldGroups
+        .filter((g: FieldGroupConfig) => g.enabled)
+        .map((g: FieldGroupConfig) => g.id);
+      exportCard = syncMvuVariables(exportCard, store.translationConfig.mvuDictionary, enabledGroups);
     }
     
     return exportCard;
