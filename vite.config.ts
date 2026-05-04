@@ -52,6 +52,7 @@ export default defineConfig({
     }
   ],
   server: {
+    open: true,
     // ─── CORS Proxy ───
     // These proxies let the browser call /api-proxy/openai/... etc.
     // and Vite forwards them server-side, bypassing CORS entirely.
