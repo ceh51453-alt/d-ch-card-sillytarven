@@ -414,19 +414,23 @@ export function verifyFields(
     if (isCJKSource && orig.length > 10) {
       const origCJK = countCJK(orig);
       const transCJK = countCJK(trans);
-      // If original was CJK-heavy and translation still has >40% CJK ratio of original
-      if (origCJK > 5 && transCJK > 0) {
+      // Aggressive detection: even a few remaining CJK chars is suspicious
+      // Ratio-based: >5% of original CJK count remaining = warning, >30% = error
+      // Absolute-based: >3 CJK chars in translation = warning regardless of ratio
+      if (origCJK > 3 && transCJK > 0) {
         const ratio = transCJK / origCJK;
-        if (ratio > 0.4) {
+        const shouldFlag = ratio > 0.05 || transCJK > 3;
+        if (shouldFlag) {
+          const severity = ratio > 0.3 ? 'error' : (ratio > 0.15 || transCJK > 10) ? 'warning' : 'info';
           issues.push({
             id: crypto.randomUUID(), fieldPath: field.path,
-            severity: ratio > 0.7 ? 'error' : 'warning',
+            severity,
             category: 'residual_source',
             location: field.label,
-            description: `${transCJK} CJK characters remain (${Math.round(ratio * 100)}% of original). Text may be untranslated.`,
+            description: `${transCJK} CJK characters remain (${Math.round(ratio * 100)}% of original ${origCJK}). Chinese text may not be fully translated.`,
             original: orig.slice(0, 100),
             current: trans.slice(0, 100),
-            suggestion: 'Re-translate this field to ensure all source text is converted.',
+            suggestion: 'Re-translate this field to ensure ALL source Chinese text is converted to the target language.',
             autoFixable: false,
           });
         }

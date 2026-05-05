@@ -232,6 +232,21 @@ RULE C4 — CSS Font-Family Swap (The Only Permitted Code Change):
 function buildLorebookRules(): string {
   return `
 CODE PRESERVATION RULES (LOREBOOK & JSON STATE):
+
+CRITICAL — ZERO TOLERANCE FOR RESIDUAL CHINESE IN LOREBOOK:
+  Lorebook entries are the most common source of untranslated Chinese text surviving in the output.
+  You MUST translate EVERY SINGLE Chinese character in the content field. No exceptions.
+  Common missed items (you MUST catch ALL of these):
+    - Section headers/titles in Chinese (e.g., "人物设定：" → must become Vietnamese)
+    - YAML-like key names in Chinese (e.g., "外貌:" → "Ngoại hình:")
+    - Inline Chinese annotations or parenthetical notes (e.g., "(可爱的)" → "(dễ thương)")
+    - Chinese text inside XML/HTML tags (e.g., <palette_name>赵玉棠</palette_name> → translate the name inside)
+    - Chinese text mixed with Vietnamese/English text (translate the Chinese parts, keep the rest)
+    - Chinese punctuation with Chinese text (full-width commas, periods, brackets with Chinese content)
+    - Labels, category names, and structural markers in Chinese
+  After translating, mentally scan the ENTIRE output for any remaining Chinese characters (汉字).
+  If you find ANY, translate them. The final output must contain ZERO Chinese characters except inside code constructs that reference Chinese-named variables (and those should be renamed per the MVU dictionary if provided).
+
 P5 — YAML-like Structured Data:
   Some lorebook entries use a structured format:
     外貌: 美丽
@@ -239,6 +254,7 @@ P5 — YAML-like Structured Data:
     Cultivation_Level: 筑基期
   RULES for structured data:
     - If the KEY name (left side of the colon) is in Chinese/Japanese (e.g., "外貌", "主色调衍生"), you MUST TRANSLATE the KEY as well as the value (e.g., "Ngoại hình: Xinh đẹp").
+    - If parenthetical annotations contain Chinese (e.g., "(可爱的美少女)"), you MUST translate them too.
     - If the KEY name is in English, PRESERVE the key exactly and only translate the value (e.g., "Cultivation_Level: Trúc Cơ Kỳ").
 
 RULE C2 — JSON Key Translation Integrity:
@@ -419,16 +435,17 @@ function buildFailureModes(fieldType: TranslationFieldType): string {
     markdown_fences: `  [FATAL] Markdown Fencing: Wrapping the output in \`\`\`json or \`\`\`. The parser will read the backticks as literal text, corrupting the save file.`,
     html_attr_translation: `  [FATAL] Translating HTML Attributes: Changing <div class="stats"> to <div class="chỉ-số">. CSS styling relies on class names remaining exactly as they are.`,
     truncation: `  [FATAL] Truncation: Stopping translation midway through a long Lorebook entry or system prompt, discarding the rest of the text.`,
+    residual_chinese: `  [CRITICAL] Residual Chinese: Leaving ANY Chinese characters (汉字) untranslated in the output. This is the #1 most common failure. You MUST translate ALL Chinese text — including section headers, YAML keys, parenthetical annotations, labels, and category names. Scan your output before returning it. If you see any 汉字, translate them.`,
   };
 
   const fieldFailureMap: Record<TranslationFieldType, string[]> = {
-    narrative: ['macro_translation', 'truncation', 'markdown_fences'],
+    narrative: ['macro_translation', 'truncation', 'markdown_fences', 'residual_chinese'],
     regex: ['regex_modification', 'html_attr_translation', 'macro_translation'],
-    lorebook: ['json_key_inconsistency', 'ejs_desync', 'macro_translation'],
+    lorebook: ['residual_chinese', 'json_key_inconsistency', 'ejs_desync', 'macro_translation'],
     ejs_code: ['js_keyword_translation', 'ejs_desync', 'macro_translation', 'html_attr_translation'],
     json_state: ['json_key_inconsistency', 'ejs_desync', 'markdown_fences'],
     json_patch: ['json_key_inconsistency', 'ejs_desync', 'markdown_fences'],
-    mixed: ['macro_translation', 'ejs_desync', 'truncation', 'js_keyword_translation', 'json_key_inconsistency'],
+    mixed: ['residual_chinese', 'macro_translation', 'ejs_desync', 'truncation', 'js_keyword_translation', 'json_key_inconsistency'],
   };
 
   const relevantKeys = fieldFailureMap[fieldType] || fieldFailureMap.mixed;

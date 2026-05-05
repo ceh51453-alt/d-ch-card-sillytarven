@@ -133,7 +133,8 @@ STRICT RULES:
 11. For Japanese proper nouns (names, places, etc.), you MUST transliterate them into standard Romaji.
 12. CRITICAL: The output must contain ONLY the translated text in ${targetLang}. Do NOT include source language text. Do NOT pair original text with translation. Do NOT use arrows (→) or colons (:) to show before/after.
 13. CRITICAL: You MUST translate the COMPLETE text. Do NOT stop early. Do NOT summarize or truncate. If the text is very long, translate ALL of it from start to finish.
-14. CRITICAL: ABSOLUTELY NO untranslated source language characters (e.g., Chinese Hanzi, Japanese Kanji) should remain in the final output. You MUST translate every single word into ${targetLang} unless it is a specific system variable name (like {{char}}).${vietnameseRules}`;
+14. CRITICAL: ABSOLUTELY NO untranslated source language characters (e.g., Chinese Hanzi, Japanese Kanji) should remain in the final output. You MUST translate every single word into ${targetLang} unless it is a specific system variable name (like {{char}}). This includes: section headers, YAML-like key names, parenthetical annotations, labels, category names, and text inside XML tags. After translating, scan your ENTIRE output for any remaining Chinese characters — if you find ANY, translate them immediately.
+15. LOREBOOK SPECIFIC: Lorebook entries commonly have Chinese text that gets missed during translation. You MUST translate ALL of these: Chinese section headers (e.g., "人物设定："), Chinese YAML keys (e.g., "外貌:"), Chinese annotations in parentheses (e.g., "(可爱的)"), Chinese text inside XML tags (e.g., <tag>中文内容</tag>), and any Chinese text mixed with already-translated Vietnamese text. The final output must have ZERO Chinese characters.${vietnameseRules}`;
 }
 
 /**
@@ -291,6 +292,126 @@ Translate the following updated original text. Return ONLY the pure translated t
 function getCJKRatio(text: string): number {
   const cjkChars = (text.match(/[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u30ff\uac00-\ud7af]/g) || []).length;
   return text.length > 0 ? cjkChars / text.length : 0;
+}
+
+/** Count only Chinese characters (CJK Unified Ideographs), excluding Japanese kana */
+function countChineseChars(text: string): number {
+  return (text.match(/[\u4e00-\u9fff\u3400-\u4dbf]/g) || []).length;
+}
+
+/**
+ * Extract Chinese fragments from a partially-translated text.
+ * Returns segments of consecutive Chinese characters with surrounding context.
+ */
+function extractChineseFragments(text: string): string[] {
+  const fragments: string[] = [];
+  const regex = /[\u4e00-\u9fff\u3400-\u4dbf][\u4e00-\u9fff\u3400-\u4dbf\u3000-\u303f\uff00-\uffef\s]{0,200}[\u4e00-\u9fff\u3400-\u4dbf]/g;
+  let m;
+  while ((m = regex.exec(text)) !== null) {
+    fragments.push(m[0]);
+  }
+  // Also catch single isolated Chinese chars
+  const singles = text.match(/(?<![\u4e00-\u9fff\u3400-\u4dbf])[\u4e00-\u9fff\u3400-\u4dbf](?![\u4e00-\u9fff\u3400-\u4dbf])/g) || [];
+  for (const s of singles) {
+    if (!fragments.some(f => f.includes(s))) fragments.push(s);
+  }
+  return fragments;
+}
+
+/**
+ * Post-translation residual CJK check & auto-retry.
+ * If the translated result still contains Chinese characters above threshold,
+ * sends it back to the AI with a focused cleanup prompt.
+ * Max 2 retry attempts to avoid infinite loops.
+ */
+async function postTranslationResidualCheck(
+  original: string,
+  translated: string,
+  fieldName: string,
+  config: ProxySettings,
+  targetLang: string,
+  sourceLang: string,
+  signal?: AbortSignal,
+  _fieldType?: TranslationFieldType,
+  mvuDictionary?: Record<string, string>,
+): Promise<string> {
+  const isTargetCJK = /chinese|japanese|korean/i.test(targetLang);
+  if (isTargetCJK) return translated;
+
+  const origChineseCount = countChineseChars(original);
+  if (origChineseCount < 3) return translated;
+
+  let currentResult = translated;
+
+  for (let retry = 0; retry < 2; retry++) {
+    const residualCount = countChineseChars(currentResult);
+    if (residualCount <= 2) {
+      if (retry > 0) console.log(`[ResidualCheck] ${fieldName}: Clean after ${retry} retry(ies)`);
+      return currentResult;
+    }
+
+    const fragments = extractChineseFragments(currentResult);
+    const fragmentList = fragments.slice(0, 20).map(f => `  ${f}`).join('\n');
+
+    console.log(`[ResidualCheck] ${fieldName}: ${residualCount} Chinese chars remain (retry ${retry + 1}/2). Fragments:\n${fragmentList}`);
+
+    let mvuBlock = '';
+    if (mvuDictionary && Object.keys(mvuDictionary).length > 0) {
+      mvuBlock = '\nMVU Variable Dictionary:\n' +
+        Object.entries(mvuDictionary)
+          .filter(([k, v]) => k && v && k !== v)
+          .map(([k, v]) => `  "${k}" -> "${v}"`)
+          .join('\n');
+    }
+
+    const cleanupSystem = `You are a translation cleanup agent. The text below was translated from ${sourceLang || 'Chinese'} to ${targetLang}, but some Chinese characters were left untranslated.
+
+Your ONLY job: Find ALL remaining Chinese text and translate it to ${targetLang}.
+
+RULES:
+1. Output the COMPLETE text with ALL Chinese replaced by ${targetLang} translations.
+2. Do NOT change anything already in ${targetLang}, English, or code.
+3. Preserve ALL formatting, HTML, code, macros, EJS, regex patterns.
+4. Translate Chinese names using Han Viet (Sino-Vietnamese) reading.
+5. Do NOT wrap output in markdown fences.
+6. Do NOT add explanations.
+7. Return the FULL text, not just the translated fragments.
+
+Chinese fragments that need translation:
+${fragmentList}${mvuBlock}`;
+
+    const cleanupUser = `Translate ALL remaining Chinese text in the following to ${targetLang}. Return the COMPLETE corrected text:\n\n${currentResult}`;
+
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort('Residual check timeout'), (config.requestTimeout || 60000) * 2);
+      const combinedSignal = signal
+        ? AbortSignal.any([signal, controller.signal])
+        : controller.signal;
+
+      const cleanedResult = await callProvider(config, cleanupSystem, cleanupUser, combinedSignal);
+      clearTimeout(timeout);
+
+      if (cleanedResult && cleanedResult.trim()) {
+        const parsed = config.expertMode
+          ? (extractTranslationFromResponse(cleanedResult).translation || cleanedResult)
+          : cleanedResult;
+        const newResidual = countChineseChars(parsed);
+        if (newResidual < residualCount) {
+          currentResult = parsed.trim();
+          console.log(`[ResidualCheck] ${fieldName}: Reduced ${residualCount} -> ${newResidual} Chinese chars`);
+        } else {
+          console.log(`[ResidualCheck] ${fieldName}: Cleanup did not reduce Chinese (${residualCount} -> ${newResidual}), keeping original`);
+          return currentResult;
+        }
+      }
+    } catch (err) {
+      console.warn(`[ResidualCheck] ${fieldName}: Cleanup retry failed:`, err);
+      return currentResult;
+    }
+  }
+
+  return currentResult;
 }
 
 /* ─── Chunk long text (CJK-aware) ─── */
@@ -984,7 +1105,11 @@ export async function translateText(
     const result = await translateChunk(
       chunks[0], 0, 1, fieldName, config, targetLang, sourceLang, system, user, signal
     );
-    return cleanTranslationResponse(text, result, isExpert);
+    const cleaned = cleanTranslationResponse(text, result, isExpert);
+    // RESIDUAL CJK CHECK: auto-retry if Chinese text remains
+    return postTranslationResidualCheck(
+      text, cleaned, fieldName, config, targetLang, sourceLang, signal, fieldType, mvuDictionary
+    );
   }
 
   // ═══ MULTIPLE CHUNKS — parallel translation (concurrency-limited) ═══
@@ -1053,7 +1178,11 @@ export async function translateText(
   const isHtmlContent = /<[a-z][^>]*>/i.test(text) && /<\/[a-z]+>/i.test(text);
   const joiner = isHtmlContent ? '' : '\n\n';
   const rawResult = verifiedChunks.join(joiner);
-  return cleanTranslationResponse(text, rawResult, isExpert);
+  const cleaned = cleanTranslationResponse(text, rawResult, isExpert);
+  // RESIDUAL CJK CHECK: auto-retry if Chinese text remains
+  return postTranslationResidualCheck(
+    text, cleaned, fieldName, config, targetLang, sourceLang, signal, fieldType, mvuDictionary
+  );
 }
 
 /* ─── Batch translate multiple fields in one API call ─── */
