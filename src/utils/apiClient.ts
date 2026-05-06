@@ -880,13 +880,18 @@ function cleanTranslationResponse(original: string, translated: string, isExpert
   if (!translated || !translated.trim()) return translated;
 
   // ═══ EXPERT MODE: Extract <translation> content from XML response ═══
-  if (isExpertMode || translated.includes('<translation>')) {
+  if (
+    isExpertMode || 
+    translated.includes('<translation>') || 
+    translated.includes('<thought_process>') || 
+    translated.includes('<think>')
+  ) {
     const parsed = extractTranslationFromResponse(translated);
-    if (parsed.usedXmlParsing && parsed.translation) {
+    if (parsed.translation) {
       if (parsed.thoughtProcess) {
         console.log('[Expert Mode] Thought process extracted:', parsed.thoughtProcess.slice(0, 200) + '...');
       }
-      // Use extracted translation for further cleaning
+      // Use extracted translation (which has thought blocks stripped) for further cleaning
       translated = parsed.translation;
     }
   }

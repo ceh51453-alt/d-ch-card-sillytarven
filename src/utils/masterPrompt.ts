@@ -657,19 +657,22 @@ export function extractTranslationFromResponse(raw: string): ParsedTranslationRe
     return { translation: '', usedXmlParsing: false };
   }
 
-  const trimmed = raw.trim();
+  let trimmed = raw.trim();
+  let thoughtProcess: string | undefined = undefined;
+
+  // Extract thought process for debug logging and remove it from raw string if found
+  const thoughtMatch = trimmed.match(/<(?:thought_process|think)>([\s\S]*?)<\/(?:thought_process|think)>/i);
+  if (thoughtMatch) {
+    thoughtProcess = thoughtMatch[1].trim();
+    // We remove the thought block entirely from our working string
+    trimmed = trimmed.replace(/<(?:thought_process|think)>[\s\S]*?<\/(?:thought_process|think)>/i, '').trim();
+  }
 
   // Try to extract <translation> content
   const translationMatch = trimmed.match(/<translation>([\s\S]*?)<\/translation>/i);
   if (translationMatch) {
-    const translation = translationMatch[1].trim();
-
-    // Also extract thought process for debug logging
-    const thoughtMatch = trimmed.match(/<thought_process>([\s\S]*?)<\/thought_process>/i);
-    const thoughtProcess = thoughtMatch ? thoughtMatch[1].trim() : undefined;
-
     return {
-      translation,
+      translation: translationMatch[1].trim(),
       thoughtProcess,
       usedXmlParsing: true,
     };
@@ -680,14 +683,16 @@ export function extractTranslationFromResponse(raw: string): ParsedTranslationRe
   if (partialMatch) {
     return {
       translation: partialMatch[1].trim(),
+      thoughtProcess,
       usedXmlParsing: true,
     };
   }
 
-  // No XML tags found — return raw text as-is (non-expert mode or model didn't follow format)
+  // No <translation> tags found — return raw text (with thought blocks stripped)
   return {
     translation: trimmed,
-    usedXmlParsing: false,
+    thoughtProcess,
+    usedXmlParsing: !!thoughtProcess,
   };
 }
 
