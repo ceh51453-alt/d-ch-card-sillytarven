@@ -1364,10 +1364,18 @@ async function translateChunk(
 
       // ─── Token limit truncation detection ───
       // If AI hits max tokens inside a thought block, it never outputs the translation.
-      if (
-        result.match(/<(?:thought_process|think)>[\s\S]*$/i) && 
-        !result.match(/<\/(?:thought_process|think)>/i)
-      ) {
+      // To avoid false positives when translating text that literally contains "<think>",
+      // we check if the thought block is structural:
+      // 1. It starts near the beginning of the text (e.g. DeepSeek R1)
+      // 2. Or we are in expertMode and the <translation> block is missing
+      const hasThoughtOpen = /<(?:thought_process|think)>/i.test(result);
+      const hasThoughtClose = /<\/(?:thought_process|think)>/i.test(result);
+      const hasUnclosedThought = hasThoughtOpen && !hasThoughtClose;
+      
+      const startsWithThought = /^\s*<(?:thought_process|think)>/i.test(result);
+      const isExpertMissingTranslation = config.expertMode && !/<translation>/i.test(result);
+
+      if (hasUnclosedThought && (startsWithThought || isExpertMissingTranslation)) {
         throw new Error('AI bị ngắt ngang do chạm giới hạn Max Tokens (chưa kịp xuất bản dịch).');
       }
 
@@ -1404,6 +1412,9 @@ async function translateChunk(
       return result;
     } catch (err) {
       lastError = err as Error;
+      if (lastError.message?.includes('BodyStreamBuffer was aborted') || lastError.message?.includes('fetch failed')) {
+        lastError = new Error('Lỗi mạng: API đột ngột ngắt kết nối (BodyStreamBuffer aborted). Có thể do timeout proxy hoặc nội dung bị bộ lọc an toàn của AI chặn.');
+      }
 
       if (signal?.aborted) throw err;
 
