@@ -695,6 +695,27 @@ export default function TranslateConfig() {
               )}
             </div>
 
+            {/* ═══ Surgical CJK Translation Mode ═══ */}
+            <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '10px' }}>
+              <label className="checkbox-wrapper">
+                <input
+                  type="checkbox"
+                  checked={translationConfig.surgicalMode}
+                  onChange={(e) => setTranslationConfig({ surgicalMode: e.target.checked })}
+                />
+                <div>
+                  <span style={{ color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                    ✂️ {locale === 'vi' ? 'Surgical CJK Translation' : 'Surgical CJK Translation'}
+                  </span>
+                  <span style={{ color: 'var(--text-muted)', fontSize: '0.65rem', display: 'block', marginTop: '2px' }}>
+                    {locale === 'vi'
+                      ? 'Dịch an toàn cho các field có chứa code (EJS/Regex). Chỉ bóc tách chữ CJK để dịch, giữ nguyên 100% cấu trúc code.'
+                      : 'Safe translation for code-heavy fields (EJS/Regex). Extracts only CJK strings for translation, preserving 100% of code structure.'}
+                  </span>
+                </div>
+              </label>
+            </div>
+
             {/* MVU Sync Panel (Chiến Lược B) */}
             <div style={{ marginTop: '8px' }}>
               <MvuSyncPanel />

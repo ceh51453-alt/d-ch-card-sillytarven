@@ -135,6 +135,8 @@ export interface TranslationField {
   previousTranslation?: string;
   /** MVU entry classification for per-type translation strategy */
   entryType?: 'initvar' | 'mvu_logic' | 'rules' | 'narrative' | 'controller' | 'json_patch';
+  /** Surgical result state if field was processed using surgical translate */
+  surgicalResult?: { type: 'success' | 'fallback'; info?: string };
 }
 
 export type FieldGroup =
@@ -216,6 +218,7 @@ export interface TranslationConfig {
   chunkSize: number; // Tùy chỉnh kích thước chia chunk (số ký tự)
   enableJailbreak: boolean; // Enable Catbox Jailbreak for NSFW cards
   enableObjectiveMode: boolean; // Enable Bạch miêu (objective translation)
+  surgicalMode: boolean; // Extract and translate only CJK substrings for code-heavy fields
 }
 
 /* ─── Log Entry ─── */

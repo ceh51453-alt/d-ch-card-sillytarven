@@ -1163,7 +1163,7 @@ async function waitForRateLimit(signal?: AbortSignal): Promise<void> {
 }
 
 /* ─── Route to correct provider (with key rotation + rate limiting) ─── */
-async function callProvider(
+export async function callProvider(
   config: ProxySettings,
   system: string,
   user: string,

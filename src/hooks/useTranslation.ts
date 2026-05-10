@@ -8,6 +8,7 @@ import { clearRAGCache } from '../utils/ragContext';
 import { getMvuCardSummary } from '../utils/mvuDetector';
 import { validateMvuVariables, autoFixMvuVariables, generateSyncReport, buildEntryNameDictionary, validateEntryNameSync } from '../utils/mvuValidator';
 import { buildEffectivePrompt } from '../utils/promptBuilder';
+import { surgicalTranslate } from '../utils/surgical';
 import type { FieldGroup, FieldGroupConfig, TranslationField } from '../types/card';
 
 
@@ -140,22 +141,55 @@ export function useTranslation() {
         ? useStore.getState().translationConfig.mvuDictionary
         : undefined;
 
-      let translated = await translateText(
-        field.original,
-        field.label,
-        store.proxy,
-        store.translationConfig.targetLanguage,
-        store.translationConfig.sourceLanguage,
-        promptResult.effectivePrompt,
-        promptResult.schemaForApi,
-        abortRef.current?.signal,
-        contextHint,
-        promptResult.glossaryForApi,
-        field.previousTranslation,
-        resolvedFieldType,
-        currentMvuDict,
-        store.translationConfig.chunkSize
-      );
+      let translated = '';
+      let usedSurgical = false;
+      let surgicalFallback = false;
+
+      const isEligibleForSurgical = store.translationConfig.surgicalMode && 
+        (field.group === 'regex' || field.group === 'tavern_helper' || field.original.includes('`') || field.original.includes('{') || field.original.includes('<'));
+
+      if (isEligibleForSurgical) {
+        usedSurgical = true;
+        store.addLog('active', `🔪 Initiating Surgical Translation for ${field.label}...`);
+        const sResult = await surgicalTranslate(
+          field.original,
+          store.proxy,
+          store.translationConfig.targetLanguage,
+          abortRef.current?.signal
+        );
+        translated = sResult.translated;
+        
+        if (sResult.success) {
+          store.updateField(field.path, { 
+            surgicalResult: { type: 'success', info: 'Successfully extracted and reinserted CJK without touching code structure.' } 
+          });
+        } else {
+          surgicalFallback = true;
+          store.updateField(field.path, { 
+            surgicalResult: { type: 'fallback', info: 'Structural verification failed. Falling back to standard translation.' } 
+          });
+          store.addLog('warning', `Surgical verification failed for ${field.label}. Falling back to standard translation.`);
+        }
+      }
+
+      if (!isEligibleForSurgical || surgicalFallback) {
+        translated = await translateText(
+          field.original,
+          field.label,
+          store.proxy,
+          store.translationConfig.targetLanguage,
+          store.translationConfig.sourceLanguage,
+          promptResult.effectivePrompt,
+          promptResult.schemaForApi,
+          abortRef.current?.signal,
+          contextHint,
+          promptResult.glossaryForApi,
+          field.previousTranslation,
+          resolvedFieldType,
+          currentMvuDict,
+          store.translationConfig.chunkSize
+        );
+      }
 
       // Post-process regex HTML: font swap + underscore display
       const isRegexContent = field.group === 'regex' && (field.path.includes('replaceString') || field.path.includes('trimStrings'));

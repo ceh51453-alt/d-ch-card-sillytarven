@@ -144,6 +144,34 @@ function DiffView({ original, translated }: { original: string; translated: stri
   );
 }
 
+function SurgicalResultBadge({ result }: { result?: { type: 'success' | 'fallback', info?: string } }) {
+  if (!result) return null;
+
+  if (result.type === 'success') {
+    return (
+      <span style={{ 
+        fontSize: '0.55rem', padding: '1px 4px', 
+        background: 'rgba(76,175,80,0.15)', color: '#4caf50', 
+        borderRadius: '3px', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '2px',
+        border: '1px solid rgba(76,175,80,0.3)'
+      }} title={result.info}>
+        <Check size={9} /> SURGICAL
+      </span>
+    );
+  }
+
+  return (
+    <span style={{ 
+      fontSize: '0.55rem', padding: '1px 4px', 
+      background: 'rgba(255,152,0,0.15)', color: '#ff9800', 
+      borderRadius: '3px', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '2px',
+      border: '1px solid rgba(255,152,0,0.3)'
+    }} title={result.info || 'Structural check failed, used standard translation.'}>
+      <AlertTriangle size={9} /> FALLBACK
+    </span>
+  );
+}
+
 /** Live HTML/Regex Preview Pane — renders translated HTML in a sandboxed iframe */
 function HtmlPreviewPane({ html }: { html: string }) {
   const srcdoc = useMemo(() => {
@@ -478,6 +506,7 @@ function VirtualTableView({
                           <span style={{ fontSize: '0.55rem', padding: '1px 4px', background: 'rgba(236,72,153,0.1)', color: '#f472b6', borderRadius: '3px', fontWeight: 600 }}>PATCH</span>
                         )}
                         <StatusBadge status={field.status} t={t} />
+                        {field.surgicalResult && <SurgicalResultBadge result={field.surgicalResult} />}
                         <CharRatio original={field.original} translated={field.translated} />
                       </div>
                       {field.error && (
