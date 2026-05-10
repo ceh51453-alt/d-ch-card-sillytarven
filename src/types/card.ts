@@ -219,6 +219,8 @@ export interface TranslationConfig {
   enableJailbreak: boolean; // Enable Catbox Jailbreak for NSFW cards
   enableObjectiveMode: boolean; // Enable Bạch miêu (objective translation)
   surgicalMode: boolean; // Extract and translate only CJK substrings for code-heavy fields
+  enableModMode: boolean; // Enable custom user mod instructions for translation
+  modInstructions: string; // The custom instructions provided by the user
 }
 
 /* ─── Log Entry ─── */

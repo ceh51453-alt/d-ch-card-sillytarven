@@ -133,6 +133,8 @@ export function useTranslation() {
         ragMaxChars: store.translationConfig.ragMaxChars,
         entryNameDictionary: Object.keys(entryNameDict).length > 0 ? entryNameDict : undefined,
         expertMode: store.proxy.expertMode,
+        enableModMode: store.translationConfig.enableModMode,
+        modInstructions: store.translationConfig.modInstructions,
       });
 
       // ═══ Determine field type for Master Prompt (expert mode) ═══
@@ -230,6 +232,24 @@ export function useTranslation() {
         return 'error';
       }
 
+      // Schema CJK Validation: Ensure schema doesn't have any Chinese
+      const isTargetNonCJK = !(/chinese|中文|japanese|日本語|korean|한국어/i.test(store.translationConfig.targetLanguage));
+      const isSchemaCritical = field.entryType === 'initvar' || field.entryType === 'controller' || field.entryType === 'mvu_logic' || field.group === 'tavern_helper';
+      if (isTargetNonCJK && isSchemaCritical) {
+        const cjkRegex = /[\u4e00-\u9fff\u3400-\u4dbf\u3000-\u303f\uff00-\uffef]/;
+        if (cjkRegex.test(translated)) {
+          if (freshRetries() < (store.proxy.maxRetries || 3)) {
+            store.updateField(field.path, { retries: freshRetries() + 1 });
+            store.addLog('retry', `⚠️ Chinese characters detected in Schema (${field.label}). Auto-retrying...`);
+            await new Promise((r) => setTimeout(r, store.proxy.retryDelay || 1000));
+            return 'retry';
+          }
+          store.updateField(field.path, { status: 'error', error: 'Schema translation failed (Chinese characters remaining)' });
+          store.addLog('error', `Chinese characters remaining in Schema for ${field.label} after retries.`);
+          return 'error';
+        }
+      }
+
       // Min response length validation
       // Code-heavy fields (TavernHelper scripts, regex HTML) legitimately produce much shorter
       // translations because most content is code that stays unchanged — only CJK text is translated.
@@ -309,6 +329,8 @@ export function useTranslation() {
         ragMaxChars: store.translationConfig.ragMaxChars,
         entryNameDictionary: Object.keys(batchEntryNameDict).length > 0 ? batchEntryNameDict : undefined,
         expertMode: store.proxy.expertMode,
+        enableModMode: store.translationConfig.enableModMode,
+        modInstructions: store.translationConfig.modInstructions,
       });
 
       const results = await translateBatch(
@@ -338,6 +360,18 @@ export function useTranslation() {
         if (!translated.trim()) {
           emptyFields.push(batchFields[j]);
           continue;
+        }
+
+        const isTargetNonCJK = !(/chinese|中文|japanese|日本語|korean|한국어/i.test(store.translationConfig.targetLanguage));
+        const f = batchFields[j];
+        const isSchemaCritical = f.entryType === 'initvar' || f.entryType === 'controller' || f.entryType === 'mvu_logic' || f.group === 'tavern_helper';
+        if (isTargetNonCJK && isSchemaCritical) {
+          const cjkRegex = /[\u4e00-\u9fff\u3400-\u4dbf\u3000-\u303f\uff00-\uffef]/;
+          if (cjkRegex.test(translated)) {
+            store.addLog('warning', `⚠️ Chinese characters detected in Schema batch (${f.label}). Will retry individually.`);
+            emptyFields.push(f);
+            continue;
+          }
         }
 
         // ─── Post-batch MVU variable validation + auto-fix ───
@@ -962,6 +996,8 @@ export function useTranslation() {
         ragMaxChars: store.translationConfig.ragMaxChars,
         entryNameDictionary: Object.keys(retranslateEntryNameDict).length > 0 ? retranslateEntryNameDict : undefined,
         expertMode: store.proxy.expertMode,
+        enableModMode: store.translationConfig.enableModMode,
+        modInstructions: store.translationConfig.modInstructions,
       });
 
       const resolvedFieldType = fieldGroupToFieldType(field.group, field.entryType);

@@ -277,6 +277,8 @@ export const useStore = create<AppState>((set) => ({
     enableJailbreak: LS.get('st-translator-jailbreak', true),
     enableObjectiveMode: LS.get('st-translator-objective-mode', true),
     surgicalMode: LS.get('st-translator-surgical-mode', false),
+    enableModMode: LS.get('st-translator-mod-mode', false),
+    modInstructions: LS.get('st-translator-mod-instructions', ''),
   },
   setTranslationConfig: (partial) =>
     set((s) => {
@@ -307,6 +309,12 @@ export const useStore = create<AppState>((set) => ({
       }
       if ('surgicalMode' in partial) {
         LS.set('st-translator-surgical-mode', next.surgicalMode);
+      }
+      if ('enableModMode' in partial) {
+        LS.set('st-translator-mod-mode', next.enableModMode);
+      }
+      if ('modInstructions' in partial) {
+        LS.set('st-translator-mod-instructions', next.modInstructions);
       }
       if ('translationPrompt' in partial) {
         LS.set('st-translator-custom-prompt', next.translationPrompt);

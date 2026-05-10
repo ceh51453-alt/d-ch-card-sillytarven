@@ -644,103 +644,143 @@ RESPOND in EXACT JSON format (no markdown): {"translations": {"original_key": "T
 Variables to translate:
 ${varList}`;
 
-    try {
-      const url = proxy.proxyUrl.replace(/\/+$/, '');
-      let apiUrl: string;
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      let body: any;
+    let batchRetries = 0;
+    const MAX_RETRIES = 3;
+    let batchSuccess = false;
 
-      if (proxy.provider === 'anthropic') {
-        apiUrl = url + '/messages';
-        headers['x-api-key'] = proxy.apiKey;
-        headers['anthropic-version'] = '2023-06-01';
-        headers['anthropic-dangerous-direct-browser-access'] = 'true';
-        body = {
-          model: proxy.model,
-          max_tokens: getMaxOutputTokens(proxy.model, proxy.maxTokens),
-          system: systemPrompt,
-          messages: [{ role: 'user', content: userPrompt }],
-          temperature: 0.1,
-        };
-      } else if (proxy.provider === 'google') {
-        apiUrl = `${url}/models/${proxy.model}:generateContent?key=${proxy.apiKey}`;
-        body = {
-          system_instruction: { parts: [{ text: systemPrompt }] },
-          contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
-          generationConfig: { maxOutputTokens: getMaxOutputTokens(proxy.model, proxy.maxTokens), temperature: 0.1 },
-          safetySettings: [
-            { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
-            { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
-            { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
-            { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
-          ],
-        };
-      } else {
-        apiUrl = url + '/chat/completions';
-        if (proxy.apiKey) headers['Authorization'] = `Bearer ${proxy.apiKey}`;
-        body = {
-          model: proxy.model,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt },
-          ],
-          max_tokens: getMaxOutputTokens(proxy.model, proxy.maxTokens),
-          temperature: 0.1,
-        };
-      }
+    while (batchRetries < MAX_RETRIES && !batchSuccess) {
+      if (signal?.aborted) break;
 
-      // Add per-request timeout protection
-      const requestTimeout = (proxy as any).requestTimeout || 300000;
-      const timeoutController = new AbortController();
-      const timeoutId = setTimeout(() => timeoutController.abort('MVU key translation timeout'), requestTimeout * 2);
-      const fetchSignal = signal
-        ? AbortSignal.any([signal, timeoutController.signal])
-        : timeoutController.signal;
+      try {
+        const url = proxy.proxyUrl.replace(/\/+$/, '');
+        let apiUrl: string;
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        let body: any;
 
-      const res = await fetch(apiUrl, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(body),
-        signal: fetchSignal,
-      });
-      clearTimeout(timeoutId);
+        if (proxy.provider === 'anthropic') {
+          apiUrl = url + '/messages';
+          headers['x-api-key'] = proxy.apiKey;
+          headers['anthropic-version'] = '2023-06-01';
+          headers['anthropic-dangerous-direct-browser-access'] = 'true';
+          body = {
+            model: proxy.model,
+            max_tokens: getMaxOutputTokens(proxy.model, proxy.maxTokens),
+            system: systemPrompt,
+            messages: [{ role: 'user', content: userPrompt }],
+            temperature: 0.1,
+          };
+        } else if (proxy.provider === 'google') {
+          apiUrl = `${url}/models/${proxy.model}:generateContent?key=${proxy.apiKey}`;
+          body = {
+            system_instruction: { parts: [{ text: systemPrompt }] },
+            contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
+            generationConfig: { maxOutputTokens: getMaxOutputTokens(proxy.model, proxy.maxTokens), temperature: 0.1 },
+            safetySettings: [
+              { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+              { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+              { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+              { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
+            ],
+          };
+        } else {
+          apiUrl = url + '/chat/completions';
+          if (proxy.apiKey) headers['Authorization'] = `Bearer ${proxy.apiKey}`;
+          body = {
+            model: proxy.model,
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: userPrompt },
+            ],
+            max_tokens: getMaxOutputTokens(proxy.model, proxy.maxTokens),
+            temperature: 0.1,
+          };
+        }
 
-      if (!res.ok) {
-        const errText = await res.text().catch(() => '');
-        throw new Error(`API ${res.status}: ${errText.slice(0, 200)}`);
-      }
+        // Add per-request timeout protection
+        const requestTimeout = (proxy as any).requestTimeout || 300000;
+        const timeoutController = new AbortController();
+        const timeoutId = setTimeout(() => timeoutController.abort('MVU key translation timeout'), requestTimeout * 2);
+        const fetchSignal = signal
+          ? AbortSignal.any([signal, timeoutController.signal])
+          : timeoutController.signal;
 
-      const json = await res.json();
-      let responseText = '';
-      if (proxy.provider === 'anthropic') {
-        responseText = json.content?.[0]?.text || '';
-      } else if (proxy.provider === 'google') {
-        responseText = json.candidates?.[0]?.content?.parts?.[0]?.text || '';
-      } else {
-        responseText = json.choices?.[0]?.message?.content || '';
-      }
+        const res = await fetch(apiUrl, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(body),
+          signal: fetchSignal,
+        });
+        clearTimeout(timeoutId);
 
-      // Parse JSON response
-      let jsonStr = responseText.trim();
-      if (jsonStr.startsWith('```')) {
-        jsonStr = jsonStr.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
-      }
+        if (!res.ok) {
+          const errText = await res.text().catch(() => '');
+          throw new Error(`API ${res.status}: ${errText.slice(0, 200)}`);
+        }
 
-      const parsed = JSON.parse(jsonStr);
-      const translations = parsed.translations || parsed;
+        const json = await res.json();
+        let responseText = '';
+        if (proxy.provider === 'anthropic') {
+          responseText = json.content?.[0]?.text || '';
+        } else if (proxy.provider === 'google') {
+          responseText = json.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        } else {
+          responseText = json.choices?.[0]?.message?.content || '';
+        }
 
-      for (const [k, v] of Object.entries(translations)) {
-        if (typeof v === 'string' && v.trim()) {
-          result[k] = v.trim();
+        // Parse JSON response
+        let jsonStr = responseText.trim();
+        if (jsonStr.startsWith('```')) {
+          jsonStr = jsonStr.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
+        }
+
+        const parsed = JSON.parse(jsonStr);
+        const translations = parsed.translations || parsed;
+
+        // --- CJK Validation ---
+        const isTargetNonCJK = !(/chinese|中文|japanese|日本語|korean|한국어/i.test(targetLang));
+        const cjkRegex = /[\u4e00-\u9fff\u3400-\u4dbf\u3000-\u303f\uff00-\uffef]/;
+        let cjkFound = false;
+
+        if (isTargetNonCJK) {
+          for (const [k, v] of Object.entries(translations)) {
+            if (typeof v === 'string' && v.trim() && cjkRegex.test(v.trim())) {
+              cjkFound = true;
+              break;
+            }
+          }
+        }
+
+        if (cjkFound) {
+          batchRetries++;
+          console.warn(`[MVU Sync] CJK detected in translated variables. Retrying... (${batchRetries}/${MAX_RETRIES})`);
+          if (batchRetries < MAX_RETRIES) {
+            await new Promise(r => setTimeout(r, 1000 * Math.pow(2, batchRetries)));
+            continue; // Retry
+          } else {
+            console.error(`AI MVU key translation failed: CJK characters remained after max retries.`);
+            // Accept failure for this batch
+            break;
+          }
+        }
+
+        for (const [k, v] of Object.entries(translations)) {
+          if (typeof v === 'string' && v.trim()) {
+            result[k] = v.trim();
+          }
+        }
+
+        batchSuccess = true;
+
+      } catch (err: any) {
+        if (err.name === 'AbortError' || signal?.aborted) {
+          throw err; // Re-throw to handle cancellation properly
+        }
+        batchRetries++;
+        console.error(`AI MVU key translation batch failed (Retry ${batchRetries}/${MAX_RETRIES}):`, err);
+        if (batchRetries < MAX_RETRIES) {
+          await new Promise(r => setTimeout(r, 1000 * Math.pow(2, batchRetries)));
         }
       }
-
-    } catch (err: any) {
-      if (err.name === 'AbortError' || signal?.aborted) {
-        throw err; // Re-throw to handle cancellation properly
-      }
-      console.error(`AI MVU key translation batch failed:`, err);
-      // Continue with next batch
     }
   } // end batch loop
 

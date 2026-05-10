@@ -144,6 +144,8 @@ export interface PromptBuildOptions {
   // ─── Extra options ───
   /** Strict Code Preservation (CustomTranslatePanel toggle) */
   strictCodePreservation?: boolean;
+  enableModMode?: boolean;
+  modInstructions?: string;
   /**
    * When true, masterPrompt.ts handles field-type rules + MVU dict + glossary,
    * so we skip those here to avoid double injection.
@@ -302,6 +304,8 @@ export function buildEffectivePrompt(options: PromptBuildOptions): PromptBuildRe
     ragMaxChars = 3000,
     entryNameDictionary,
     strictCodePreservation = false,
+    enableModMode = false,
+    modInstructions = '',
     expertMode = false,
   } = options;
 
@@ -341,6 +345,11 @@ export function buildEffectivePrompt(options: PromptBuildOptions): PromptBuildRe
   // ─── 3. Strict Code Preservation (not in masterPrompt.ts) ───
   if (strictCodePreservation) {
     prompt += STRICT_CODE_PRESERVATION_PROMPT;
+  }
+
+  // ─── 3.5. Mod Instructions Override ───
+  if (enableModMode && modInstructions.trim()) {
+    prompt += `\n\n[CRITICAL OVERRIDE: USER MOD INSTRUCTIONS]\nBạn PHẢI tuân thủ các yêu cầu đặc biệt sau đây từ người dùng (nếu có xung đột, ưu tiên yêu cầu này):\n${modInstructions.trim()}`;
   }
 
   // ─── 4. RAG Context OR Legacy MVU Dict Injection ───

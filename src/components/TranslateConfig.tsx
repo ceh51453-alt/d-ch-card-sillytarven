@@ -33,12 +33,15 @@ export default function TranslateConfig() {
   const defaultPrompt = getDefaultTranslationPrompt(translationConfig.sourceLanguage, translationConfig.targetLanguage);
   const [promptDraft, setPromptDraft] = useState<string>(translationConfig.translationPrompt || '');
   const [schemaDraft, setSchemaDraft] = useState<string>(translationConfig.customSchema || '');
+  const [modInstructionsDraft, setModInstructionsDraft] = useState<string>(translationConfig.modInstructions || '');
   const [promptSaved, setPromptSaved] = useState(false);
   const [schemaSaved, setSchemaSaved] = useState(false);
+  const [modInstructionsSaved, setModInstructionsSaved] = useState(false);
 
   // Track whether drafts differ from saved values
   const promptDirty = promptDraft !== (translationConfig.translationPrompt || '');
   const schemaDirty = schemaDraft !== (translationConfig.customSchema || '');
+  const modInstructionsDirty = modInstructionsDraft !== (translationConfig.modInstructions || '');
 
   const savePrompt = () => {
     const defaultP = getDefaultTranslationPrompt(translationConfig.sourceLanguage, translationConfig.targetLanguage);
@@ -61,6 +64,12 @@ export default function TranslateConfig() {
     setTranslationConfig({ customSchema: schemaDraft });
     setSchemaSaved(true);
     setTimeout(() => setSchemaSaved(false), 2000);
+  };
+
+  const saveModInstructions = () => {
+    setTranslationConfig({ modInstructions: modInstructionsDraft });
+    setModInstructionsSaved(true);
+    setTimeout(() => setModInstructionsSaved(false), 2000);
   };
 
   const updateGlossaryEntry = (index: number, field: 'source' | 'target', value: string) => {
@@ -714,6 +723,85 @@ export default function TranslateConfig() {
                   </span>
                 </div>
               </label>
+            </div>
+
+            {/* ═══ User Mod Override Mode ═══ */}
+            <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '10px' }}>
+              <label className="checkbox-wrapper">
+                <input
+                  type="checkbox"
+                  checked={translationConfig.enableModMode}
+                  onChange={(e) => setTranslationConfig({ enableModMode: e.target.checked })}
+                />
+                <div>
+                  <span style={{ color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                    🔧 {locale === 'vi' ? 'Chế độ Mod Dịch Thuật' : 'Mod Translation Mode'}
+                  </span>
+                  <span style={{ color: 'var(--text-muted)', fontSize: '0.65rem', display: 'block', marginTop: '2px' }}>
+                    {locale === 'vi'
+                      ? 'Áp đặt các yêu cầu đặc biệt khi dịch. AI sẽ ưu tiên tuân thủ yêu cầu này cao nhất (VD: "Dịch theo phong cách kiếm hiệp", "Giữ nguyên tên riêng A"). Các biến số MVU vẫn sẽ đồng bộ theo luật này.'
+                      : 'Enforce special instructions during translation. The AI will strictly follow these instructions as high priority.'}
+                  </span>
+                </div>
+              </label>
+
+              {translationConfig.enableModMode && (
+                <div style={{ marginTop: '8px', marginLeft: '20px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <label className="label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.7rem' }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      {locale === 'vi' ? 'Yêu cầu đặc biệt (Mod Instructions)' : 'Special Instructions'}
+                      {modInstructionsDirty && (
+                        <span style={{
+                          fontSize: '0.6rem', padding: '1px 6px',
+                          background: 'rgba(255,180,0,0.15)', borderRadius: 'var(--radius-sm)',
+                          color: 'var(--accent-warning)', fontWeight: 600,
+                        }}>
+                          {locale === 'vi' ? 'Chưa lưu' : 'Unsaved'}
+                        </span>
+                      )}
+                      {modInstructionsSaved && !modInstructionsDirty && (
+                        <span style={{
+                          fontSize: '0.6rem', padding: '1px 6px',
+                          background: 'rgba(80,200,120,0.15)', borderRadius: 'var(--radius-sm)',
+                          color: '#50c878', fontWeight: 600,
+                          display: 'flex', alignItems: 'center', gap: '3px',
+                          animation: 'fadeIn 0.2s',
+                        }}>
+                          <CheckCircle size={10} /> {locale === 'vi' ? 'Đã lưu!' : 'Saved!'}
+                        </span>
+                      )}
+                    </span>
+                    <button
+                      onClick={saveModInstructions}
+                      disabled={!modInstructionsDirty}
+                      style={{
+                        padding: '2px 10px', fontSize: '0.7rem', fontWeight: 600,
+                        border: '1px solid var(--accent-primary)', borderRadius: 'var(--radius-sm)',
+                        background: modInstructionsDirty ? 'var(--accent-primary)' : 'transparent',
+                        color: modInstructionsDirty ? 'white' : 'var(--text-muted)',
+                        cursor: modInstructionsDirty ? 'pointer' : 'default',
+                        display: 'flex', alignItems: 'center', gap: '4px',
+                        transition: 'all 0.15s',
+                        opacity: modInstructionsDirty ? 1 : 0.5,
+                      }}
+                    >
+                      <Save size={11} /> {locale === 'vi' ? 'Lưu' : 'Save'}
+                    </button>
+                  </label>
+                  <textarea
+                    className="input"
+                    style={{
+                      width: '100%', minHeight: '80px', fontFamily: 'inherit', fontSize: '0.8rem',
+                      resize: 'vertical',
+                      borderColor: modInstructionsDirty ? 'var(--accent-warning)' : undefined,
+                    }}
+                    placeholder={locale === 'vi' ? "Nhập yêu cầu đặc biệt của bạn vào đây..." : "Enter your special instructions here..."}
+                    value={modInstructionsDraft}
+                    onChange={(e) => setModInstructionsDraft(e.target.value)}
+                    onKeyDown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); saveModInstructions(); } }}
+                  />
+                </div>
+              )}
             </div>
 
             {/* MVU Sync Panel (Chiến Lược B) */}
