@@ -16,11 +16,12 @@ import {
   Filter,
   Trash2,
   Ban,
+  Wrench,
 } from 'lucide-react';
 
 export default function TranslationProgress() {
-  const { fields, phase, logs, logFilter, startTime, card, clearLogs } = useStore();
-  const { startTranslation, continueTranslation, pauseTranslation, resumeTranslation, cancelTranslation, retryAllErrors } = useTranslation();
+  const { fields, phase, logs, logFilter, startTime, card, clearLogs, translationConfig, locale } = useStore();
+  const { startTranslation, continueTranslation, pauseTranslation, resumeTranslation, cancelTranslation, retryAllErrors, applyModToAllFields } = useTranslation();
   const t = useT();
   const logEndRef = useRef<HTMLDivElement>(null);
 
@@ -166,6 +167,21 @@ export default function TranslationProgress() {
         {(isTranslating || isPaused) && (
           <button className="btn btn-danger" onClick={cancelTranslation}>
             <Square size={14} /> {t.cancel}
+          </button>
+        )}
+        {/* Apply Mod Button — visible when mod mode is enabled */}
+        {translationConfig.enableModMode && translationConfig.modInstructions?.trim() && !isTranslating && !isPaused && (
+          <button
+            className="btn btn-secondary"
+            onClick={applyModToAllFields}
+            style={{
+              borderColor: '#9b59b6',
+              color: '#9b59b6',
+              background: 'rgba(155, 89, 182, 0.08)',
+            }}
+          >
+            <Wrench size={14} />
+            {locale === 'vi' ? 'Áp dụng Mod' : 'Apply Mod'}
           </button>
         )}
       </div>

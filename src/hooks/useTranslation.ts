@@ -3,7 +3,7 @@ import { useStore } from '../store';
 import { translateText, translateBatch, fieldGroupToFieldType } from '../utils/apiClient';
 import { extractTranslatableFields, applyTranslationsToCard, autoTranslateLorebookTriggerKeys } from '../utils/cardFields';
 import { syncMvuVariables, postProcessRegexHtml, extractPotentialMvuKeyStrings, aiTranslateMvuKeys, extractZodDescriptions } from '../utils/mvuSync';
-import { shouldSkipTranslation } from '../utils/langDetect';
+import { shouldSkipTranslation, detectLanguage } from '../utils/langDetect';
 import { clearRAGCache } from '../utils/ragContext';
 import { getMvuCardSummary } from '../utils/mvuDetector';
 import { validateMvuVariables, autoFixMvuVariables, generateSyncReport, buildEntryNameDictionary, buildRegexTriggerDictionary, validateEntryNameSync } from '../utils/mvuValidator';
@@ -92,7 +92,7 @@ export function useTranslation() {
       
     if (charCount > CHUNK_THRESHOLD) {
       const estimatedChunks = Math.ceil(charCount / CHUNK_THRESHOLD);
-      store.addLog('active', `Translating: ${field.label} (${charCount.toLocaleString()} chars → ~${estimatedChunks} chunks ⚡parallel)`);
+      store.addLog('active', `Translating: ${field.label} (${charCount.toLocaleString()} chars → ~${estimatedChunks} chunks 🔗sequential)`);
     } else {
       store.addLog('active', `Translating: ${field.label} (${charCount.toLocaleString()} chars)`);
     }
@@ -1145,6 +1145,142 @@ export function useTranslation() {
     store.addToast(failCount === 0 ? 'success' : 'error', `Retry: ${successCount}/${errorFields.length} fixed`);
   }, [store]);
 
+  /** Apply Mod instructions to all fields in-place (standalone mode — no language change) */
+  const applyModToAllFields = useCallback(async () => {
+    const modInstructions = store.translationConfig.modInstructions?.trim();
+    if (!modInstructions) {
+      store.addToast('error', 'Mod instructions are empty. Please enter instructions first.');
+      return;
+    }
+
+    // Get all fields that have content (translated or original)
+    const enabledGroups = store.translationConfig.fieldGroups
+      .filter((g: FieldGroupConfig) => g.enabled)
+      .map((g: FieldGroupConfig) => g.id);
+
+    const targetFields = store.fields.filter(f => {
+      if (f.status === 'ignored') return false;
+      if (!enabledGroups.includes(f.group)) return false;
+      const content = f.translated || f.original;
+      return content && content.trim().length > 0;
+    });
+
+    if (targetFields.length === 0) {
+      store.addToast('error', 'No fields to apply Mod to. Load a card first.');
+      return;
+    }
+
+    // Auto-detect language from first substantial field
+    const sampleField = targetFields.find(f => (f.translated || f.original).length > 50) || targetFields[0];
+    const sampleContent = sampleField.translated || sampleField.original;
+    const detectedLang = detectLanguage(sampleContent);
+    const effectiveLang = detectedLang === 'unknown' || detectedLang === 'mixed'
+      ? store.translationConfig.targetLanguage
+      : detectedLang;
+
+    store.addLog('info', `🔧 Applying Mod to ${targetFields.length} field(s) [Language: ${effectiveLang}]`);
+    store.addLog('info', `📝 Mod instructions: "${modInstructions.slice(0, 100)}${modInstructions.length > 100 ? '...' : ''}"`);
+    store.setPhase('translating');
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+    let successCount = 0;
+    let failCount = 0;
+
+    for (const field of targetFields) {
+      if (controller.signal.aborted || pauseRef.current) break;
+
+      const inputContent = field.translated || field.original;
+      store.updateField(field.path, { status: 'translating', error: undefined });
+      store.addLog('active', `🔧 Modding: ${field.label}`);
+
+      try {
+        // Build the entry name dictionary for EJS sync
+        const modEntryNameDict = { ...buildEntryNameDictionary(store.fields), ...buildRegexTriggerDictionary(store.fields) };
+
+        // Build prompt with forceModStandalone = true
+        const promptResult = buildEffectivePrompt({
+          translationPrompt: store.translationConfig.translationPrompt,
+          enableJailbreak: store.translationConfig.enableJailbreak,
+          enableObjectiveMode: false, // Disabled for Mod mode
+          enableMvuSync: store.translationConfig.enableMvuSync,
+          enableRAGContext: store.translationConfig.enableRAGContext,
+          field,
+          allFields: store.fields,
+          mvuDictionary: useStore.getState().translationConfig.mvuDictionary,
+          glossary: store.translationConfig.glossary,
+          customSchema: store.translationConfig.customSchema,
+          liveSchemaContext: store.liveSchemaContext,
+          ragMaxFields: store.translationConfig.ragMaxFields,
+          ragMaxChars: store.translationConfig.ragMaxChars,
+          entryNameDictionary: Object.keys(modEntryNameDict).length > 0 ? modEntryNameDict : undefined,
+          expertMode: store.proxy.expertMode,
+          enableModMode: true,
+          modInstructions: store.translationConfig.modInstructions,
+          forceModStandalone: true, // ← KEY FLAG: uses MOD_STANDALONE_PROMPT
+        });
+
+        const resolvedFieldType = fieldGroupToFieldType(field.group, field.entryType);
+        const currentMvuDict = store.translationConfig.enableMvuSync
+          ? useStore.getState().translationConfig.mvuDictionary
+          : undefined;
+
+        // Use the same translateText but with source = target = detected language
+        let result = await translateText(
+          inputContent,
+          field.label,
+          store.proxy,
+          effectiveLang,     // target = same language
+          effectiveLang,     // source = same language
+          promptResult.effectivePrompt,
+          promptResult.schemaForApi,
+          controller.signal,
+          undefined,
+          promptResult.glossaryForApi,
+          undefined, // no previous translation needed
+          resolvedFieldType,
+          currentMvuDict,
+          store.translationConfig.chunkSize
+        );
+
+        // Post-process regex HTML: font swap + underscore display
+        const isRegexContent = field.group === 'regex' && (field.path.includes('replaceString') || field.path.includes('trimStrings'));
+        if (isRegexContent && result) {
+          result = postProcessRegexHtml(result);
+        }
+        if (field.group === 'tavern_helper' && result && /<[a-z][^>]*>/i.test(result)) {
+          result = postProcessRegexHtml(result);
+        }
+
+        store.updateField(field.path, { status: 'done', translated: result });
+        store.addLog('success', `🔧 Modded: ${field.label}`);
+        successCount++;
+
+        // Delay between requests
+        if (store.proxy.requestDelay > 0) {
+          await new Promise(r => setTimeout(r, store.proxy.requestDelay));
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg === 'Cancelled') {
+          store.addLog('warning', `🔧 Mod cancelled at: ${field.label}`);
+          break;
+        }
+        store.updateField(field.path, { status: 'error', error: msg });
+        store.addLog('error', `🔧 Mod failed: ${field.label} — ${msg}`);
+        failCount++;
+      }
+    }
+
+    store.saveTranslationCache();
+    store.setPhase('done');
+    store.addLog('info', `🔧 Mod complete: ${successCount} success, ${failCount} failed`);
+    store.addToast(
+      failCount === 0 ? 'success' : 'error',
+      `Mod applied: ${successCount}/${targetFields.length} fields`
+    );
+  }, [store]);
+
   return {
     prepareFields,
     startTranslation,
@@ -1155,5 +1291,6 @@ export function useTranslation() {
     retranslateField,
     retryAllErrors,
     getExportCard,
+    applyModToAllFields,
   };
 }

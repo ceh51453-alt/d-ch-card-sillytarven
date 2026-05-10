@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useTranslation } from '../hooks/useTranslation';
 import { useStore } from '../store';
 import { useT } from '../i18n/useLocale';
 import { TARGET_LANGUAGES, SOURCE_LANGUAGES } from '../utils/cardFields';
@@ -26,7 +27,8 @@ function useGroupLabels() {
 }
 
 export default function TranslateConfig() {
-  const { translationConfig, setTranslationConfig, toggleFieldGroup, card, locale, proxy, addToast } = useStore();
+  const { translationConfig, setTranslationConfig, toggleFieldGroup, card, locale, proxy, addToast, phase } = useStore();
+  const { applyModToAllFields } = useTranslation();
   const t = useT();
   const groupLabels = useGroupLabels();
   const [isAutoExtractingGlossary, setIsAutoExtractingGlossary] = useState(false);
@@ -800,6 +802,47 @@ export default function TranslateConfig() {
                     onChange={(e) => setModInstructionsDraft(e.target.value)}
                     onKeyDown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); saveModInstructions(); } }}
                   />
+                  {/* Apply Mod Button — standalone mod without translation */}
+                  <button
+                    onClick={applyModToAllFields}
+                    disabled={
+                      !translationConfig.modInstructions?.trim() ||
+                      modInstructionsDirty ||
+                      phase === 'translating' ||
+                      !card
+                    }
+                    style={{
+                      marginTop: '8px',
+                      padding: '6px 16px',
+                      fontSize: '0.78rem',
+                      fontWeight: 600,
+                      border: '1px solid var(--accent-primary)',
+                      borderRadius: 'var(--radius-sm)',
+                      background: (translationConfig.modInstructions?.trim() && !modInstructionsDirty && phase !== 'translating' && card)
+                        ? 'linear-gradient(135deg, var(--accent-primary), #9b59b6)'
+                        : 'transparent',
+                      color: (translationConfig.modInstructions?.trim() && !modInstructionsDirty && phase !== 'translating' && card)
+                        ? 'white'
+                        : 'var(--text-muted)',
+                      cursor: (translationConfig.modInstructions?.trim() && !modInstructionsDirty && phase !== 'translating' && card)
+                        ? 'pointer'
+                        : 'not-allowed',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      transition: 'all 0.2s',
+                      width: '100%',
+                      justifyContent: 'center',
+                      opacity: (translationConfig.modInstructions?.trim() && !modInstructionsDirty && card) ? 1 : 0.5,
+                    }}
+                  >
+                    🔧 {locale === 'vi' ? 'Áp dụng Mod (không dịch)' : 'Apply Mod (no translation)'}
+                  </button>
+                  {modInstructionsDirty && translationConfig.modInstructions?.trim() && (
+                    <span style={{ fontSize: '0.6rem', color: 'var(--accent-warning)', marginTop: '4px' }}>
+                      {locale === 'vi' ? '⚠ Lưu yêu cầu trước khi áp dụng' : '⚠ Save instructions before applying'}
+                    </span>
+                  )}
                 </div>
               )}
             </div>

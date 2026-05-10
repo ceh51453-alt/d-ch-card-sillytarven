@@ -286,7 +286,14 @@ function buildTranslationMessages(
   let previousContextMsg = '';
   
   if (previousTranslationContext) {
-    previousContextMsg = `\n\n[IMPORTANT CONTEXT: You are translating part of a larger text. Here is the END of the PREVIOUS translated part so you can maintain flow, sentence structure, and terminology:\n"...${previousTranslationContext}"]`;
+    previousContextMsg = `\n\n[CHUNK CONTINUITY — You are translating one part of a larger text split into chunks.
+${previousTranslationContext}
+CHUNK RULES:
+- Translate ALL text in the current chunk COMPLETELY — even if sentences/paragraphs appear cut off at the start or end.
+- MATCH terminology, tone, and proper nouns from the previous translation.
+- Do NOT repeat or re-translate any text from the previous chunk.
+- CODE PRESERVATION: Keep ALL code exactly as-is (HTML tags, EJS <% %>, template literals \`...\`, JS/CSS blocks, regex patterns, macros like {{char}}). Only translate natural-language text WITHIN code.
+- If a code block is split across the chunk boundary (e.g. an unclosed <script>, template literal, or function), preserve the partial code exactly — do NOT attempt to "fix" or close it.]`;
   }
 
   if (previousTranslationToUpdate && previousTranslationToUpdate.trim()) {
@@ -302,7 +309,7 @@ Translate the following updated original text. Return ONLY the pure translated t
   } else if (contextHint) {
     userMsg = `Here is the entry content for context (use these terms consistently):\n"${contextHint}"\n\nBased on the terminology above, translate the following "${fieldName}" field${sourceHint} to ${targetLang}. Return ONLY comma-separated translated keywords. Keep them short and use the SAME terms that appear in the content:${previousContextMsg}\n\n${text}`;
   } else {
-    userMsg = `Translate the following "${fieldName}" field${sourceHint} to ${targetLang}. Return ONLY the pure translated text, without including any of the original text:${previousContextMsg}\n\n${text}`;
+    userMsg = `Translate the following "${fieldName}" field${sourceHint} to ${targetLang}. Return ONLY the pure translated text, without including any of the original text.\nIMPORTANT: Translate EVERY word. Do NOT skip or drop any text, even if sentences appear incomplete at the beginning or end — they are part of a larger split text.${previousContextMsg}\n\n${text}`;
   }
 
   return {
@@ -1651,55 +1658,49 @@ export async function translateText(
     );
   }
 
-  // ═══ MULTIPLE CHUNKS — parallel translation (concurrency-limited) ═══
-  const MAX_CONCURRENT = 2; // Avoid 429 rate limits
-  console.log(`[translateText] ${fieldName}: Translating ${chunks.length} chunks (max ${MAX_CONCURRENT} concurrent)...`);
+  // ═══ MULTIPLE CHUNKS — sequential translation with context continuity ═══
+  // CRITICAL: Translate sequentially so each chunk gets the FULL previous
+  // translated chunk as context. This prevents word loss at chunk boundaries
+  // and preserves code structure across splits.
+  console.log(`[translateText] ${fieldName}: Translating ${chunks.length} chunks sequentially (with full context)...`);
 
-  // Build all tasks
-  const tasks = chunks.map((chunk, idx) => {
+  const ORIGINAL_BOUNDARY_CHARS = 500; // Tail of original prev chunk for code structure awareness
+  const translatedChunks: string[] = [];
+
+  for (let idx = 0; idx < chunks.length; idx++) {
+    if (signal?.aborted) throw new Error('Cancelled');
+
+    // Build rich context: full previous translated chunk + original boundary
+    let prevContext = '';
+    if (idx > 0 && translatedChunks[idx - 1]) {
+      const fullPrevTranslation = translatedChunks[idx - 1];
+      const originalBoundaryTail = chunks[idx - 1].slice(-ORIGINAL_BOUNDARY_CHARS);
+      prevContext =
+        `=== PREVIOUS CHUNK TRANSLATION (for terminology & flow consistency) ===\n` +
+        `${fullPrevTranslation}\n\n` +
+        `=== ORIGINAL TEXT BOUNDARY (last ${ORIGINAL_BOUNDARY_CHARS} chars before this chunk — for code structure awareness) ===\n` +
+        `${originalBoundaryTail}`;
+    }
+
     const { system, user } = buildTranslationMessages(
-      chunk, `${fieldName} [part ${idx + 1}/${chunks.length}]`, targetLang, config.systemPromptPrefix,
-      sourceLang, customPrompt, customSchema, contextHint, glossary, '',
+      chunks[idx], `${fieldName} [part ${idx + 1}/${chunks.length}]`, targetLang, config.systemPromptPrefix,
+      sourceLang, customPrompt, customSchema, contextHint, glossary,
+      prevContext, // ← context from previous chunk's translation
       idx === 0 ? previousTranslationToUpdate : undefined,
       fieldType, isExpert, mvuDictionary,
     );
-    return { chunk, idx, system, user };
-  });
 
-  // Concurrency-limited executor
-  const results: PromiseSettledResult<string>[] = new Array(tasks.length);
-  let nextIdx = 0;
-
-  async function runWorker() {
-    while (nextIdx < tasks.length) {
-      const taskIdx = nextIdx++;
-      const t = tasks[taskIdx];
-      try {
-        const value = await translateChunk(
-          t.chunk, t.idx, chunks.length, fieldName, config, targetLang, sourceLang, t.system, t.user, signal
-        );
-        results[taskIdx] = { status: 'fulfilled', value };
-        console.log(`[translateText] ${fieldName}: chunk ${t.idx + 1}/${chunks.length} done ✓`);
-      } catch (reason: any) {
-        results[taskIdx] = { status: 'rejected', reason };
-      }
-    }
-  }
-
-  // Spawn workers
-  const workers = Array.from({ length: Math.min(MAX_CONCURRENT, tasks.length) }, () => runWorker());
-  await Promise.all(workers);
-
-  // Check results
-  const translatedChunks: string[] = [];
-  for (let i = 0; i < results.length; i++) {
-    const r = results[i];
-    if (r.status === 'fulfilled') {
-      translatedChunks.push(r.value);
-    } else {
-      // If any chunk failed fatally, throw
-      const err = r.reason;
-      if (signal?.aborted || (err instanceof Error && err.message === 'Cancelled')) {
+    try {
+      const translated = await translateChunk(
+        chunks[idx], idx, chunks.length, fieldName, config, targetLang, sourceLang, system, user, signal
+      );
+      // Clean each chunk individually against its OWN original text to prevent
+      // arrow-separator cleanup from incorrectly stripping legitimate content
+      const chunkCleaned = cleanTranslationResponse(chunks[idx], translated, isExpert);
+      translatedChunks.push(chunkCleaned);
+      console.log(`[translateText] ${fieldName}: chunk ${idx + 1}/${chunks.length} done ✓`);
+    } catch (err: any) {
+      if (signal?.aborted || err?.message === 'Cancelled') {
         throw new Error('Cancelled');
       }
       throw err;
@@ -1717,8 +1718,8 @@ export async function translateText(
   const isHtmlContent = /<[a-z][^>]*>/i.test(maskedText) && /<\/[a-z]+>/i.test(maskedText);
   const joiner = isHtmlContent ? '' : '\n\n';
   const rawResult = verifiedChunks.join(joiner);
-  let cleaned = cleanTranslationResponse(maskedText, rawResult, isExpert);
-  cleaned = unmaskSecrets(cleaned, secretMap); // Unmask before residual check
+  // Chunks already individually cleaned above — only unmask secrets here
+  let cleaned = unmaskSecrets(rawResult, secretMap);
   
   // RESIDUAL CJK CHECK: auto-retry if Chinese text remains
   return postTranslationResidualCheck(
