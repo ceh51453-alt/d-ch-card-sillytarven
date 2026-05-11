@@ -609,16 +609,12 @@ function findSafeBoundary(text: string, targetPos: number, minPos: number): numb
   return targetPos; // give up, use original position
 }
 
-export function chunkText(text: string, maxChars?: number, maxTokens?: number): string[] {
-  // Now using unlimited context approaches with high chunk thresholds
+export function chunkText(text: string, maxChars?: number, _maxTokens?: number): string[] {
+  // Default 50K per chunk for ALL models.
+  // Chunk quá lớn (100K+) sẽ khiến AI chạm giới hạn max output tokens → mất đuôi.
+  // 50K chars ≈ 15K tokens (mixed content) — an toàn cho mọi model.
   if (maxChars === undefined) {
-    if (maxTokens && maxTokens > 0) {
-      // Gemini 2.5 Pro: 65535 tokens * 3.5 ≈ 229K chars → cap at 200K per chunk
-      // Cho phép chunk lớn để tận dụng tối đa context window của model
-      maxChars = Math.min(Math.floor(maxTokens * 3.5), 200000); 
-    } else {
-      maxChars = 40000; // Fallback for unknown models
-    }
+    maxChars = 50000;
   }
 
   // ═══ HARD CAP: 500K chars per chunk ═══
@@ -1408,15 +1404,27 @@ async function translateChunk(
         throw new Error('AI bị ngắt ngang do chạm giới hạn Max Tokens (chưa kịp xuất bản dịch).');
       }
 
-      // ─── Length-based truncation detection & continuation ───
-      const minRatio = config.minResponseRatio || 0.15;
+      // ─── Multi-round truncation detection & continuation ───
+      // Nếu AI trả về < 50% input → gần chắc chắn bị cắt do max output tokens.
+      // Loop tối đa 3 lần, mỗi lần yêu cầu AI dịch tiếp phần còn lại.
+      const CONT_THRESHOLD = 0.5; // 50% — nếu response ngắn hơn nửa input → continuation
+      const MAX_CONT_ROUNDS = 3;
+
       if (chunk.length > 500 && result.length > 0) {
-        const responseRatio = result.length / chunk.length;
-        if (responseRatio < minRatio) {
-          const continuationPrompt = `The previous translation was cut off. Continue translating from where you stopped. ` +
-            `The last translated text ended with: "${result.slice(-150)}"\n\n` +
+        for (let contRound = 0; contRound < MAX_CONT_ROUNDS; contRound++) {
+          const responseRatio = result.length / chunk.length;
+          if (responseRatio >= CONT_THRESHOLD) break;
+
+          console.log(`[translateChunk] ${fieldName} chunk ${chunkIdx + 1}/${totalChunks}: response ${(responseRatio * 100).toFixed(0)}% < ${(CONT_THRESHOLD * 100).toFixed(0)}% → continuation round ${contRound + 1}/${MAX_CONT_ROUNDS}...`);
+
+          // Estimate where in the original text we need to pick up
+          const estimatedCoverage = Math.max(responseRatio - 0.05, 0.1);
+          const remainingOriginal = chunk.slice(Math.floor(chunk.length * estimatedCoverage));
+
+          const continuationPrompt = `The previous translation was cut off at approximately ${(responseRatio * 100).toFixed(0)}% of the content. Continue translating from where you stopped.\n` +
+            `The last translated text ended with: "${result.slice(-200)}"\n\n` +
             `Continue translating the remaining original text below. Return ONLY the continuation, do NOT repeat what was already translated:\n\n` +
-            `${chunk.slice(Math.floor(chunk.length * Math.max(responseRatio - 0.05, 0.1)))}`;
+            `${remainingOriginal}`;
 
           try {
             const contController = new AbortController();
@@ -1430,9 +1438,13 @@ async function translateChunk(
 
             if (continuation.trim()) {
               result = result + '\n' + continuation;
+              console.log(`[translateChunk] Continuation +${continuation.length} chars → total ${result.length} chars (${((result.length / chunk.length) * 100).toFixed(0)}%)`);
+            } else {
+              break; // Empty continuation — stop
             }
           } catch {
-            // Continuation failed — use what we have
+            console.warn(`[translateChunk] Continuation round ${contRound + 1} failed, using accumulated result`);
+            break;
           }
         }
       }

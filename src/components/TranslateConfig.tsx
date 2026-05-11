@@ -634,7 +634,7 @@ export default function TranslateConfig() {
                 step={1000}
                 value={translationConfig.chunkSize || 0}
                 onChange={(e) => setTranslationConfig({ chunkSize: parseInt(e.target.value) || 0 })}
-                placeholder={locale === 'vi' ? '0 = Tự động (Tối đa 40k)' : '0 = Auto (Max 40k)'}
+                placeholder={locale === 'vi' ? '0 = Tự động (50k mỗi chunk)' : '0 = Auto (50k per chunk)'}
                 style={{ width: '100%' }}
               />
               <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: '4px', lineHeight: '1.4' }}>
