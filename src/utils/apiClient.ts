@@ -511,10 +511,10 @@ function countUnescapedBackticks(text: string, pos: number, maxScan: number = 50
 
 /**
  * Check if position is inside an unclosed string literal (single or double quote).
- * Scans the last 2000 chars for quote state.
+ * Scans the last 10000 chars for quote state — large window for deeply nested code.
  */
 function isInsideStringLiteral(text: string, pos: number): boolean {
-  const start = Math.max(0, pos - 2000);
+  const start = Math.max(0, pos - 10000);
   const slice = text.slice(start, pos);
   let inSingle = false;
   let inDouble = false;
@@ -529,15 +529,82 @@ function isInsideStringLiteral(text: string, pos: number): boolean {
 }
 
 /**
+ * Check if position is inside a regex literal like /pattern/flags.
+ * Scans backward to find unmatched '/' that looks like regex open.
+ */
+function isInsideRegexLiteral(text: string, pos: number): boolean {
+  const scanLen = Math.min(pos, 5000);
+  const slice = text.slice(pos - scanLen, pos);
+  // Count unescaped forward slashes — odd count = inside regex
+  let slashCount = 0;
+  let inStr = false;
+  let strChar = '';
+  for (let i = 0; i < slice.length; i++) {
+    const ch = slice[i];
+    const prev = i > 0 ? slice[i - 1] : '';
+    if (prev === '\\') continue;
+    if (!inStr && (ch === '"' || ch === "'")) { inStr = true; strChar = ch; continue; }
+    if (inStr && ch === strChar) { inStr = false; continue; }
+    if (inStr) continue;
+    if (ch === '/' && prev !== '*' && (i + 1 >= slice.length || slice[i + 1] !== '/') && slice[i + 1] !== '*') {
+      // Check if this '/' is a regex delimiter (preceded by operator/keyword, not a division)
+      const beforeSlash = slice.slice(Math.max(0, i - 10), i).trimEnd();
+      if (!beforeSlash || /[=(:,;\[!&|?{}\n^~+\-*/%]$/.test(beforeSlash) || /\b(?:return|case|typeof|void|delete|throw|new|in|of)\s*$/.test(beforeSlash)) {
+        slashCount++;
+      }
+    }
+  }
+  return slashCount % 2 !== 0;
+}
+
+/**
+ * Check if position is inside an unclosed HTML tag like <div class="...
+ * Scans backward up to 500 chars for unmatched '<'.
+ */
+function isInsideHtmlTag(text: string, pos: number): boolean {
+  const scanLen = Math.min(pos, 500);
+  const slice = text.slice(pos - scanLen, pos);
+  const lastOpen = slice.lastIndexOf('<');
+  if (lastOpen === -1) return false;
+  const afterOpen = slice.slice(lastOpen);
+  // If there's a '<' with no matching '>' after it, we're inside a tag
+  return !afterOpen.includes('>');
+}
+
+/**
+ * Check if position is inside a CSS @-rule block (@media, @keyframes, etc.).
+ */
+function isInsideCssAtRule(text: string, pos: number): boolean {
+  const scanLen = Math.min(pos, 10000);
+  const slice = text.slice(pos - scanLen, pos);
+  const atRulePattern = /@(?:media|keyframes|supports|font-face|layer|container|property)\b/gi;
+  let lastAt = -1;
+  let m;
+  while ((m = atRulePattern.exec(slice)) !== null) {
+    lastAt = m.index;
+  }
+  if (lastAt === -1) return false;
+  // Check brace balance after the @-rule
+  const afterAt = slice.slice(lastAt);
+  let depth = 0;
+  for (const ch of afterAt) {
+    if (ch === '{') depth++;
+    else if (ch === '}') depth--;
+  }
+  return depth > 0; // unclosed = inside @-rule block
+}
+
+/**
  * Check if a candidate split position is "safe" — i.e., not inside a template literal,
- * EJS block, regex pattern, function body, script/style block, or unbalanced JSON structure.
+ * EJS block, regex pattern, function body, script/style block, HTML tag, CSS block,
+ * or unbalanced JSON/code structure.
  * Returns true if it is safe to split at `pos`.
  */
 function isSafeBoundary(text: string, pos: number): boolean {
   const before = text.slice(0, pos);
 
   // 1. Backtick balance — splitting inside `template ${expr}` breaks JS (B1)
-  const backtickCount = countUnescapedBackticks(text, pos);
+  const backtickCount = countUnescapedBackticks(text, pos, 10000);
   if (backtickCount % 2 !== 0) return false;
 
   // 2. EJS tag balance — splitting inside <% ... %> breaks templates
@@ -549,15 +616,22 @@ function isSafeBoundary(text: string, pos: number): boolean {
   const codeBlockMarkers = (before.match(/```/g) || []).length;
   if (codeBlockMarkers % 2 !== 0) return false;
 
-  // 4. JSON brace balance — avoid splitting inside { ... } objects
-  //    Only check last 2000 chars for performance
-  const recentSlice = before.slice(-2000);
+  // 4. Brace/bracket balance — scan last 10000 chars for deep nesting
+  const recentSlice = before.slice(-10000);
   let braceDepth = 0;
+  let bracketDepth = 0;
+  let parenDepth = 0;
   for (const ch of recentSlice) {
     if (ch === '{') braceDepth++;
     else if (ch === '}') braceDepth--;
+    else if (ch === '[') bracketDepth++;
+    else if (ch === ']') bracketDepth--;
+    else if (ch === '(') parenDepth++;
+    else if (ch === ')') parenDepth--;
   }
-  if (braceDepth > 2) return false; // deep nesting = probably inside JSON
+  if (braceDepth > 2) return false;   // deep nesting = inside JSON/code block
+  if (bracketDepth > 2) return false;  // inside array literal
+  if (parenDepth > 2) return false;    // inside function call / expression
 
   // 5. Function body detection — splitting inside function(){...} corrupts code (B8)
   if (isInsideFunctionBody(text, pos)) return false;
@@ -567,6 +641,15 @@ function isSafeBoundary(text: string, pos: number): boolean {
 
   // 7. String literal detection — splitting inside "..." or '...' breaks code
   if (isInsideStringLiteral(text, pos)) return false;
+
+  // 8. Regex literal detection — splitting inside /pattern/ breaks regex
+  if (isInsideRegexLiteral(text, pos)) return false;
+
+  // 9. HTML tag detection — splitting inside <div class="... breaks tags
+  if (isInsideHtmlTag(text, pos)) return false;
+
+  // 10. CSS @-rule block detection — splitting inside @media{...} breaks CSS
+  if (isInsideCssAtRule(text, pos)) return false;
 
   return true;
 }
@@ -679,18 +762,24 @@ export function chunkText(text: string, maxChars?: number, _maxTokens?: number):
         if (bestHtmlSplit > minPos) splitIdx = bestHtmlSplit;
       }
     }
-
-    // ─── Fallback splittings ───
-    if (splitIdx < minPos) {
-      const nl = remaining.lastIndexOf('\n', maxChars);
-      if (nl > minPos && isSafeBoundary(remaining, nl + 1)) splitIdx = nl + 1;
-    }
-    if (splitIdx < minPos) {
-      const sp = remaining.lastIndexOf(' ', maxChars);
-      if (sp > minPos) splitIdx = sp + 1;
-    }
     
-    // ─── Code-safe fallback splitting for minified JS/HTML ───
+    // ─── SCRIPT/STYLE block-end splitting ───
+    // Prefer splitting after </script> or </style> end tags (complete blocks)
+    if (splitIdx < minPos) {
+      const blockEndRegex = /<\/(?:script|style)>\s*/gi;
+      let bestBlockSplit = -1;
+      let m;
+      while ((m = blockEndRegex.exec(remaining)) !== null) {
+        const endPos = m.index + m[0].length;
+        if (endPos > maxChars) break;
+        if (endPos > minPos && isSafeBoundary(remaining, endPos)) {
+          bestBlockSplit = endPos;
+        }
+      }
+      if (bestBlockSplit > minPos) splitIdx = bestBlockSplit;
+    }
+
+    // ─── Code-safe fallback: split at statement boundaries ;  }  > ───
     if (splitIdx < minPos) {
       const maxSlice = remaining.slice(0, maxChars);
       const codeBoundaries = /[;}>](?=[^\w]|$)/g;
@@ -698,17 +787,69 @@ export function chunkText(text: string, maxChars?: number, _maxTokens?: number):
       let m;
       while ((m = codeBoundaries.exec(maxSlice)) !== null) {
         const pos = m.index + 1;
-        if (pos <= maxChars && pos > minPos) {
+        if (pos <= maxChars && pos > minPos && isSafeBoundary(remaining, pos)) {
           bestCodeSplit = pos;
         }
       }
       if (bestCodeSplit > minPos) splitIdx = bestCodeSplit;
     }
 
+    // ─── Newline fallback with safety check ───
+    if (splitIdx < minPos) {
+      const nl = remaining.lastIndexOf('\n', maxChars);
+      if (nl > minPos && isSafeBoundary(remaining, nl + 1)) splitIdx = nl + 1;
+    }
+
+    // ─── Space fallback with safety check ───
+    if (splitIdx < minPos) {
+      // Search backward for a space at a safe boundary
+      let searchPos = maxChars;
+      while (searchPos > minPos) {
+        const sp = remaining.lastIndexOf(' ', searchPos);
+        if (sp <= minPos) break;
+        if (isSafeBoundary(remaining, sp + 1)) {
+          splitIdx = sp + 1;
+          break;
+        }
+        searchPos = sp - 1;
+      }
+    }
+
     // ─── Prose punctuation fallback ───
     if (splitIdx < minPos) {
       const sentenceEnd = remaining.slice(0, maxChars).search(/[。！？；」』】）\n][^。！？；」』】）]*$/); 
-      splitIdx = sentenceEnd > minPos ? sentenceEnd + 1 : maxChars;
+      if (sentenceEnd > minPos && isSafeBoundary(remaining, sentenceEnd + 1)) {
+        splitIdx = sentenceEnd + 1;
+      }
+    }
+
+    // ─── OVERFLOW RESCUE: If no safe split found within maxChars, ───
+    // ─── search FORWARD up to 1.5× maxChars to close the current code block. ───
+    // ─── Better to have a slightly larger chunk than to cut inside code. ───
+    if (splitIdx < minPos) {
+      const overflowLimit = Math.min(Math.floor(maxChars * 1.5), remaining.length);
+      const overflowPriorities = ['\n\n', '\n', '. ', '。', ' '];
+      for (const sep of overflowPriorities) {
+        let searchFrom = maxChars;
+        while (searchFrom < overflowLimit) {
+          const idx = remaining.indexOf(sep, searchFrom);
+          if (idx < 0 || idx >= overflowLimit) break;
+          const pos = idx + sep.length;
+          if (isSafeBoundary(remaining, pos)) {
+            splitIdx = pos;
+            console.log(`[chunkText] ⚠️ Overflow rescue: split at ${pos} (${((pos / maxChars) * 100).toFixed(0)}% of maxChars) to avoid cutting inside code block`);
+            break;
+          }
+          searchFrom = idx + 1;
+        }
+        if (splitIdx >= minPos) break;
+      }
+    }
+
+    // ─── ULTIMATE FALLBACK: hard cut (should rarely happen) ───
+    if (splitIdx < minPos) {
+      splitIdx = maxChars;
+      console.warn(`[chunkText] ⚠️ HARD CUT at ${maxChars} — no safe boundary found. Code may be corrupted at this seam.`);
     }
 
     chunks.push(remaining.slice(0, splitIdx));
