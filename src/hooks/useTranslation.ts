@@ -1328,7 +1328,8 @@ export function useTranslation() {
         const freshMvuDict = freshState.translationConfig.mvuDictionary;
         const freshLiveSchema = freshState.liveSchemaContext;
 
-        const modEntryNameDict = { ...buildEntryNameDictionary(freshFields), ...buildRegexTriggerDictionary(freshFields) };
+        const modEntryNameDict = buildEntryNameDictionary(freshFields);
+        const modRegexTriggerDict = buildRegexTriggerDictionary(freshFields);
 
         const promptResult = buildEffectivePrompt({
           translationPrompt: store.translationConfig.translationPrompt,
@@ -1345,6 +1346,7 @@ export function useTranslation() {
           ragMaxFields: store.translationConfig.ragMaxFields,
           ragMaxChars: store.translationConfig.ragMaxChars,
           entryNameDictionary: Object.keys(modEntryNameDict).length > 0 ? modEntryNameDict : undefined,
+          regexTriggerDictionary: Object.keys(modRegexTriggerDict).length > 0 ? modRegexTriggerDict : undefined,
           expertMode: store.proxy.expertMode,
           enableModMode: true,
           modInstructions: store.translationConfig.modInstructions,

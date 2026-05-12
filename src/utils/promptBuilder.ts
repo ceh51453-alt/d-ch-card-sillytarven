@@ -186,6 +186,8 @@ export interface PromptBuildOptions {
   ragMaxChars?: number;
   /** Entry name dictionary for EJS sync: original entry name → translated name */
   entryNameDictionary?: Record<string, string>;
+  /** Regex trigger dictionary for system prompts: original regex pattern → translated pattern */
+  regexTriggerDictionary?: Record<string, string>;
 
   // ─── Extra options ───
   /** Strict Code Preservation (CustomTranslatePanel toggle) */
@@ -355,6 +357,7 @@ export function buildEffectivePrompt(options: PromptBuildOptions): PromptBuildRe
     ragMaxFields = 5,
     ragMaxChars = 3000,
     entryNameDictionary,
+    regexTriggerDictionary,
     strictCodePreservation = false,
     enableModMode = false,
     modInstructions = '',
@@ -420,9 +423,30 @@ ${modInstructions.trim()}`;
         .join('\n');
       modPrompt += `\n\nENTRY NAME DICTIONARY (EJS AUTO-TRIGGER — PHẢI ĐỒNG BỘ):
 Card này sử dụng EJS Entry Jumping System — lorebook entries được kích hoạt khi TÊN ENTRY xuất hiện trong text.
-Khi chỉnh sửa nội dung narrative/prose, nếu bạn gặp các tên entry dưới đây, PHẢI giữ nguyên hoặc dùng đúng tên đã dịch:
+Khi chỉnh sửa nội dung narrative/prose, nếu bạn gặp các tên entry dưới đây, PHẢI giữ nguyên hoặc dùng đúng tên đã chỉnh sửa:
 ${entryList}
 Nếu bạn thay đổi hoặc bỏ mất tên entry trong text, EJS sẽ KHÔNG kích hoạt lorebook → card bị hỏng.`;
+    }
+
+    // Inject Regex Trigger Dictionary for trigger sync (standalone mod)
+    if (regexTriggerDictionary && Object.keys(regexTriggerDictionary).length > 0) {
+      const regexList = Object.entries(regexTriggerDictionary)
+        .map(([orig, translated]) => `  "${orig}" → "${translated}"`)
+        .join('\n');
+      modPrompt += `\n\nREGEX TRIGGER DICTIONARY (PHẢI ĐỒNG BỘ):
+Khi chỉnh sửa system prompt hoặc các phần mô tả, nếu bạn gặp các từ khóa/pattern regex dưới đây, bạn PHẢI dùng phiên bản đã được chỉnh sửa tương ứng:
+${regexList}
+Điều này đảm bảo các công cụ UI regex có thể tìm thấy đúng từ khóa trong text.`;
+    }
+
+    // Explicitly inject Glossary if user provided one, ensuring Mod respects user terms
+    if (glossary && glossary.length > 0) {
+      const glossaryList = glossary
+        .map(g => `  "${g.source}" → "${g.target}"`)
+        .join('\n');
+      modPrompt += `\n\nUSER GLOSSARY (TỪ ĐIỂN BẮT BUỘC):
+Người dùng đã thiết lập từ điển riêng. Bạn PHẢI sử dụng các từ này thay vì tự sáng tạo:
+${glossaryList}`;
     }
 
     // Inject RAG Context for cross-field awareness (standalone mod)
