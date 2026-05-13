@@ -4,7 +4,7 @@ import { useTranslation } from '../hooks/useTranslation';
 import { useT } from '../i18n/useLocale';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { FieldGroup } from '../types/card';
-import { RotateCcw, AlertTriangle, CheckCircle2, Clock, ArrowLeftRight, BarChart3, Ban, Search, X, Copy, Check, Eye } from 'lucide-react';
+import { RotateCcw, AlertTriangle, CheckCircle2, Clock, ArrowLeftRight, BarChart3, Ban, Search, X, Copy, Check, Eye, Wand2 } from 'lucide-react';
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
@@ -433,14 +433,18 @@ function VirtualTableView({
   fields,
   updateField,
   retranslateField,
+  applyModToField,
   phase,
   t,
+  modEnabled,
 }: {
   fields: any[];
   updateField: (path: string, update: any) => void;
   retranslateField: (path: string) => void;
+  applyModToField: (path: string) => void;
   phase: string;
   t: Record<string, string>;
+  modEnabled: boolean;
 }) {
   const parentRef = useRef<HTMLDivElement>(null);
 
@@ -466,7 +470,7 @@ function VirtualTableView({
           <tr>
             <th style={{ width: '180px' }}>{t.field}</th>
             <th style={{ width: '40%' }}>{t.original}</th>
-            <th>{t.translated}</th>
+            <th>{modEnabled ? t.modResult : t.translated}</th>
             <th style={{ width: '100px', textAlign: 'center' }}>{t.actions}</th>
           </tr>
         </thead>
@@ -561,15 +565,38 @@ function VirtualTableView({
                         >
                           {field.status === 'ignored' ? <RotateCcw size={14} /> : <Ban size={14} />}
                         </button>
-                        <button
-                          className="btn btn-ghost btn-xs tooltip"
-                          data-tooltip={t.retranslate}
-                          onClick={() => retranslateField(field.path)}
-                          disabled={phase === 'translating'}
-                          style={{ padding: '4px' }}
-                        >
-                          <RotateCcw size={14} />
-                        </button>
+                        {modEnabled ? (
+                          <>
+                            <button
+                              className="btn btn-ghost btn-xs tooltip"
+                              data-tooltip={t.modField}
+                              onClick={() => applyModToField(field.path)}
+                              disabled={phase === 'translating'}
+                              style={{ padding: '4px', color: '#9b59b6' }}
+                            >
+                              <Wand2 size={14} />
+                            </button>
+                            <button
+                              className="btn btn-ghost btn-xs tooltip"
+                              data-tooltip={t.retranslate}
+                              onClick={() => retranslateField(field.path)}
+                              disabled={phase === 'translating'}
+                              style={{ padding: '4px', opacity: 0.5 }}
+                            >
+                              <RotateCcw size={14} />
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            className="btn btn-ghost btn-xs tooltip"
+                            data-tooltip={t.retranslate}
+                            onClick={() => retranslateField(field.path)}
+                            disabled={phase === 'translating'}
+                            style={{ padding: '4px' }}
+                          >
+                            <RotateCcw size={14} />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -588,14 +615,18 @@ function VirtualDiffView({
   fields,
   updateField,
   retranslateField,
+  applyModToField,
   phase,
   t,
+  modEnabled,
 }: {
   fields: any[];
   updateField: (path: string, update: any) => void;
   retranslateField: (path: string) => void;
+  applyModToField: (path: string) => void;
   phase: string;
   t: Record<string, string>;
+  modEnabled: boolean;
 }) {
   const parentRef = useRef<HTMLDivElement>(null);
 
@@ -664,15 +695,38 @@ function VirtualDiffView({
                     >
                       {field.status === 'ignored' ? <RotateCcw size={12} /> : <Ban size={12} />}
                     </button>
-                    <button
-                      className="btn btn-ghost btn-xs tooltip"
-                      data-tooltip={t.retranslate}
-                      onClick={() => retranslateField(field.path)}
-                      disabled={phase === 'translating'}
-                      style={{ padding: '3px 6px' }}
-                    >
-                      <RotateCcw size={12} />
-                    </button>
+                    {modEnabled ? (
+                      <>
+                        <button
+                          className="btn btn-ghost btn-xs tooltip"
+                          data-tooltip={t.modField}
+                          onClick={() => applyModToField(field.path)}
+                          disabled={phase === 'translating'}
+                          style={{ padding: '3px 6px', color: '#9b59b6' }}
+                        >
+                          <Wand2 size={12} />
+                        </button>
+                        <button
+                          className="btn btn-ghost btn-xs tooltip"
+                          data-tooltip={t.retranslate}
+                          onClick={() => retranslateField(field.path)}
+                          disabled={phase === 'translating'}
+                          style={{ padding: '3px 6px', opacity: 0.5 }}
+                        >
+                          <RotateCcw size={12} />
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        className="btn btn-ghost btn-xs tooltip"
+                        data-tooltip={t.retranslate}
+                        onClick={() => retranslateField(field.path)}
+                        disabled={phase === 'translating'}
+                        style={{ padding: '3px 6px' }}
+                      >
+                        <RotateCcw size={12} />
+                      </button>
+                    )}
                   </div>
                 </div>
                 <DiffView original={field.original} translated={field.translated} />
@@ -699,9 +753,10 @@ function VirtualDiffView({
 }
 
 export default function FieldEditor() {
-  const { fields, updateField, phase } = useStore();
-  const { retranslateField } = useTranslation();
+  const { fields, updateField, phase, translationConfig } = useStore();
+  const { retranslateField, applyModToField } = useTranslation();
   const t = useT();
+  const modEnabled = Boolean(translationConfig.enableModMode && translationConfig.modInstructions?.trim());
   const tabLabels = useTabLabels();
   const [activeTab, setActiveTab] = useState<FieldGroup | 'all'>('all');
   const [viewMode, setViewMode] = useState<'table' | 'diff'>('table');
@@ -738,9 +793,12 @@ export default function FieldEditor() {
       {/* Header */}
       <div style={{ padding: '16px 20px 0' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
-          <h3 style={{ fontSize: '1rem', fontWeight: 600, margin: 0 }}>
-            {t.fieldEditor}
-            <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 400, marginLeft: '8px' }}>
+          <h3 style={{ fontSize: '1rem', fontWeight: 600, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+            {modEnabled && (
+              <Wand2 size={16} style={{ color: '#9b59b6' }} />
+            )}
+            {modEnabled ? t.modFieldEditor : t.fieldEditor}
+            <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 400 }}>
               ({filteredFields.length} fields)
             </span>
           </h3>
@@ -867,8 +925,10 @@ export default function FieldEditor() {
           fields={filteredFields}
           updateField={updateField}
           retranslateField={retranslateField}
+          applyModToField={applyModToField}
           phase={phase}
           t={t}
+          modEnabled={modEnabled}
         />
       )}
 
@@ -878,8 +938,10 @@ export default function FieldEditor() {
           fields={filteredFields}
           updateField={updateField}
           retranslateField={retranslateField}
+          applyModToField={applyModToField}
           phase={phase}
           t={t}
+          modEnabled={modEnabled}
         />
       )}
     </div>

@@ -196,6 +196,36 @@ function buildTranslationMessages(
   /** MVU dictionary for variable sync */
   mvuDictionary?: Record<string, string>,
 ) {
+  const isStandaloneMod = customPrompt?.includes('[CRITICAL: STANDALONE MODIFICATION & REWRITE MODE]');
+
+  if (isStandaloneMod) {
+    let systemPrompt = customPrompt!;
+    if (systemPromptPrefix?.trim()) {
+      systemPrompt = systemPromptPrefix.trim() + '\n\n' + systemPrompt;
+    }
+    
+    // Inject schema manually if provided, since we bypass both Master Prompt and Legacy Prompt builders
+    if (customSchema && !systemPrompt.includes('CARD SCHEMA / VARIABLE DEFINITIONS')) {
+      systemPrompt += `\n\n[USER PROVIDED ZOD/JSON SCHEMA — STRICT COMPLIANCE REQUIRED]\n${customSchema}`;
+    }
+
+    let previousContextMsg = '';
+    if (previousTranslationContext) {
+      previousContextMsg = `\n\n[CHUNK CONTINUITY — Bạn đang chỉnh sửa một phần của văn bản lớn được cắt nhỏ (chunks).
+${previousTranslationContext}
+CHUNK RULES:
+- CHỈNH SỬA TẤT CẢ nội dung trong chunk hiện tại — dù câu/đoạn có vẻ bị cắt ngang ở đầu/cuối.
+- GIỮ SỰ NHẤT QUÁN về thuật ngữ, xưng hô và văn phong từ phần trước.
+- KHÔNG lặp lại hoặc dịch lại bất kỳ văn bản nào từ chunk trước.
+- BẢO TOÀN CODE: Giữ nguyên tất cả code (HTML, EJS <% %>, template literals \`...\`, JS/CSS, regex, macros {{char}}).
+- Nếu một code block bị cắt ngang (ví dụ <script> chưa đóng, template literal chưa kết thúc), BẢO TOÀN NGUYÊN VẸN phần code bị cắt đó — KHÔNG cố gắng "sửa" hoặc đóng tag.]`;
+    }
+
+    const userMsg = `Thực hiện chỉnh sửa nội dung (MOD) cho field "${fieldName}". Chỉ trả về nội dung đã chỉnh sửa, KHÔNG trả về giải thích hay markdown code blocks thừa. Bắt buộc xử lý TOÀN BỘ đoạn văn bản bên dưới, KHÔNG được bỏ sót dù câu/đoạn có vẻ chưa hoàn chỉnh do cắt chunk.${previousContextMsg}\n\n${text}`;
+    
+    return { system: systemPrompt, user: userMsg };
+  }
+
   let systemPrompt: string;
 
   if (expertMode && fieldType) {

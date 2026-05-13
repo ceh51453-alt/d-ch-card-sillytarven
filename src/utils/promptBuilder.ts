@@ -398,6 +398,11 @@ export function buildEffectivePrompt(options: PromptBuildOptions): PromptBuildRe
       }
     }
 
+    // Global custom prompt (if provided, it acts as general system context)
+    if (translationPrompt && translationPrompt.trim() !== '') {
+      modPrompt += `\n\n[GLOBAL CUSTOM PROMPT / NGỮ CẢNH HỆ THỐNG TOÀN CỤC]\n${translationPrompt.trim()}\n`;
+    }
+
     // Inject the user's Mod instructions
     modPrompt += `\n\n[YÊU CẦU MOD CỦA NGƯỜI DÙNG — ƯU TIÊN TUYỆT ĐỐI]
 Bạn ĐƯỢC TOÀN QUYỀN THAY ĐỔI mọi thứ TRỪ code syntax: cốt truyện, bối cảnh, xưng hô, tính cách, nội dung, tên biến, giá trị biến, entry names.

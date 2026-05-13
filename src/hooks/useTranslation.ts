@@ -1145,8 +1145,145 @@ export function useTranslation() {
     store.addToast(failCount === 0 ? 'success' : 'error', `Retry: ${successCount}/${errorFields.length} fixed`);
   }, [store]);
 
+  /** Apply Mod instructions to a single field by path (standalone mode — no language change) */
+  const applyModToField = useCallback(async (path: string) => {
+    const modInstructions = store.translationConfig.modInstructions?.trim();
+    if (!modInstructions) {
+      store.addToast('error', 'Mod instructions are empty. Please enter instructions first.');
+      return;
+    }
+
+    const field = store.fields.find(f => f.path === path);
+    if (!field) {
+      store.addToast('error', 'Field not found.');
+      return;
+    }
+
+    const inputContent = field.translated || field.original;
+    if (!inputContent || !inputContent.trim()) {
+      store.addToast('error', 'Field has no content to mod.');
+      return;
+    }
+
+    // Auto-detect language from field content
+    const detectedLang = detectLanguage(inputContent);
+    const effectiveLang = detectedLang === 'unknown' || detectedLang === 'mixed'
+      ? store.translationConfig.targetLanguage
+      : detectedLang;
+
+    const controller = new AbortController();
+    store.updateField(path, { status: 'translating', error: undefined });
+    store.addLog('active', `🔧 Modding single field: ${field.label}`);
+
+    try {
+      // Contextual keyword translation for lorebook_keys
+      let contextHint: string | undefined;
+      if (field.group === 'lorebook_keys') {
+        const contentPath = field.path.replace('.keys', '.content').replace('.secondary_keys', '.content');
+        const contentField = store.fields.find(f => f.path === contentPath);
+        if (contentField) {
+          contextHint = (contentField.translated || contentField.original || '').slice(0, 1500);
+        }
+      }
+
+      // Read fresh state for dynamic dictionaries
+      const freshState = useStore.getState();
+      const freshFields = freshState.fields;
+      const freshMvuDict = freshState.translationConfig.mvuDictionary;
+      const freshLiveSchema = freshState.liveSchemaContext;
+
+      const modEntryNameDict = buildEntryNameDictionary(freshFields);
+      const modRegexTriggerDict = buildRegexTriggerDictionary(freshFields);
+
+      const promptResult = buildEffectivePrompt({
+        translationPrompt: store.translationConfig.translationPrompt,
+        enableJailbreak: store.translationConfig.enableJailbreak,
+        enableObjectiveMode: false,
+        enableMvuSync: store.translationConfig.enableMvuSync,
+        enableRAGContext: store.translationConfig.enableRAGContext,
+        field,
+        allFields: freshFields,
+        mvuDictionary: freshMvuDict,
+        glossary: store.translationConfig.glossary,
+        customSchema: store.translationConfig.customSchema,
+        liveSchemaContext: freshLiveSchema,
+        ragMaxFields: store.translationConfig.ragMaxFields,
+        ragMaxChars: store.translationConfig.ragMaxChars,
+        entryNameDictionary: Object.keys(modEntryNameDict).length > 0 ? modEntryNameDict : undefined,
+        regexTriggerDictionary: Object.keys(modRegexTriggerDict).length > 0 ? modRegexTriggerDict : undefined,
+        expertMode: store.proxy.expertMode,
+        enableModMode: true,
+        modInstructions: store.translationConfig.modInstructions,
+        forceModStandalone: true,
+      });
+
+      const resolvedFieldType = fieldGroupToFieldType(field.group, field.entryType);
+      const currentMvuDict = store.translationConfig.enableMvuSync
+        ? freshMvuDict
+        : undefined;
+
+      let result = await translateText(
+        inputContent,
+        field.label,
+        store.proxy,
+        effectiveLang,
+        effectiveLang,
+        promptResult.effectivePrompt,
+        promptResult.schemaForApi,
+        controller.signal,
+        contextHint,
+        promptResult.glossaryForApi,
+        undefined,
+        resolvedFieldType,
+        currentMvuDict,
+        store.translationConfig.chunkSize
+      );
+
+      // Post-process regex HTML
+      const isRegexContent = field.group === 'regex' && (field.path.includes('replaceString') || field.path.includes('trimStrings'));
+      if (isRegexContent && result) {
+        result = postProcessRegexHtml(result);
+      }
+      if (field.group === 'tavern_helper' && result && /<[a-z][^>]*>/i.test(result)) {
+        result = postProcessRegexHtml(result);
+      }
+
+      if (!result || !result.trim()) {
+        store.updateField(path, { status: 'error', error: 'Mod returned empty result' });
+        store.addLog('error', `🔧 Mod returned empty for: ${field.label}`);
+        return;
+      }
+
+      // Post-mod MVU Validation + Auto-fix
+      const mvuDict = store.translationConfig.enableMvuSync ? freshMvuDict : {};
+      const hasMvuDict = Object.keys(mvuDict).filter(k => mvuDict[k] && k !== mvuDict[k]).length > 0;
+
+      if (hasMvuDict) {
+        const fieldType = (field.entryType || field.group) as any;
+        const validation = validateMvuVariables(inputContent, result, mvuDict, fieldType);
+
+        if (validation.unreplaced.length > 0) {
+          const fixed = autoFixMvuVariables(result, mvuDict, validation.unreplaced);
+          if (fixed !== result) {
+            result = fixed;
+            store.addLog('info', `🔧 Auto-fixed ${validation.unreplaced.length} MVU vars in ${field.label}`);
+          }
+        }
+      }
+
+      store.updateField(path, { status: 'done', translated: result });
+      store.addLog('success', `🔧 Modded: ${field.label}`);
+      store.addToast('success', `Mod applied to ${field.label}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      store.updateField(path, { status: 'error', error: msg });
+      store.addLog('error', `🔧 Mod failed: ${field.label} — ${msg}`);
+      store.addToast('error', `Mod failed: ${field.label}`);
+    }
+  }, [store]);
+
   /** Apply Mod instructions to all fields in-place (standalone mode — no language change) */
-  const applyModToAllFields = useCallback(async () => {
+  const applyModToAllFields = useCallback(async (isContinue: boolean = false) => {
     const modInstructions = store.translationConfig.modInstructions?.trim();
     if (!modInstructions) {
       store.addToast('error', 'Mod instructions are empty. Please enter instructions first.');
@@ -1175,13 +1312,14 @@ export function useTranslation() {
 
     const targetFields = currentFields.filter(f => {
       if (f.status === 'ignored') return false;
+      if (isContinue && f.status === 'done') return false; // Skip already done fields when continuing
       if (!enabledGroups.includes(f.group)) return false;
       const content = f.translated || f.original;
       return content && content.trim().length > 0;
     });
 
     if (targetFields.length === 0) {
-      store.addToast('error', 'No fields to apply Mod to.');
+      store.addToast('info', 'No fields to apply Mod to (or all selected fields are already done).');
       return;
     }
 
@@ -1713,6 +1851,10 @@ export function useTranslation() {
     );
   }, [store, prepareFields]);
 
+  const continueMod = useCallback(async () => {
+    await applyModToAllFields(true);
+  }, [applyModToAllFields]);
+
   return {
     prepareFields,
     startTranslation,
@@ -1723,6 +1865,8 @@ export function useTranslation() {
     retranslateField,
     retryAllErrors,
     getExportCard,
+    applyModToField,
     applyModToAllFields,
+    continueMod,
   };
 }

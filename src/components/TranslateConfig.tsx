@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useTranslation } from '../hooks/useTranslation';
+
 import { useStore } from '../store';
 import { useT } from '../i18n/useLocale';
 import { TARGET_LANGUAGES, SOURCE_LANGUAGES } from '../utils/cardFields';
@@ -27,8 +27,8 @@ function useGroupLabels() {
 }
 
 export default function TranslateConfig() {
-  const { translationConfig, setTranslationConfig, toggleFieldGroup, card, locale, proxy, addToast, phase } = useStore();
-  const { applyModToAllFields } = useTranslation();
+  const { translationConfig, setTranslationConfig, toggleFieldGroup, card, locale, proxy, addToast } = useStore();
+
   const t = useT();
   const groupLabels = useGroupLabels();
   const [isAutoExtractingGlossary, setIsAutoExtractingGlossary] = useState(false);
@@ -155,86 +155,141 @@ export default function TranslateConfig() {
       setIsAutoExtractingGlossary(false);
     }
   };
+  const isModMode = translationConfig.enableModMode;
 
   return (
     <div className="section">
       <div className="section-header">
         <span className="section-title">
-          <Languages size={16} style={{ color: 'var(--accent-warning)' }} />
-          {t.translationSettings}
+          <Languages size={16} style={{ color: isModMode ? '#9b59b6' : 'var(--accent-warning)' }} />
+          {isModMode ? t.modPanel : t.translationSettings}
         </span>
       </div>
       <div className="section-body" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-        {/* Source & Target Languages */}
-        <div style={{ display: 'flex', gap: '8px' }}>
-          <div style={{ flex: 1 }}>
-            <label className="label">Source Language</label>
-            <select
-              className="input"
-              value={translationConfig.sourceLanguage || 'auto'}
-              onChange={(e) => setTranslationConfig({ sourceLanguage: e.target.value })}
-            >
-              {SOURCE_LANGUAGES.map((l) => (
-                <option key={l.value} value={l.value}>{l.label}</option>
-              ))}
-            </select>
-          </div>
-          <div style={{ flex: 1 }}>
-            <label className="label">{t.targetLanguage}</label>
-            <select
-              className="input"
-              value={translationConfig.targetLanguage}
-              onChange={(e) => setTranslationConfig({ targetLanguage: e.target.value })}
-            >
-              {TARGET_LANGUAGES.map((l) => (
-                <option key={l.value} value={l.value}>{l.label}</option>
-              ))}
-              <option value="custom">Custom...</option>
-            </select>
-            {translationConfig.targetLanguage === 'custom' && (
-              <input
+
+        {/* ═══ Mode Switch: Mod Mode toggle — always visible at the top ═══ */}
+        <div style={{
+          padding: '10px 12px',
+          borderRadius: 'var(--radius-sm)',
+          border: `1px solid ${isModMode ? 'rgba(155,89,182,0.3)' : 'var(--border-subtle)'}`,
+          background: isModMode ? 'rgba(155,89,182,0.06)' : 'transparent',
+          transition: 'all 0.2s',
+        }}>
+          <label className="checkbox-wrapper" style={{ marginBottom: isModMode ? '10px' : 0 }}>
+            <input
+              type="checkbox"
+              checked={translationConfig.enableModMode}
+              onChange={(e) => setTranslationConfig({ enableModMode: e.target.checked })}
+            />
+            <div>
+              <span style={{ color: isModMode ? '#9b59b6' : 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '5px', fontWeight: 600 }}>
+                🔧 {t.modMode}
+              </span>
+              <span style={{ color: 'var(--text-muted)', fontSize: '0.65rem', display: 'block', marginTop: '2px' }}>
+                {t.modModeDesc}
+              </span>
+            </div>
+          </label>
+
+          {isModMode && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <label className="label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.7rem' }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  {t.modInstructions}
+                  {modInstructionsDirty && (
+                    <span style={{ fontSize: '0.6rem', padding: '1px 6px', background: 'rgba(255,180,0,0.15)', borderRadius: 'var(--radius-sm)', color: 'var(--accent-warning)', fontWeight: 600 }}>
+                      {locale === 'vi' ? 'Chưa lưu' : 'Unsaved'}
+                    </span>
+                  )}
+                  {modInstructionsSaved && !modInstructionsDirty && (
+                    <span style={{ fontSize: '0.6rem', padding: '1px 6px', background: 'rgba(80,200,120,0.15)', borderRadius: 'var(--radius-sm)', color: '#50c878', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '3px' }}>
+                      <CheckCircle size={10} /> {t.modSaved}
+                    </span>
+                  )}
+                </span>
+                <button
+                  onClick={saveModInstructions}
+                  disabled={!modInstructionsDirty}
+                  style={{
+                    padding: '2px 10px', fontSize: '0.7rem', fontWeight: 600,
+                    border: '1px solid #9b59b6', borderRadius: 'var(--radius-sm)',
+                    background: modInstructionsDirty ? '#9b59b6' : 'transparent',
+                    color: modInstructionsDirty ? 'white' : 'var(--text-muted)',
+                    cursor: modInstructionsDirty ? 'pointer' : 'default',
+                    display: 'flex', alignItems: 'center', gap: '4px',
+                    transition: 'all 0.15s', opacity: modInstructionsDirty ? 1 : 0.5,
+                  }}
+                >
+                  <Save size={11} /> {t.modSave}
+                </button>
+              </label>
+              <textarea
                 className="input"
-                style={{ marginTop: '6px' }}
-                placeholder="Enter target language..."
-                onChange={(e) => setTranslationConfig({ targetLanguage: e.target.value || 'custom' })}
+                style={{
+                  width: '100%', minHeight: '80px', fontFamily: 'inherit', fontSize: '0.8rem',
+                  resize: 'vertical',
+                  borderColor: modInstructionsDirty ? '#9b59b6' : undefined,
+                }}
+                placeholder={t.modInstructionsPlaceholder}
+                value={modInstructionsDraft}
+                onChange={(e) => setModInstructionsDraft(e.target.value)}
+                onKeyDown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); saveModInstructions(); } }}
               />
-            )}
-          </div>
+              {modInstructionsDirty && translationConfig.modInstructions?.trim() && (
+                <span style={{ fontSize: '0.6rem', color: 'var(--accent-warning)' }}>
+                  {locale === 'vi' ? '⚠ Lưu yêu cầu trước khi áp dụng' : '⚠ Save instructions before applying'}
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
-        {/* Skip already translated */}
-        <label className="checkbox-wrapper">
-          <input
-            type="checkbox"
-            checked={translationConfig.skipAlreadyTranslated}
-            onChange={(e) => setTranslationConfig({ skipAlreadyTranslated: e.target.checked })}
-          />
-          <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>{t.skipAlreadyTranslated}</span>
-        </label>
+        {/* ═══ TRANSLATION-ONLY SETTINGS — hidden when Mod mode is active ═══ */}
+        {!isModMode && (
+          <>
+            {/* Source & Target Languages */}
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <div style={{ flex: 1 }}>
+                <label className="label">Source Language</label>
+                <select className="input" value={translationConfig.sourceLanguage || 'auto'} onChange={(e) => setTranslationConfig({ sourceLanguage: e.target.value })}>
+                  {SOURCE_LANGUAGES.map((l) => (<option key={l.value} value={l.value}>{l.label}</option>))}
+                </select>
+              </div>
+              <div style={{ flex: 1 }}>
+                <label className="label">{t.targetLanguage}</label>
+                <select className="input" value={translationConfig.targetLanguage} onChange={(e) => setTranslationConfig({ targetLanguage: e.target.value })}>
+                  {TARGET_LANGUAGES.map((l) => (<option key={l.value} value={l.value}>{l.label}</option>))}
+                  <option value="custom">Custom...</option>
+                </select>
+                {translationConfig.targetLanguage === 'custom' && (
+                  <input className="input" style={{ marginTop: '6px' }} placeholder="Enter target language..." onChange={(e) => setTranslationConfig({ targetLanguage: e.target.value || 'custom' })} />
+                )}
+              </div>
+            </div>
 
-        {/* Bật Jailbreak (Anti-Censorship) */}
-        <label className="checkbox-wrapper" style={{ marginTop: '-4px' }}>
-          <input
-            type="checkbox"
-            checked={translationConfig.enableJailbreak || false}
-            onChange={(e) => setTranslationConfig({ enableJailbreak: e.target.checked })}
-          />
-          <span style={{ color: 'var(--accent-danger)', fontSize: '0.8rem', fontWeight: 500 }}>
-            {locale === 'vi' ? 'Bật Jailbreak (Phá màng lọc đạo đức, dùng cho card NSFW)' : 'Enable Jailbreak (Bypass safety filters for NSFW)'}
-          </span>
-        </label>
+            {/* Skip already translated */}
+            <label className="checkbox-wrapper">
+              <input type="checkbox" checked={translationConfig.skipAlreadyTranslated} onChange={(e) => setTranslationConfig({ skipAlreadyTranslated: e.target.checked })} />
+              <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>{t.skipAlreadyTranslated}</span>
+            </label>
 
-        {/* Chế độ Bạch miêu (Tuyệt đối không độ) */}
-        <label className="checkbox-wrapper" style={{ marginTop: '-4px' }}>
-          <input
-            type="checkbox"
-            checked={translationConfig.enableObjectiveMode !== false}
-            onChange={(e) => setTranslationConfig({ enableObjectiveMode: e.target.checked })}
-          />
-          <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
-            {locale === 'vi' ? 'Dịch Bạch Miêu (Sát nghĩa, không thêm thắt văn phong)' : 'Objective Mode (Literal translation, no embellishments)'}
-          </span>
-        </label>
+            {/* Jailbreak */}
+            <label className="checkbox-wrapper" style={{ marginTop: '-4px' }}>
+              <input type="checkbox" checked={translationConfig.enableJailbreak || false} onChange={(e) => setTranslationConfig({ enableJailbreak: e.target.checked })} />
+              <span style={{ color: 'var(--accent-danger)', fontSize: '0.8rem', fontWeight: 500 }}>
+                {locale === 'vi' ? 'Bật Jailbreak (Phá màng lọc đạo đức, dùng cho card NSFW)' : 'Enable Jailbreak (Bypass safety filters for NSFW)'}
+              </span>
+            </label>
+
+            {/* Objective Mode */}
+            <label className="checkbox-wrapper" style={{ marginTop: '-4px' }}>
+              <input type="checkbox" checked={translationConfig.enableObjectiveMode !== false} onChange={(e) => setTranslationConfig({ enableObjectiveMode: e.target.checked })} />
+              <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+                {locale === 'vi' ? 'Dịch Bạch Miêu (Sát nghĩa, không thêm thắt văn phong)' : 'Objective Mode (Literal translation, no embellishments)'}
+              </span>
+            </label>
+          </>
+        )}
 
         {/* ═══ Glossary / Terminology Database ═══ */}
         <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '10px' }}>
@@ -385,7 +440,8 @@ export default function TranslateConfig() {
               </div>
             </div>
 
-            {/* Translation Mode */}
+            {/* Translation Mode — only in translate mode */}
+            {!isModMode && (
             <div>
               <label className="label" style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '6px' }}>
                 <Settings2 size={12} />
@@ -410,9 +466,10 @@ export default function TranslateConfig() {
                 />
               </div>
             </div>
+            )}
 
-            {/* Lorebook Strategy */}
-            {translationConfig.fieldGroups.find((g: FieldGroupConfig) => g.id === 'lorebook')?.enabled && (
+            {/* Lorebook Strategy — only in translate mode */}
+            {!isModMode && translationConfig.fieldGroups.find((g: FieldGroupConfig) => g.id === 'lorebook')?.enabled && (
               <div>
                 <label className="label" style={{ marginBottom: '6px' }}>{t.lorebookStrategy}</label>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
@@ -465,7 +522,7 @@ export default function TranslateConfig() {
               </div>
             )}
 
-            {/* Custom Schema */}
+            {/* Custom Schema — shared between modes */}
             <div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
                 <label className="label" style={{ marginBottom: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -548,11 +605,11 @@ export default function TranslateConfig() {
               />
             </div>
 
-            {/* Custom Translation Prompt */}
+            {/* Custom System Prompt — available in both translate and mod mode */}
             <div>
               <label className="label" style={{ marginBottom: '6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  Custom Translation Prompt
+                  {isModMode ? (locale === 'vi' ? 'Prompt Hệ Thống Bổ Sung (Mod)' : 'Additional System Prompt (Mod)') : (locale === 'vi' ? 'Prompt Dịch Tuỳ Chỉnh' : 'Custom Translation Prompt')}
                   {promptDirty && (
                     <span style={{
                       fontSize: '0.6rem', padding: '1px 6px',
@@ -621,7 +678,8 @@ export default function TranslateConfig() {
               </div>
             </div>
 
-            {/* Chunk Size Control */}
+            {/* Chunk Size Control — only in translate mode */}
+            {!isModMode && (
             <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '10px' }}>
               <label className="label" style={{ marginBottom: '6px' }}>
                 {locale === 'vi' ? 'Kích thước chia nhỏ (Chunk Size)' : 'Chunk Size Limit'}
@@ -643,8 +701,9 @@ export default function TranslateConfig() {
                   : 'Override default chunking threshold. Set to 0 to auto-calculate based on proxy Max Tokens. Use large chunks for Regex/MVU to prevent breaking code structure.'}
               </div>
             </div>
+            )}
 
-            {/* ═══ Cross-field Context RAG ═══ */}
+            {/* ═══ Cross-field Context RAG — shared between modes ═══ */}
             <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '10px' }}>
               <label className="checkbox-wrapper">
                 <input
@@ -706,7 +765,8 @@ export default function TranslateConfig() {
               )}
             </div>
 
-            {/* ═══ Surgical CJK Translation Mode ═══ */}
+            {/* ═══ Surgical CJK Translation Mode — only in translate mode ═══ */}
+            {!isModMode && (
             <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '10px' }}>
               <label className="checkbox-wrapper">
                 <input
@@ -726,124 +786,9 @@ export default function TranslateConfig() {
                 </div>
               </label>
             </div>
+            )}
 
-            {/* ═══ User Mod Override Mode ═══ */}
-            <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '10px' }}>
-              <label className="checkbox-wrapper">
-                <input
-                  type="checkbox"
-                  checked={translationConfig.enableModMode}
-                  onChange={(e) => setTranslationConfig({ enableModMode: e.target.checked })}
-                />
-                <div>
-                  <span style={{ color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                    🔧 {t.modMode}
-                  </span>
-                  <span style={{ color: 'var(--text-muted)', fontSize: '0.65rem', display: 'block', marginTop: '2px' }}>
-                    {t.modModeDesc}
-                  </span>
-                </div>
-              </label>
-
-              {translationConfig.enableModMode && (
-                <div style={{ marginTop: '8px', marginLeft: '20px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <label className="label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.7rem' }}>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      {t.modInstructions}
-                      {modInstructionsDirty && (
-                        <span style={{
-                          fontSize: '0.6rem', padding: '1px 6px',
-                          background: 'rgba(255,180,0,0.15)', borderRadius: 'var(--radius-sm)',
-                          color: 'var(--accent-warning)', fontWeight: 600,
-                        }}>
-                          {locale === 'vi' ? 'Chưa lưu' : 'Unsaved'}
-                        </span>
-                      )}
-                      {modInstructionsSaved && !modInstructionsDirty && (
-                        <span style={{
-                          fontSize: '0.6rem', padding: '1px 6px',
-                          background: 'rgba(80,200,120,0.15)', borderRadius: 'var(--radius-sm)',
-                          color: '#50c878', fontWeight: 600,
-                          display: 'flex', alignItems: 'center', gap: '3px',
-                          animation: 'fadeIn 0.2s',
-                        }}>
-                          <CheckCircle size={10} /> {t.modSaved}
-                        </span>
-                      )}
-                    </span>
-                    <button
-                      onClick={saveModInstructions}
-                      disabled={!modInstructionsDirty}
-                      style={{
-                        padding: '2px 10px', fontSize: '0.7rem', fontWeight: 600,
-                        border: '1px solid var(--accent-primary)', borderRadius: 'var(--radius-sm)',
-                        background: modInstructionsDirty ? 'var(--accent-primary)' : 'transparent',
-                        color: modInstructionsDirty ? 'white' : 'var(--text-muted)',
-                        cursor: modInstructionsDirty ? 'pointer' : 'default',
-                        display: 'flex', alignItems: 'center', gap: '4px',
-                        transition: 'all 0.15s',
-                        opacity: modInstructionsDirty ? 1 : 0.5,
-                      }}
-                    >
-                      <Save size={11} /> {t.modSave}
-                    </button>
-                  </label>
-                  <textarea
-                    className="input"
-                    style={{
-                      width: '100%', minHeight: '80px', fontFamily: 'inherit', fontSize: '0.8rem',
-                      resize: 'vertical',
-                      borderColor: modInstructionsDirty ? 'var(--accent-warning)' : undefined,
-                    }}
-                    placeholder={t.modInstructionsPlaceholder}
-                    value={modInstructionsDraft}
-                    onChange={(e) => setModInstructionsDraft(e.target.value)}
-                    onKeyDown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); saveModInstructions(); } }}
-                  />
-                  {/* Apply Mod Button — standalone mod without translation */}
-                  <button
-                    onClick={applyModToAllFields}
-                    disabled={
-                      !translationConfig.modInstructions?.trim() ||
-                      modInstructionsDirty ||
-                      phase === 'translating' ||
-                      !card
-                    }
-                    style={{
-                      marginTop: '8px',
-                      padding: '6px 16px',
-                      fontSize: '0.78rem',
-                      fontWeight: 600,
-                      border: '1px solid var(--accent-primary)',
-                      borderRadius: 'var(--radius-sm)',
-                      background: (translationConfig.modInstructions?.trim() && !modInstructionsDirty && phase !== 'translating' && card)
-                        ? 'linear-gradient(135deg, var(--accent-primary), #9b59b6)'
-                        : 'transparent',
-                      color: (translationConfig.modInstructions?.trim() && !modInstructionsDirty && phase !== 'translating' && card)
-                        ? 'white'
-                        : 'var(--text-muted)',
-                      cursor: (translationConfig.modInstructions?.trim() && !modInstructionsDirty && phase !== 'translating' && card)
-                        ? 'pointer'
-                        : 'not-allowed',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '6px',
-                      transition: 'all 0.2s',
-                      width: '100%',
-                      justifyContent: 'center',
-                      opacity: (translationConfig.modInstructions?.trim() && !modInstructionsDirty && card) ? 1 : 0.5,
-                    }}
-                  >
-                    🔧 {t.applyMod}
-                  </button>
-                  {modInstructionsDirty && translationConfig.modInstructions?.trim() && (
-                    <span style={{ fontSize: '0.6rem', color: 'var(--accent-warning)', marginTop: '4px' }}>
-                      {locale === 'vi' ? '⚠ Lưu yêu cầu trước khi áp dụng' : '⚠ Save instructions before applying'}
-                    </span>
-                  )}
-                </div>
-              )}
-            </div>
+            {/* ═══ Mod Mode settings are now at the top of the section ═══ */}
 
             {/* MVU Sync Panel (Chiến Lược B) */}
             <div style={{ marginTop: '8px' }}>
