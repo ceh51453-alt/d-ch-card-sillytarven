@@ -64,6 +64,24 @@ export function applyMvuToText(
         `$1${safeTranslated}$2$3`
       );
       
+      // ── 5.5. Bracket property access: obj['KEY'] / data["KEY"] ──
+      newText = newText.replace(
+        new RegExp(`(\\[\\s*['"])${escaped}(['"]\\s*\\])`, 'g'),
+        `$1${safeTranslated}$2`
+      );
+      
+      // ── 5.6. String literal comparisons: === 'KEY' / !== "KEY" / case 'KEY' ──
+      newText = newText.replace(
+        new RegExp(`((?:===|!==|==|!=|case)\\s*['"])${escaped}(['"])`, 'g'),
+        `$1${safeTranslated}$2`
+      );
+      
+      // ── 5.7. Lodash utility calls: _.get(data, 'KEY') ──
+      newText = newText.replace(
+        new RegExp(`(_\\.(?:get|set|has|result|pick|omit)\\s*\\([^,]+,\\s*['"])${escaped}(['"])`, 'g'),
+        `$1${safeTranslated}$2`
+      );
+      
       // ── 6. General standalone occurrences (fallback) ──
       const isAsciiOnly = /^[a-zA-Z0-9_]+$/.test(original);
       let regex: RegExp;
@@ -310,7 +328,8 @@ function isNoiseKey(key: string): boolean {
 /** Rich key info for MVU Panel display */
 export interface MvuKeyInfo {
   key: string;
-  sources: ('yaml' | 'macro' | 'zod' | 'datavar' | 'jsonpatch')[];
+  sources: ('yaml' | 'macro' | 'zod' | 'datavar' | 'jsonpatch' | 'enum' | 'bracket' | 'comparison' | 'lodash')[];
+  keyType?: 'field_name' | 'enum_value' | 'string_literal';
   description?: string; // from Zod .describe()
   occurrences: number;  // how many times it appears in card
 }
@@ -425,6 +444,93 @@ export function extractPotentialMvuKeys(card: CharacterCard): MvuKeyInfo[] {
     }
   };
 
+  // ─── Scan z.enum values and .default/.prefault values ───
+  // Extracts enum option strings and default values so they get into the MVU dictionary
+  // and are translated consistently across schema, initvar, and all other fields.
+  const scanZodEnumAndDefaultValues = (text: string) => {
+    if (!text || typeof text !== 'string') return;
+    const hasCJK = /[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u30ff\uac00-\ud7af]/.test(text);
+    if (!hasCJK) return;
+
+    // z.enum(['value1', 'value2', ...])
+    const enumRegex = /(?:z|Zod)\.enum\(\s*\[([^\]]+)\]/g;
+    let match;
+    while ((match = enumRegex.exec(text)) !== null) {
+      const valuesStr = match[1];
+      const values = valuesStr.split(',').map(v => v.trim().replace(/^['"]|['"]$/g, ''));
+      for (const val of values) {
+        if (val && val.length > 1 && /[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u30ff\uac00-\ud7af]/.test(val)) {
+          trackKey(val, 'enum');
+        }
+      }
+    }
+
+    // .default('value') or .prefault('value') — extract CJK string values
+    const defaultRegex = /\.(?:default|prefault)\(\s*['"]([^'"]+)['"]\s*\)/g;
+    while ((match = defaultRegex.exec(text)) !== null) {
+      const val = match[1].trim();
+      if (val && val.length > 1 && /[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u30ff\uac00-\ud7af]/.test(val)) {
+        trackKey(val, 'enum');
+      }
+    }
+  };
+
+  // ─── Scan bracket property access: obj['Key'], data["Key"] ───
+  const scanBracketAccess = (text: string) => {
+    if (!text || typeof text !== 'string') return;
+    // Match: identifier['CJK key'] or identifier["CJK key"]
+    const bracketRegex = /\w+\s*\[\s*['"]([^'"]+)['"]\s*\]/g;
+    let match;
+    while ((match = bracketRegex.exec(text)) !== null) {
+      const val = match[1].trim();
+      if (val && val.length > 1 && /[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u30ff\uac00-\ud7af]/.test(val) && !isNoiseKey(val)) {
+        trackKey(val, 'bracket');
+      }
+    }
+  };
+
+  // ─── Scan string literal comparisons: === 'X', !== 'X', case 'X' ───
+  const scanStringLiteralComparisons = (text: string) => {
+    if (!text || typeof text !== 'string') return;
+    // Match: === 'CJK', !== "CJK", == 'CJK', != "CJK", case 'CJK':
+    const compRegex = /(?:===|!==|==|!=|case)\s*['"]([^'"]+)['"]/g;
+    let match;
+    while ((match = compRegex.exec(text)) !== null) {
+      const val = match[1].trim();
+      if (val && val.length > 1 && /[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u30ff\uac00-\ud7af]/.test(val)) {
+        trackKey(val, 'comparison');
+      }
+    }
+  };
+
+  // ─── Scan lodash/utility access: _.get(data, 'X'), _.set(obj, ['X','Y']) ───
+  const scanLodashAccess = (text: string) => {
+    if (!text || typeof text !== 'string') return;
+    // _.get(data, 'Key') or _.set(obj, 'Key', val)
+    const lodashStrRegex = /_\.(?:get|set|has|result|pick|omit)\s*\([^,]+,\s*['"]([^'"]+)['"]/g;
+    let match;
+    while ((match = lodashStrRegex.exec(text)) !== null) {
+      const fullPath = match[1].trim();
+      // Handle dotted paths: 'a.b.c' → extract each segment
+      for (const seg of fullPath.split('.')) {
+        if (seg && /[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u30ff\uac00-\ud7af]/.test(seg) && !isNoiseKey(seg)) {
+          trackKey(seg, 'lodash');
+        }
+      }
+    }
+    // _.get(data, ['Key1', 'Key2']) — array path
+    const lodashArrRegex = /_\.(?:get|set|has|result)\s*\([^,]+,\s*\[([^\]]+)\]/g;
+    while ((match = lodashArrRegex.exec(text)) !== null) {
+      const arrStr = match[1];
+      const items = arrStr.split(',').map(v => v.trim().replace(/^['"]|['"]$/g, ''));
+      for (const item of items) {
+        if (item && /[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u30ff\uac00-\ud7af]/.test(item) && !isNoiseKey(item)) {
+          trackKey(item, 'lodash');
+        }
+      }
+    }
+  };
+
   // ═══════════════════════════════════════════════════════════
   // SOURCE 1: Lorebook entries
   // ═══════════════════════════════════════════════════════════
@@ -439,21 +545,29 @@ export function extractPotentialMvuKeys(card: CharacterCard): MvuKeyInfo[] {
       /mvu|variable|var_init|zod|initvar/i.test(nameStr);
 
     if (isInitvar || isMvu) {
-      // Full scan for MVU/initvar entries: YAML + macros + EJS + Zod + data-var
+      // Full scan for MVU/initvar entries: ALL scanners
       scanYamlKeys(entry.content);
       scanMacros(entry.content);
       scanEjsCalls(entry.content);
       scanZodFields(entry.content);
       scanDataVar(entry.content);
+      scanZodEnumAndDefaultValues(entry.content);
+      scanBracketAccess(entry.content);
+      scanStringLiteralComparisons(entry.content);
+      scanLodashAccess(entry.content);
     } else if (entry.content) {
       // Scan for JSON Patch field names
       const patchFields = extractPatchFieldNames(entry.content);
       for (const pf of patchFields) trackKey(pf, 'jsonpatch');
-      // Other entries: macros + EJS + data-var + Zod only (NO YAML — too noisy)
+      // Other entries: macros + EJS + data-var + Zod + enum + bracket + comparison (NO YAML — too noisy)
       scanMacros(entry.content);
       scanEjsCalls(entry.content);
       scanDataVar(entry.content);
       scanZodFields(entry.content);
+      scanZodEnumAndDefaultValues(entry.content);
+      scanBracketAccess(entry.content);
+      scanStringLiteralComparisons(entry.content);
+      scanLodashAccess(entry.content);
     }
   }
 
@@ -463,11 +577,15 @@ export function extractPotentialMvuKeys(card: CharacterCard): MvuKeyInfo[] {
   const tavernHelper = data.extensions?.tavern_helper as { scripts?: { content: string }[] } | undefined;
   if (tavernHelper?.scripts) {
     for (const script of tavernHelper.scripts) {
-      // Zod + macros + EJS + data-var (NO YAML — scripts are JS code, not YAML)
+      // ALL code scanners (NO YAML — scripts are JS code, not YAML)
       scanZodFields(script.content);
       scanMacros(script.content);
       scanEjsCalls(script.content);
       scanDataVar(script.content);
+      scanZodEnumAndDefaultValues(script.content);
+      scanBracketAccess(script.content);
+      scanStringLiteralComparisons(script.content);
+      scanLodashAccess(script.content);
     }
   }
   const tavernHelperLegacy = data.extensions?.TavernHelper_scripts as { content: string }[] | undefined;
@@ -477,6 +595,10 @@ export function extractPotentialMvuKeys(card: CharacterCard): MvuKeyInfo[] {
       scanMacros(script.content);
       scanEjsCalls(script.content);
       scanDataVar(script.content);
+      scanZodEnumAndDefaultValues(script.content);
+      scanBracketAccess(script.content);
+      scanStringLiteralComparisons(script.content);
+      scanLodashAccess(script.content);
     }
   }
 
@@ -490,13 +612,20 @@ export function extractPotentialMvuKeys(card: CharacterCard): MvuKeyInfo[] {
         scanMacros(script.findRegex);
         scanEjsCalls(script.findRegex);
         scanZodFields(script.findRegex);
+        scanZodEnumAndDefaultValues(script.findRegex);
+        scanBracketAccess(script.findRegex);
+        scanStringLiteralComparisons(script.findRegex);
       }
       if (script.replaceString) {
-        // data-var + macros + EJS + Zod only (NO YAML — this is HTML)
+        // ALL code scanners (NO YAML — this is HTML)
         scanDataVar(script.replaceString);
         scanMacros(script.replaceString);
         scanEjsCalls(script.replaceString);
         scanZodFields(script.replaceString);
+        scanZodEnumAndDefaultValues(script.replaceString);
+        scanBracketAccess(script.replaceString);
+        scanStringLiteralComparisons(script.replaceString);
+        scanLodashAccess(script.replaceString);
       }
     }
   }
@@ -543,23 +672,35 @@ export function extractPotentialMvuKeys(card: CharacterCard): MvuKeyInfo[] {
   const result: MvuKeyInfo[] = [];
   for (const key of keys) {
     const sources = keySources.get(key);
-    const isExplicit = sources && (sources.has('macro') || sources.has('datavar') || sources.has('yaml') || sources.has('zod'));
+    const isExplicit = sources && (sources.has('macro') || sources.has('datavar') || sources.has('yaml') || sources.has('zod') || sources.has('enum') || sources.has('bracket') || sources.has('lodash'));
 
     if (isExplicit) {
-      // For explicit sources (macros, explicitly marked MVU YAML, UI data-vars, Zod),
-      // we only filter out extreme noise, allowing generic words like "name" or "status".
-      if (/^\d+$/.test(key) || key.length > 50) continue;
+      // For explicit sources, only filter out extreme noise
+      if (/^\d+$/.test(key) || key.length > 80) continue;
       if (key.length < 2 && /^[a-zA-Z0-9_]$/.test(key)) continue;
       // Skip pure hex colors and URLs as they are never variables
       if (/^#[0-9a-fA-F]{3,8}$/.test(key) || /^https?:/.test(key) || /^\/\//.test(key)) continue;
     } else {
-      // For implicit sources (e.g. only EJS calls), apply full strict noise filtering
+      // For implicit sources (e.g. only EJS calls, comparison), apply full strict noise filtering
       if (isNoiseKey(key)) continue;
+    }
+
+    // Auto-classify keyType based on sources
+    let keyType: MvuKeyInfo['keyType'] = undefined;
+    if (sources) {
+      if (sources.has('enum')) {
+        keyType = 'enum_value';
+      } else if (sources.has('yaml') || sources.has('zod') || sources.has('datavar')) {
+        keyType = 'field_name';
+      } else if (sources.has('comparison') || (sources.has('bracket') && !sources.has('macro'))) {
+        keyType = 'string_literal';
+      }
     }
 
     result.push({
       key,
       sources: [...(sources || [])] as MvuKeyInfo['sources'],
+      keyType,
       description: zodDescriptions[key],
       occurrences: keyOccurrences.get(key) || 1,
     });
@@ -631,7 +772,8 @@ STRICT RULES:
    - Use Title Case with diacritics: Hảo Cảm, Thể Lực, Trí Tuệ
    - Each word should be properly capitalized
    - Common patterns: 好感 → Hảo Cảm, 体力 → Thể Lực, 攻击 → Tấn Công
-9. The translated names must be covariant with the Zod Schema — matching the field structure and semantics.${modBlock}
+9. The translated names must be covariant with the Zod Schema — matching the field structure and semantics.
+10. COMPOUND ENUM VALUES: Some keys are compound enum values with structure like "Phase N_Name" (e.g. "阶段 1_静谧", "阶段 2_心动"). Translate the ENTIRE compound value as one unit: "阶段 1_静谧" → "Giai đoạn 1_Tĩnh lặng". Keep the separator character (underscore) and numbering intact. These values appear in z.enum([...]), .prefault('...'), .default('...'), and YAML values — they MUST all be the same translated string.${modBlock}
 
 RESPOND in EXACT JSON format (no markdown): {"translations": {"original_key": "Translated Key", ...}}`;
 

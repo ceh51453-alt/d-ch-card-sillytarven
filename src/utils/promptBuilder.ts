@@ -69,7 +69,8 @@ ADDITIONAL RULES FOR [initvar] VARIABLE INITIALIZATION ENTRIES:
 20. CROSS-FIELD CONSISTENCY: The key names you produce here MUST be IDENTICAL to the z.object field names in the schema entry. If the schema uses "Giá trị tức đọa", you MUST also use "Giá trị tức đọa" here — never a different spelling or format.
 21. PROPER NOUN RULE: If variable names contain Japanese proper nouns, transliterate using Romaji (NOT Hán Việt).
 22. BRACKET NOTATION: If translated key names contain spaces, use bracket notation in any JS code: obj['Hệ Thống'] NOT obj.Hệ Thống. This applies to EJS getvar/setvar string literals, z.object fields, and all property access.
-23. HTML id SAFETY: HTML id attributes MUST be ASCII-only without spaces or diacritics. Use camelCase/PascalCase: id="tab-NhaO" NOT id="tab-Nhà Ở".`;
+23. HTML id SAFETY: HTML id attributes MUST be ASCII-only without spaces or diacritics. Use camelCase/PascalCase: id="tab-NhaO" NOT id="tab-Nhà Ở".
+24. ENUM VALUE CONSISTENCY: If a YAML value corresponds to a z.enum field (e.g., phase/stage/state variables), it MUST be translated IDENTICALLY to the z.enum() values in the schema. The MVU dictionary includes enum values — use them EXACTLY as-is. Example: if schema has z.enum(['Giai đoạn 1_Tĩnh lặng', ...]).prefault('Giai đoạn 1_Tĩnh lặng'), then initvar MUST also use "Giai đoạn 1_Tĩnh lặng" — NOT a different translation like "Giai đoạn 1_Chì Thủy". The part AFTER the number (e.g., _Tĩnh lặng) IS a variable value and MUST match.`;
 
 /** Prompt bổ sung cho MVU logic entries (controller/update) */
 export const MVU_LOGIC_EXTRA_PROMPT = `
@@ -85,7 +86,8 @@ ADDITIONAL RULES FOR MVU LOGIC/CONTROLLER ENTRIES:
 21. CROSS-FIELD CONSISTENCY: Variable names MUST be IDENTICAL across initvar YAML keys and z.object schema keys. If the MVU dictionary provides a translated name, use it EXACTLY as-is (with spaces, no underscores).
 22. PROPER NOUN RULE: If variable/field names contain Japanese proper nouns, transliterate using Romaji (NOT Hán Việt).
 23. BRACKET NOTATION MANDATORY: If translated variable/key names contain spaces (e.g., "Hệ Thống", "Nhân Vật"), you MUST use bracket notation in ALL JavaScript code: obj['Hệ Thống'] NOT obj.Hệ Thống. For nested access: data['Trang Phục']['Áo Khoác'] NOT data.Trang Phục.Áo Khoác. For lodash _.get(): use array path _.get(data, ['Key', 'SubKey']) NOT dot-string _.get(data, 'Key.SubKey').
-24. HTML id MUST BE ASCII-ONLY: No spaces, no diacritics in HTML id or data-target attributes. Convert to camelCase: id="tab-NhaO" NOT id="tab-Nhà Ở". Put readable Vietnamese text in visible content, not in id. CSS selectors must match the ASCII id.`;
+24. HTML id MUST BE ASCII-ONLY: No spaces, no diacritics in HTML id or data-target attributes. Convert to camelCase: id="tab-NhaO" NOT id="tab-Nhà Ở". Put readable Vietnamese text in visible content, not in id. CSS selectors must match the ASCII id.
+25. ENUM VALUE CONSISTENCY: z.enum() option values, .default()/.prefault() values, and YAML variable values that reference the same concept MUST all use the IDENTICAL translated string. If the MVU dictionary maps an enum value (e.g., '阶段 1_静谧' → 'Giai đoạn 1_Tĩnh lặng'), use it EXACTLY everywhere — in z.enum([...]), .prefault('...'), .default('...'), .describe('...'), and all YAML values. The part AFTER the phase number (e.g., _静谧 → _Tĩnh lặng) is a VARIABLE VALUE, not a label — it MUST be synchronized.`;
 
 /** Prompt Mod Standalone — chỉnh sửa/viết lại nội dung tại chỗ (không dịch) */
 export const MOD_STANDALONE_PROMPT = `[CRITICAL: STANDALONE MODIFICATION & REWRITE MODE]

@@ -71,10 +71,26 @@ export function getMvuCardSummary(card: CharacterCard): MvuCardSummary {
     if (/z\.string\(\)|z\.number\(\)|z\.boolean\(\)|z\.enum\(/.test(script.content)) {
       score += 1;
     }
+    // z.enum with values — strong MVU signal
+    const enumMatches = script.content.match(/z\.enum\(\s*\[/g);
+    if (enumMatches && enumMatches.length > 0) {
+      score += 1;
+      result.reasons.push(`${enumMatches.length} z.enum() patterns found`);
+    }
     // MVU update patterns
     if (/mvu_update|updateMVU|MVU|model-view-update/i.test(script.content)) {
       score += 2;
       result.reasons.push('MVU pattern found in TavernHelper');
+    }
+    // Bracket property access with CJK keys: obj['中文']
+    if (/\w+\s*\[\s*['"][^\x00-\x7F]+['"]\s*\]/.test(script.content)) {
+      score += 1;
+      result.reasons.push('Bracket CJK access detected');
+    }
+    // Lodash utility access: _.get, _.set
+    if (/_\.(?:get|set|has)\s*\(/.test(script.content)) {
+      score += 1;
+      result.reasons.push('Lodash utility access found');
     }
   }
 

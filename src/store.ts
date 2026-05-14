@@ -123,12 +123,21 @@ export const useStore = create<AppState>((set) => ({
       _blobUrl: originalImage?.startsWith('blob:') ? originalImage : null,
       contentType,
       originalWorldbook,
+      // ═══ Reset ALL translation state for the new card ═══
+      fields: [],
+      phase: 'idle' as TranslationPhase,
+      logs: [],
+      currentFieldIndex: 0,
+      startTime: null,
+      liveSchemaContext: '',
       translationConfig: {
         ...s.translationConfig,
         mvuDictionary: {}, // Clear dictionary for new card
       },
     }));
     LS.set('st-translator-mvu-dict', {});
+    // Clear stale fields cache in IDB so it won't reload old card's fields
+    IDB.remove('st-translator-fields-data');
     // Separate image from card data in IDB — avoids serializing huge base64/blob
     IDB.set('st-translator-card-data', { card, cardFileName: fileName, contentType, originalWorldbook });
     

@@ -210,6 +210,10 @@ export default function MvuSyncPanel() {
       yaml: { bg: 'rgba(34,197,94,0.1)', color: '#4ade80' },
       macro: { bg: 'rgba(245,158,11,0.1)', color: '#fbbf24' },
       datavar: { bg: 'rgba(236,72,153,0.1)', color: '#f472b6' },
+      enum: { bg: 'rgba(168,85,247,0.1)', color: '#c084fc' },
+      bracket: { bg: 'rgba(14,165,233,0.1)', color: '#38bdf8' },
+      comparison: { bg: 'rgba(251,146,60,0.1)', color: '#fb923c' },
+      lodash: { bg: 'rgba(20,184,166,0.1)', color: '#2dd4bf' },
     };
     const c = colors[source] || { bg: 'rgba(148,163,184,0.1)', color: '#94a3b8' };
     return {
@@ -222,6 +226,32 @@ export default function MvuSyncPanel() {
       color: c.color,
       letterSpacing: '0.5px',
     };
+  };
+
+  const keyTypeBadgeStyle = (kt?: string): React.CSSProperties | null => {
+    if (!kt) return null;
+    const colors: Record<string, { bg: string; color: string; label: string }> = {
+      field_name: { bg: 'rgba(34,197,94,0.08)', color: '#22c55e', label: 'FIELD' },
+      enum_value: { bg: 'rgba(168,85,247,0.08)', color: '#a855f7', label: 'ENUM' },
+      string_literal: { bg: 'rgba(251,146,60,0.08)', color: '#f97316', label: 'STR' },
+    };
+    const c = colors[kt];
+    if (!c) return null;
+    return {
+      padding: '0 4px',
+      borderRadius: '3px',
+      fontSize: '0.5rem',
+      fontWeight: 700,
+      textTransform: 'uppercase' as const,
+      background: c.bg,
+      color: c.color,
+      letterSpacing: '0.5px',
+      border: `1px solid ${c.color}20`,
+    };
+  };
+  const keyTypeLabel = (kt?: string) => {
+    const labels: Record<string, string> = { field_name: 'FIELD', enum_value: 'ENUM', string_literal: 'STR' };
+    return kt ? labels[kt] || '' : '';
   };
 
   return (
@@ -448,6 +478,9 @@ export default function MvuSyncPanel() {
                       />
                       {keyInfo?.sources && keyInfo.sources.length > 0 && (
                         <div style={{ display: 'flex', gap: '2px', flexShrink: 0 }}>
+                          {keyInfo.keyType && keyTypeBadgeStyle(keyInfo.keyType) && (
+                            <span style={keyTypeBadgeStyle(keyInfo.keyType)!}>{keyTypeLabel(keyInfo.keyType)}</span>
+                          )}
                           {keyInfo.sources.map(s => (
                             <span key={s} style={sourceBadgeStyle(s)}>{s}</span>
                           ))}

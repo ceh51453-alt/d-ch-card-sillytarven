@@ -560,6 +560,11 @@ export function useTranslation() {
       return;
     }
 
+    // ═══ Abort any previous running operation before starting fresh ═══
+    if (abortRef.current) {
+      abortRef.current.abort();
+    }
+
     abortRef.current = new AbortController();
     pauseRef.current = false;
     store.setPhase('translating');
@@ -1339,6 +1344,11 @@ export function useTranslation() {
     const effectiveLang = detectedLang === 'unknown' || detectedLang === 'mixed'
       ? store.translationConfig.targetLanguage
       : detectedLang;
+
+    // ═══ Abort any previous running operation before starting fresh ═══
+    if (abortRef.current) {
+      abortRef.current.abort();
+    }
 
     // Clear state for fresh progress tracking
     abortRef.current = new AbortController();
