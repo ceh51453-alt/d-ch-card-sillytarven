@@ -1240,9 +1240,17 @@ export function useTranslation() {
             if (extractedKeys.length > 0) {
               store.addLog('active', `🤖 Renaming ${extractedKeys.length} variable names with Mod instructions...`);
 
+              // Schema context: prefer already-modded tavern_helper content > customSchema > original card scripts
               let schemaContext = store.translationConfig.customSchema || '';
-              if (!schemaContext.trim() && store.card?.data?.extensions?.tavern_helper?.scripts) {
-                schemaContext = store.card.data.extensions.tavern_helper.scripts.map(s => s.content).join('\n\n');
+              if (!schemaContext.trim()) {
+                const moddedSchemaFields = useStore.getState().fields
+                  .filter(f => f.group === 'tavern_helper' && f.status === 'done' && f.translated?.trim());
+                if (moddedSchemaFields.length > 0) {
+                  schemaContext = moddedSchemaFields.map(f => f.translated).join('\n\n');
+                  store.addLog('info', '📋 Using already-modded TavernHelper schema for MVU scan');
+                } else if (store.card?.data?.extensions?.tavern_helper?.scripts) {
+                  schemaContext = store.card.data.extensions.tavern_helper.scripts.map(s => s.content).join('\n\n');
+                }
               }
 
               let keyDescriptions: Record<string, string> = {};
@@ -1299,6 +1307,16 @@ export function useTranslation() {
       const freshMvuDict = freshState.translationConfig.mvuDictionary;
       const freshLiveSchema = freshState.liveSchemaContext;
 
+      // Build effective schema: prefer modded tavern_helper content over original
+      let effectiveCustomSchema = store.translationConfig.customSchema || '';
+      if (!effectiveCustomSchema.trim()) {
+        const moddedSchemaFields = freshFields
+          .filter(f => f.group === 'tavern_helper' && f.status === 'done' && f.translated?.trim());
+        if (moddedSchemaFields.length > 0) {
+          effectiveCustomSchema = moddedSchemaFields.map(f => f.translated).join('\n\n');
+        }
+      }
+
       const modEntryNameDict = buildEntryNameDictionary(freshFields);
       const modRegexTriggerDict = buildRegexTriggerDictionary(freshFields);
 
@@ -1312,7 +1330,7 @@ export function useTranslation() {
         allFields: freshFields,
         mvuDictionary: freshMvuDict,
         glossary: store.translationConfig.glossary,
-        customSchema: store.translationConfig.customSchema,
+        customSchema: effectiveCustomSchema,
         liveSchemaContext: freshLiveSchema,
         ragMaxFields: store.translationConfig.ragMaxFields,
         ragMaxChars: store.translationConfig.ragMaxChars,
@@ -1382,8 +1400,21 @@ export function useTranslation() {
       store.addLog('success', `🔧 Modded: ${field.label}`);
       store.addToast('success', `Mod applied to ${field.label}`);
 
-      // ═══ Bake single modded field into card so next operations use updated base ═══
-      bakeModdedFieldsIntoCard();
+      // ═══ Live Schema Capture: if modded a tavern_helper, update liveSchemaContext ═══
+      // so subsequent single-field mods see the updated key names
+      if (field.group === 'tavern_helper') {
+        const currentCustomSchema = store.translationConfig.customSchema;
+        if (!currentCustomSchema?.trim()) {
+          const allModdedSchemas = useStore.getState().fields
+            .filter(f => f.group === 'tavern_helper' && f.status === 'done' && f.translated?.trim())
+            .map(f => f.translated)
+            .join('\n\n');
+          if (allModdedSchemas.trim()) {
+            store.setLiveSchemaContext(allModdedSchemas);
+            store.addLog('info', '📋 Live Schema: captured modded TavernHelper → context for subsequent mods');
+          }
+        }
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       store.updateField(path, { status: 'error', error: msg });
@@ -1476,8 +1507,16 @@ export function useTranslation() {
           store.addLog('active', `🤖 Renaming ${extractedKeys.length} variable names with Mod instructions...`);
 
           let schemaContext = store.translationConfig.customSchema || '';
-          if (!schemaContext.trim() && store.card?.data?.extensions?.tavern_helper?.scripts) {
-            schemaContext = store.card.data.extensions.tavern_helper.scripts.map(s => s.content).join('\n\n');
+          if (!schemaContext.trim()) {
+            // Prefer already-modded tavern_helper content > original card scripts
+            const moddedSchemaFields = useStore.getState().fields
+              .filter(f => f.group === 'tavern_helper' && f.status === 'done' && f.translated?.trim());
+            if (moddedSchemaFields.length > 0) {
+              schemaContext = moddedSchemaFields.map(f => f.translated).join('\n\n');
+              store.addLog('info', '📋 Using already-modded TavernHelper schema for MVU scan');
+            } else if (store.card?.data?.extensions?.tavern_helper?.scripts) {
+              schemaContext = store.card.data.extensions.tavern_helper.scripts.map(s => s.content).join('\n\n');
+            }
           }
 
           let keyDescriptions: Record<string, string> = {};
@@ -1583,6 +1622,16 @@ export function useTranslation() {
         const freshMvuDict = freshState.translationConfig.mvuDictionary;
         const freshLiveSchema = freshState.liveSchemaContext;
 
+        // Build effective schema: prefer modded tavern_helper content over original
+        let effectiveCustomSchema = store.translationConfig.customSchema || '';
+        if (!effectiveCustomSchema.trim()) {
+          const moddedSchemaFields = freshFields
+            .filter(f => f.group === 'tavern_helper' && f.status === 'done' && f.translated?.trim());
+          if (moddedSchemaFields.length > 0) {
+            effectiveCustomSchema = moddedSchemaFields.map(f => f.translated).join('\n\n');
+          }
+        }
+
         const modEntryNameDict = buildEntryNameDictionary(freshFields);
         const modRegexTriggerDict = buildRegexTriggerDictionary(freshFields);
 
@@ -1596,7 +1645,7 @@ export function useTranslation() {
           allFields: freshFields,
           mvuDictionary: freshMvuDict,
           glossary: store.translationConfig.glossary,
-          customSchema: store.translationConfig.customSchema,
+          customSchema: effectiveCustomSchema,
           liveSchemaContext: freshLiveSchema,
           ragMaxFields: store.translationConfig.ragMaxFields,
           ragMaxChars: store.translationConfig.ragMaxChars,
