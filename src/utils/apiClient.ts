@@ -134,6 +134,7 @@ export function getDefaultTranslationPrompt(sourceLang: string, targetLang: stri
     ? `\n15. VIETNAMESE SPECIFIC RULES:
     - Translate Chinese names (characters, places, martial arts, etc.) into Hán Việt (Sino-Vietnamese) instead of Pinyin or raw English.
     - For Japanese proper nouns (names, places), use standard Romaji transliteration (e.g. 田中 → Tanaka, 桜 → Sakura). Do NOT apply Hán Việt to Japanese names.
+    - WESTERN/FANTASY NAMES EXCEPTION: For non-Chinese names (Western, European, Fantasy, Sci-fi) phonetically transcribed into Chinese characters (e.g., 维拉→Vera, 塞勒涅→Selene, 亚瑟→Arthur, 艾琳→Irene), restore them to their original Latin spelling. NEVER apply Hán Việt to these phonetic transcriptions (e.g., NEVER output "Vi Lạp", "Tắc Lặc Niết"). Hán Việt applies EXCLUSIVELY to native Chinese names.
     - Use natural roleplay pronouns (e.g., tôi/bạn, anh/em, hắn/nàng/y) suitable for the context, avoiding rigid direct translation of pronouns (like 'ngươi/ta' unless it's a historical setting).
     - Ensure a smooth, natural literary flow (văn phong mượt mà) suitable for fiction/roleplay. Avoid word-by-word literal translation.`
     : '';
@@ -161,6 +162,7 @@ STRICT RULES:
 11. PROPER NOUN TRANSLITERATION RULES:
     - Chinese proper nouns (names, places, titles) → Hán Việt / Sino-Vietnamese reading (e.g. 李明 → Lý Minh). Do NOT use Pinyin.
     - Japanese proper nouns (names, places) → standard Romaji transliteration (e.g. 田中 → Tanaka, 桜 → Sakura). Do NOT apply Hán Việt to Japanese names.
+    - WESTERN/FANTASY NAMES: Non-Chinese names phonetically transcribed into CJK (e.g., 维拉→Vera, 塞勒涅→Selene, 亚瑟→Arthur) → restore to original Latin spelling. NEVER apply Hán Việt to these.
     - Keep honorifics as-is or map to Vietnamese equivalents based on context (-san, -chan, -sama).
 12. CRITICAL: The output must contain ONLY the translated text in ${targetLang}. Do NOT include source language text. Do NOT pair original text with translation. Do NOT use arrows (→) or colons (:) to show before/after.
 13. CRITICAL: You MUST translate the COMPLETE text. Do NOT stop early. Do NOT summarize or truncate. If the text is very long, translate ALL of it from start to finish.
@@ -322,7 +324,7 @@ CHUNK RULES:
       ? `\n    - VIETNAMESE SPECIFIC: Translate names into Hán Việt (Sino-Vietnamese). Use natural roleplay pronouns. Ensure smooth literary flow.`
       : '';
 
-    const safetyRule = `\n\nCRITICAL RULE: ABSOLUTELY NO untranslated source language characters (e.g., Chinese Hanzi, Japanese Kanji) should remain in the final output. You MUST translate every single word into ${targetLang} unless it is a specific system variable name (like {{char}}).${vietnameseSafetyRule}\n    - PROPER NOUN RULE: Chinese proper nouns → Hán Việt. Japanese proper nouns → Romaji (NOT Hán Việt). Do NOT mix up these two systems.`;
+    const safetyRule = `\n\nCRITICAL RULE: ABSOLUTELY NO untranslated source language characters (e.g., Chinese Hanzi, Japanese Kanji) should remain in the final output. You MUST translate every single word into ${targetLang} unless it is a specific system variable name (like {{char}}).${vietnameseSafetyRule}\n    - PROPER NOUN RULE: Chinese proper nouns → Hán Việt. Japanese proper nouns → Romaji (NOT Hán Việt). Western/Fantasy names phonetically transcribed into CJK → restore to original Latin spelling (NOT Hán Việt). Do NOT mix up these systems.`;
 
     let regexInstruction = '';
     if (fieldName.includes('findRegex') || fieldName.includes('replaceString')) {

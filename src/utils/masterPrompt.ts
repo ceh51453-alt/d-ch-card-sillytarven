@@ -159,7 +159,10 @@ When the source language is Chinese, ALL proper nouns MUST be rendered in their 
   - Techniques/Skills:   九阴真经 → Cửu Âm Chân Kinh
   - Official titles:     皇帝 → Hoàng Đế, 将军 → Tướng Quân
   - Artifacts/Objects:   乾坤袋 → Càn Khôn Đại
-  - Cultivation stages:  练气 → Luyện Khí, 金丹 → Kim Đan`;
+  - Cultivation stages:  练气 → Luyện Khí, 金丹 → Kim Đan
+
+WESTERN/FANTASY NAMES EXCEPTION:
+For non-Chinese names (Western, European, Fantasy, Sci-fi) that are phonetically transcribed into Chinese characters (e.g., 维拉, 塞勒涅, 亚瑟, 艾琳), you MUST translate them back to their original English/Latin spelling (e.g., Vera, Selene, Arthur, Irene). ABSOLUTELY DO NOT translate these phonetic transcriptions into Hán Việt (e.g., NEVER output "Vi Lạp", "Tắc Lặc Niết", "Á Sắt", "Ngải Lâm"). The Hán Việt instruction above applies EXCLUSIVELY to native Chinese names (李明, 洛阳, 少林寺).`;
   }
 
   if (isJapanese && isVietnamese) {
@@ -182,7 +185,8 @@ Do NOT apply Hán Việt (Sino-Vietnamese) to Japanese names — even if they us
 P1 — Proper Noun Transliteration (Mixed/Auto-detect Source):
   - Chinese proper nouns (中文) → Hán Việt / Sino-Vietnamese reading. Do NOT use Pinyin.
   - Japanese proper nouns (日本語) → standard Romaji transliteration. Do NOT apply Hán Việt to Japanese names.
-  - Distinguish by context: if a character card is clearly Japanese-themed (school life, Japanese cities, -san/-chan), use Romaji for all names.`;
+  - Distinguish by context: if a character card is clearly Japanese-themed (school life, Japanese cities, -san/-chan), use Romaji for all names.
+  - WESTERN/FANTASY NAMES EXCEPTION: For non-Chinese names (Western, European, Fantasy, Sci-fi) phonetically transcribed into Chinese characters (e.g., 维拉→Vera, 塞勒涅→Selene, 亚瑟→Arthur), restore them to their original Latin spelling. NEVER apply Hán Việt to these phonetic transcriptions.`;
   }
 
   if (isVietnamese) {
