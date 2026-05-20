@@ -229,6 +229,9 @@ export interface TranslationConfig {
   modInstructions: string; // The custom instructions provided by the user
   enablePatchMode: boolean; // Patch mode: AI outputs find/replace patches instead of full content (regex fields only)
   enableMvuConversion: boolean; // Also convert the card to MVU-Zod during modding
+  enableModelRouting: boolean; // Enable custom model routing per group/entry
+  groupModelRouting: Record<string, string>; // Map of FieldGroup to model string
+  entryModelRouting: Record<string, string>; // Map of field path to model string
 }
 
 /* ─── Log Entry ─── */

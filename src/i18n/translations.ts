@@ -219,6 +219,15 @@ const en = {
   catMvuInconsistent: 'MVU Inconsistent',
   catLengthAnomaly: 'Length Anomaly',
   catEmpty: 'Empty',
+
+  // Model Routing
+  enableModelRouting: 'Enable Model Routing',
+  modelRoutingDesc: 'Override global model for specific groups or entries.',
+  groupModels: 'Group Models',
+  entryModels: 'Entry Models',
+  globalModel: 'Global Model',
+  selectEntryToOverride: 'Select entry to override...',
+  addModel: 'Add',
 };
 
 const vi: TranslationKeys = {
@@ -438,6 +447,15 @@ const vi: TranslationKeys = {
   catMvuInconsistent: 'MVU không khớp',
   catLengthAnomaly: 'Độ dài bất thường',
   catEmpty: 'Trống',
+
+  // Model Routing
+  enableModelRouting: 'Bật Model Routing',
+  modelRoutingDesc: 'Ghi đè model chung (Global Model) cho các nhóm hoặc mục nhập cụ thể.',
+  groupModels: 'Model theo nhóm',
+  entryModels: 'Model theo mục (Entry)',
+  globalModel: 'Model chung',
+  selectEntryToOverride: 'Chọn mục để ghi đè...',
+  addModel: 'Thêm',
 };
 
 export const translations: Record<Locale, TranslationKeys> = { en, vi };

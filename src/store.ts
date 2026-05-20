@@ -308,6 +308,9 @@ export const useStore = create<AppState>((set) => ({
     modInstructions: LS.get('st-translator-mod-instructions', ''),
     enablePatchMode: LS.get('st-translator-patch-mode', false),
     enableMvuConversion: LS.get('st-translator-mvu-conversion', false),
+    enableModelRouting: LS.get('st-translator-model-routing-enabled', false),
+    groupModelRouting: LS.get('st-translator-group-model-routing', {}),
+    entryModelRouting: LS.get('st-translator-entry-model-routing', {}),
   },
   setTranslationConfig: (partial) =>
     set((s) => {
@@ -350,6 +353,15 @@ export const useStore = create<AppState>((set) => ({
       }
       if ('enableMvuConversion' in partial) {
         LS.set('st-translator-mvu-conversion', next.enableMvuConversion);
+      }
+      if ('enableModelRouting' in partial) {
+        LS.set('st-translator-model-routing-enabled', next.enableModelRouting);
+      }
+      if ('groupModelRouting' in partial) {
+        LS.set('st-translator-group-model-routing', next.groupModelRouting);
+      }
+      if ('entryModelRouting' in partial) {
+        LS.set('st-translator-entry-model-routing', next.entryModelRouting);
       }
       if ('translationPrompt' in partial) {
         LS.set('st-translator-custom-prompt', next.translationPrompt);

@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 import { useStore } from '../store';
 import { useT } from '../i18n/useLocale';
 import { TARGET_LANGUAGES, SOURCE_LANGUAGES } from '../utils/cardFields';
-import { getDefaultTranslationPrompt } from '../utils/apiClient';
+import { getDefaultTranslationPrompt, getModelSuggestions } from '../utils/apiClient';
 import { aiExtractGlossaryTerms } from '../utils/mvuSync';
 import type { TranslationMode, LorebookStrategy, FieldGroupConfig, FieldGroup, GlossaryEntry } from '../types/card';
 import { Languages, Settings2, FileJson, BookOpen, Plus, Trash2, Download, Upload, Bot, Loader2, Save, RotateCcw, CheckCircle } from 'lucide-react';
@@ -27,10 +27,11 @@ function useGroupLabels() {
 }
 
 export default function TranslateConfig() {
-  const { translationConfig, setTranslationConfig, toggleFieldGroup, card, locale, proxy, addToast } = useStore();
+  const { translationConfig, setTranslationConfig, toggleFieldGroup, card, locale, proxy, addToast, fields } = useStore();
 
   const t = useT();
   const groupLabels = useGroupLabels();
+  const modelSuggestions = getModelSuggestions(proxy.provider);
   const [isAutoExtractingGlossary, setIsAutoExtractingGlossary] = useState(false);
   const defaultPrompt = getDefaultTranslationPrompt(translationConfig.sourceLanguage, translationConfig.targetLanguage);
   const [promptDraft, setPromptDraft] = useState<string>(translationConfig.translationPrompt || '');
@@ -472,6 +473,126 @@ export default function TranslateConfig() {
                   );
                 })}
               </div>
+            </div>
+
+            {/* Model Routing */}
+            <div style={{ marginTop: '16px', marginBottom: '16px' }}>
+              <label className="checkbox-wrapper" style={{ marginBottom: '8px' }}>
+                <input
+                  type="checkbox"
+                  checked={translationConfig.enableModelRouting}
+                  onChange={(e) => setTranslationConfig({ enableModelRouting: e.target.checked })}
+                />
+                <div>
+                  <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{t.enableModelRouting || 'Enable Model Routing'}</span>
+                  <span style={{ color: 'var(--text-muted)', fontSize: '0.7rem', display: 'block' }}>
+                    {t.modelRoutingDesc || 'Override global model for specific groups or entries.'}
+                  </span>
+                </div>
+              </label>
+
+              {translationConfig.enableModelRouting && (
+                <div style={{ marginLeft: '24px', display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '8px' }}>
+                  <datalist id="model-suggestions-list">
+                    {modelSuggestions.map(s => <option key={s} value={s} />)}
+                  </datalist>
+
+                  {/* Group Routing */}
+                  <div style={{ padding: '8px', background: 'var(--bg-secondary)', borderRadius: 'var(--radius-sm)' }}>
+                    <label className="label" style={{ marginBottom: '8px', fontSize: '0.8rem' }}>{t.groupModels || 'Group Models'}</label>
+                    {translationConfig.fieldGroups.filter(g => g.enabled).map(group => {
+                      const labels = groupLabels[group.id];
+                      return (
+                      <div key={group.id} style={{ display: 'flex', alignItems: 'center', marginBottom: '6px', gap: '8px' }}>
+                        <span style={{ width: '120px', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{labels?.label || group.label}</span>
+                        <input
+                          type="text"
+                          list="model-suggestions-list"
+                          placeholder={t.globalModel || 'Global Model'}
+                          value={translationConfig.groupModelRouting[group.id] || ''}
+                          onChange={(e) => setTranslationConfig({
+                            groupModelRouting: { ...translationConfig.groupModelRouting, [group.id]: e.target.value }
+                          })}
+                          className="input"
+                          style={{ flex: 1, padding: '4px 8px', fontSize: '0.75rem' }}
+                        />
+                      </div>
+                    )})}
+                  </div>
+
+                  {/* Entry Routing */}
+                  <div style={{ padding: '8px', background: 'var(--bg-secondary)', borderRadius: 'var(--radius-sm)' }}>
+                    <label className="label" style={{ marginBottom: '8px', fontSize: '0.8rem' }}>{t.entryModels || 'Entry Models'}</label>
+                    {Object.entries(translationConfig.entryModelRouting).map(([path, model]) => (
+                      <div key={path} style={{ display: 'flex', alignItems: 'center', marginBottom: '6px', gap: '8px' }}>
+                        <input
+                          type="text"
+                          value={path}
+                          readOnly
+                          className="input"
+                          style={{ flex: 2, padding: '4px 8px', fontSize: '0.7rem', opacity: 0.8 }}
+                          title={path}
+                        />
+                        <input
+                          type="text"
+                          list="model-suggestions-list"
+                          placeholder={t.globalModel || 'Global Model'}
+                          value={model}
+                          onChange={(e) => setTranslationConfig({
+                            entryModelRouting: { ...translationConfig.entryModelRouting, [path]: e.target.value }
+                          })}
+                          className="input"
+                          style={{ flex: 1, padding: '4px 8px', fontSize: '0.75rem' }}
+                        />
+                        <button
+                          onClick={() => {
+                            const newRouting = { ...translationConfig.entryModelRouting };
+                            delete newRouting[path];
+                            setTranslationConfig({ entryModelRouting: newRouting });
+                          }}
+                          className="btn btn-secondary"
+                          style={{ padding: '4px 8px', borderColor: 'var(--accent-danger)', color: 'var(--accent-danger)' }}
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                    ))}
+
+                    <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                      <select
+                        id="new-routing-path"
+                        className="input"
+                        style={{ flex: 2, padding: '4px 8px', fontSize: '0.75rem' }}
+                      >
+                        <option value="">{t.selectEntryToOverride || 'Select entry to override...'}</option>
+                        {fields && fields.length > 0 
+                          ? fields.map(f => <option key={f.path} value={f.path}>{f.label}</option>)
+                          : (card.data?.character_book?.entries || []).map((e, i) => (
+                              <option key={`data.character_book.entries[${i}].content`} value={`data.character_book.entries[${i}].content`}>
+                                lorebook[{i}].content ({e.name || 'Unnamed'})
+                              </option>
+                            ))
+                        }
+                      </select>
+                      <button
+                        onClick={() => {
+                          const select = document.getElementById('new-routing-path') as HTMLSelectElement;
+                          if (select && select.value) {
+                            setTranslationConfig({
+                              entryModelRouting: { ...translationConfig.entryModelRouting, [select.value]: '' }
+                            });
+                            select.value = '';
+                          }
+                        }}
+                        className="btn btn-primary"
+                        style={{ padding: '4px 12px', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '4px' }}
+                      >
+                        <Plus size={12} /> {t.addModel || 'Add'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Translation Mode — only in translate mode */}

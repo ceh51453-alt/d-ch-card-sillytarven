@@ -164,11 +164,16 @@ export function useTranslation() {
       ? currentChunkSize
       : (currentMaxTokens && currentMaxTokens > 0 ? Math.min(Math.floor(currentMaxTokens * 3.5), 200000) : 40000);
       
+    const targetModel = store.translationConfig.enableModelRouting
+      ? (store.translationConfig.entryModelRouting[field.path] || store.translationConfig.groupModelRouting[field.group] || store.proxy.model)
+      : store.proxy.model;
+    const effectiveProxy = targetModel !== store.proxy.model ? { ...store.proxy, model: targetModel } : store.proxy;
+
     if (charCount > CHUNK_THRESHOLD) {
       const estimatedChunks = Math.ceil(charCount / CHUNK_THRESHOLD);
-      store.addLog('active', `Translating: ${field.label} (${charCount.toLocaleString()} chars → ~${estimatedChunks} chunks 🔗sequential)`);
+      store.addLog('active', `Translating: ${field.label} (${charCount.toLocaleString()} chars → ~${estimatedChunks} chunks 🔗sequential)${targetModel !== store.proxy.model ? ` [Model: ${targetModel}]` : ''}`);
     } else {
-      store.addLog('active', `Translating: ${field.label} (${charCount.toLocaleString()} chars)`);
+      store.addLog('active', `Translating: ${field.label} (${charCount.toLocaleString()} chars)${targetModel !== store.proxy.model ? ` [Model: ${targetModel}]` : ''}`);
     }
 
     // IMPORTANT: read fresh retries from store (not stale `field` parameter) to prevent infinite retry loops
@@ -206,7 +211,7 @@ export function useTranslation() {
         ragMaxFields: store.translationConfig.ragMaxFields,
         ragMaxChars: store.translationConfig.ragMaxChars,
         entryNameDictionary: Object.keys(entryNameDict).length > 0 ? entryNameDict : undefined,
-        expertMode: store.proxy.expertMode,
+        expertMode: effectiveProxy.expertMode,
         enableModMode: store.translationConfig.enableModMode,
         modInstructions: store.translationConfig.modInstructions,
       });
@@ -229,7 +234,7 @@ export function useTranslation() {
         store.addLog('active', `🔪 Initiating Surgical Translation for ${field.label}...`);
         const sResult = await surgicalTranslate(
           field.original,
-          store.proxy,
+          effectiveProxy,
           store.translationConfig.targetLanguage,
           abortRef.current?.signal
         );
@@ -261,7 +266,7 @@ export function useTranslation() {
         translated = await translateText(
           field.original,
           field.label,
-          store.proxy,
+          effectiveProxy,
           store.translationConfig.targetLanguage,
           store.translationConfig.sourceLanguage,
           promptResult.effectivePrompt,
@@ -420,6 +425,12 @@ export function useTranslation() {
 
   /* ─── Translate one batch of fields (single API call + fallback) ─── */
   const translateOneBatch = async (batchFields: TranslationField[], retryCount = 0) => {
+    if (batchFields.length === 0) return;
+    const targetModel = store.translationConfig.enableModelRouting
+      ? (store.translationConfig.entryModelRouting[batchFields[0].path] || store.translationConfig.groupModelRouting[batchFields[0].group] || store.proxy.model)
+      : store.proxy.model;
+    const effectiveProxy = targetModel !== store.proxy.model ? { ...store.proxy, model: targetModel } : store.proxy;
+
     // Mark all as translating
     for (const f of batchFields) {
       store.updateField(f.path, { status: 'translating' });
@@ -429,7 +440,7 @@ export function useTranslation() {
     const mvuCriticalCount = batchFields.filter(isMvuCriticalField).length;
     const entryTypes = [...new Set(batchFields.map(f => f.entryType).filter(Boolean))];
     const typeLabel = entryTypes.length > 0 ? ` [${entryTypes.join(',')}]` : '';
-    store.addLog('active', `${retryPrefix}Batch translating ${batchFields.length} entries${typeLabel} (${totalChars} chars${mvuCriticalCount > 0 ? `, ${mvuCriticalCount} MVU-critical` : ''}) - Unlimited Context`);
+    store.addLog('active', `${retryPrefix}Batch translating ${batchFields.length} entries${typeLabel} (${totalChars} chars${mvuCriticalCount > 0 ? `, ${mvuCriticalCount} MVU-critical` : ''}) - Unlimited Context${targetModel !== store.proxy.model ? ` [Model: ${targetModel}]` : ''}`);
 
     try {
       const items = batchFields.map(f => ({ text: f.original, fieldName: f.label }));
@@ -455,14 +466,14 @@ export function useTranslation() {
         ragMaxFields: store.translationConfig.ragMaxFields,
         ragMaxChars: store.translationConfig.ragMaxChars,
         entryNameDictionary: Object.keys(batchEntryNameDict).length > 0 ? batchEntryNameDict : undefined,
-        expertMode: store.proxy.expertMode,
+        expertMode: effectiveProxy.expertMode,
         enableModMode: store.translationConfig.enableModMode,
         modInstructions: store.translationConfig.modInstructions,
       });
 
       const results = await translateBatch(
         items,
-        store.proxy,
+        effectiveProxy,
         store.translationConfig.targetLanguage,
         store.translationConfig.sourceLanguage,
         store.proxy.systemPromptPrefix,
@@ -872,12 +883,15 @@ export function useTranslation() {
         const subBatches: TranslationField[][] = [];
 
         if (isMvuEnabled) {
-          // ═══ MVU Smart Grouping: group by entryType first, then split ═══
+          // ═══ MVU Smart Grouping: group by targetModel and entryType first, then split ═══
           // This ensures initvar entries batch together (YAML format),
           // mvu_logic entries batch together (code), and narrative batches separately
           const typeGroups: Record<string, TranslationField[]> = {};
           for (const f of allLorebookFields) {
-            const typeKey = f.entryType || 'other';
+            const targetModel = store.translationConfig.enableModelRouting
+              ? (store.translationConfig.entryModelRouting[f.path] || store.translationConfig.groupModelRouting[f.group] || store.proxy.model)
+              : store.proxy.model;
+            const typeKey = `${f.entryType || 'other'}_|_${targetModel}`;
             if (!typeGroups[typeKey]) typeGroups[typeKey] = [];
             typeGroups[typeKey].push(f);
           }
@@ -895,14 +909,18 @@ export function useTranslation() {
           // Order: initvar first (schema variables), then logic, then rest
           const typeOrder = ['initvar', 'controller', 'mvu_logic', 'rules', 'narrative', 'other'];
           const sortedTypes = Object.keys(typeGroups).sort((a, b) => {
-            const ia = typeOrder.indexOf(a);
-            const ib = typeOrder.indexOf(b);
+            const baseA = a.split('_|_')[0];
+            const baseB = b.split('_|_')[0];
+            const ia = typeOrder.indexOf(baseA);
+            const ib = typeOrder.indexOf(baseB);
+            if (ia === ib) return a.localeCompare(b);
             return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
           });
 
           for (const typeKey of sortedTypes) {
+            const baseTypeKey = typeKey.split('_|_')[0];
             const typeFields = typeGroups[typeKey];
-            const typeBatchSize = TYPE_BATCH_SIZES[typeKey] || batchSize;
+            const typeBatchSize = TYPE_BATCH_SIZES[baseTypeKey] || batchSize;
             let currentBatch: TranslationField[] = [];
             let currentChars = 0;
 
@@ -925,19 +943,31 @@ export function useTranslation() {
           store.addLog('info', `🔧 MVU batch grouping: ${allLorebookFields.length} fields → [${groupSummary}] → ${subBatches.length} batch(es)`);
 
         } else {
-          // ═══ Standard splitting: by batchSize + char limit ═══
-          let currentBatch: TranslationField[] = [];
-          let currentChars = 0;
+          // ═══ Standard splitting: group by targetModel first, then by batchSize + char limit ═══
+          const modelGroups: Record<string, TranslationField[]> = {};
           for (const f of allLorebookFields) {
-            if (currentBatch.length >= batchSize || (currentBatch.length > 0 && currentChars + f.original.length > MAX_BATCH_CHARS)) {
-              subBatches.push(currentBatch);
-              currentBatch = [];
-              currentChars = 0;
-            }
-            currentBatch.push(f);
-            currentChars += f.original.length;
+            const targetModel = store.translationConfig.enableModelRouting
+              ? (store.translationConfig.entryModelRouting[f.path] || store.translationConfig.groupModelRouting[f.group] || store.proxy.model)
+              : store.proxy.model;
+            if (!modelGroups[targetModel]) modelGroups[targetModel] = [];
+            modelGroups[targetModel].push(f);
           }
-          if (currentBatch.length > 0) subBatches.push(currentBatch);
+
+          for (const targetModel of Object.keys(modelGroups)) {
+            const modelFields = modelGroups[targetModel];
+            let currentBatch: TranslationField[] = [];
+            let currentChars = 0;
+            for (const f of modelFields) {
+              if (currentBatch.length >= batchSize || (currentBatch.length > 0 && currentChars + f.original.length > MAX_BATCH_CHARS)) {
+                subBatches.push(currentBatch);
+                currentBatch = [];
+                currentChars = 0;
+              }
+              currentBatch.push(f);
+              currentChars += f.original.length;
+            }
+            if (currentBatch.length > 0) subBatches.push(currentBatch);
+          }
           store.addLog('info', `${allLorebookFields.length} lorebook fields → ${subBatches.length} batch(es), concurrency: ${concurrency}`);
         }
 
@@ -1139,6 +1169,11 @@ export function useTranslation() {
       // Build entry name dictionary from already-translated lorebook name fields
       const retranslateEntryNameDict = { ...buildEntryNameDictionary(store.fields), ...buildRegexTriggerDictionary(store.fields) };
 
+      const targetModel = store.translationConfig.enableModelRouting
+        ? (store.translationConfig.entryModelRouting[field.path] || store.translationConfig.groupModelRouting[field.group] || store.proxy.model)
+        : store.proxy.model;
+      const effectiveProxy = targetModel !== store.proxy.model ? { ...store.proxy, model: targetModel } : store.proxy;
+
       const promptResult = buildEffectivePrompt({
         translationPrompt: store.translationConfig.translationPrompt,
         enableJailbreak: store.translationConfig.enableJailbreak,
@@ -1154,7 +1189,7 @@ export function useTranslation() {
         ragMaxFields: store.translationConfig.ragMaxFields,
         ragMaxChars: store.translationConfig.ragMaxChars,
         entryNameDictionary: Object.keys(retranslateEntryNameDict).length > 0 ? retranslateEntryNameDict : undefined,
-        expertMode: store.proxy.expertMode,
+        expertMode: effectiveProxy.expertMode,
         enableModMode: store.translationConfig.enableModMode,
         modInstructions: store.translationConfig.modInstructions,
       });
@@ -1167,7 +1202,7 @@ export function useTranslation() {
       let translated = await translateText(
         field.original,
         field.label,
-        store.proxy,
+        effectiveProxy,
         store.translationConfig.targetLanguage,
         store.translationConfig.sourceLanguage,
         promptResult.effectivePrompt,
@@ -1459,6 +1494,11 @@ export function useTranslation() {
       const modEntryNameDict = buildEntryNameDictionary(freshFields);
       const modRegexTriggerDict = buildRegexTriggerDictionary(freshFields);
 
+      const targetModel = store.translationConfig.enableModelRouting
+        ? (store.translationConfig.entryModelRouting[field.path] || store.translationConfig.groupModelRouting[field.group] || store.proxy.model)
+        : store.proxy.model;
+      const effectiveProxy = targetModel !== store.proxy.model ? { ...store.proxy, model: targetModel } : store.proxy;
+
       const promptResult = buildEffectivePrompt({
         translationPrompt: store.translationConfig.translationPrompt,
         enableJailbreak: store.translationConfig.enableJailbreak,
@@ -1475,7 +1515,7 @@ export function useTranslation() {
         ragMaxChars: store.translationConfig.ragMaxChars,
         entryNameDictionary: Object.keys(modEntryNameDict).length > 0 ? modEntryNameDict : undefined,
         regexTriggerDictionary: Object.keys(modRegexTriggerDict).length > 0 ? modRegexTriggerDict : undefined,
-        expertMode: store.proxy.expertMode,
+        expertMode: effectiveProxy.expertMode,
         enableModMode: true,
         modInstructions: store.translationConfig.modInstructions,
         forceModStandalone: true,
@@ -1490,7 +1530,7 @@ export function useTranslation() {
       let result = await translateText(
         inputContent,
         field.label,
-        store.proxy,
+        effectiveProxy,
         effectiveLang,
         effectiveLang,
         promptResult.effectivePrompt,
@@ -1544,10 +1584,10 @@ export function useTranslation() {
               liveSchemaContext: freshLiveSchema,
               ragMaxFields: store.translationConfig.ragMaxFields,
               ragMaxChars: store.translationConfig.ragMaxChars,
-              expertMode: store.proxy.expertMode,
+              expertMode: effectiveProxy.expertMode,
             });
             result = await translateText(
-              inputContent, field.label, store.proxy, effectiveLang, effectiveLang,
+              inputContent, field.label, effectiveProxy, effectiveLang, effectiveLang,
               fullPromptResult.effectivePrompt, fullPromptResult.schemaForApi,
               controller.signal, contextHint, fullPromptResult.glossaryForApi,
               undefined, resolvedFieldType, currentMvuDict, store.translationConfig.chunkSize
