@@ -730,72 +730,7 @@ export function useTranslation() {
       }
     }
 
-    // ═══ Auto-populate MVU Dictionary (Strategy B) ═══
-    if (store.translationConfig.enableMvuSync && store.card) {
-      try {
-        store.addLog('info', '🔧 Strategy B: Auto-detecting MVU/Zod variables...');
-        const extractedKeys = extractPotentialMvuKeyStrings(store.card);
-        
-        if (extractedKeys.length > 0) {
-          // Filter out keys already in dictionary
-          const existingDict = store.translationConfig.mvuDictionary;
-          const newKeys = extractedKeys.filter(k => !(k in existingDict));
-          
-          store.addLog('info', `Found ${extractedKeys.length} variables (${newKeys.length} new, ${extractedKeys.length - newKeys.length} already mapped)`);
-          
-          if (newKeys.length > 0) {
-            store.addLog('active', `🤖 Calling AI to translate ${newKeys.length} variable names...`);
-            
-            // Provide schema context + Zod descriptions for better AI translation
-            let schemaContext = store.translationConfig.customSchema || '';
-            if (!schemaContext.trim() && store.card?.data?.extensions?.tavern_helper?.scripts) {
-              schemaContext = store.card.data.extensions.tavern_helper.scripts.map(s => s.content).join('\n\n');
-            }
 
-            // Extract .describe() annotations for richer context
-            let keyDescriptions: Record<string, string> = {};
-            if (schemaContext) {
-              keyDescriptions = extractZodDescriptions(schemaContext);
-            }
-
-            const aiTranslations = await aiTranslateMvuKeys(
-              newKeys,
-              store.translationConfig.targetLanguage,
-              store.proxy,
-              abortRef.current?.signal,
-              schemaContext,
-              keyDescriptions
-            );
-            
-            // Merge AI translations into dictionary (only non-empty, non-identical)
-            const mergedDict = { ...existingDict };
-            let addedCount = 0;
-            for (const [k, v] of Object.entries(aiTranslations)) {
-              if (v && v.trim() && k !== v && !(k in mergedDict)) {
-                mergedDict[k] = v;
-                addedCount++;
-              }
-            }
-            
-            if (addedCount > 0) {
-              store.setTranslationConfig({ mvuDictionary: mergedDict });
-              store.addLog('success', `✅ Auto-added ${addedCount} variable translations to MVU Dictionary`);
-            } else {
-              store.addLog('info', 'All variables are already ASCII or mapped — no AI translation needed');
-            }
-          }
-        } else {
-          store.addLog('info', 'No MVU/Zod variables detected in this card');
-        }
-      } catch (mvuErr) {
-        const mvuMsg = mvuErr instanceof Error ? mvuErr.message : String(mvuErr);
-        if (mvuMsg === 'Cancelled' || checkAbort()) {
-          store.setPhase('cancelled');
-          return;
-        }
-        store.addLog('warning', `⚠️ MVU auto-detect failed (non-critical): ${mvuMsg}`);
-      }
-    }
 
     // ═══ Reorder fields for Strategy B (MVU-optimized) ═══
     // (Already sorted in prepareFields, but we ensure consistency here)
@@ -850,6 +785,8 @@ export function useTranslation() {
     const lorebookGroups: FieldGroup[] = ['lorebook', 'lorebook_keys'];
 
     let i = 0;
+    let hasBuiltMvuDict = false;
+
     while (i < fields.length) {
       // Check abort
       if (checkAbort()) {
@@ -865,6 +802,83 @@ export function useTranslation() {
       }
 
       const field = fields[i];
+
+      // ═══ Deferred MVU Dictionary Building (Strategy B) ═══
+      // Translate TavernHelper scripts FIRST, then use their TRANSLATED output as context
+      // for the AI to perfectly translate variable names into the MVU dictionary.
+      if (store.translationConfig.enableMvuSync && !hasBuiltMvuDict && field.group !== 'tavern_helper' && store.card) {
+        hasBuiltMvuDict = true;
+        try {
+          store.addLog('info', '🔧 Strategy B: Auto-detecting MVU/Zod variables...');
+          const extractedKeys = extractPotentialMvuKeyStrings(store.card);
+          
+          if (extractedKeys.length > 0) {
+            // Filter out keys already in dictionary
+            const existingDict = store.translationConfig.mvuDictionary;
+            const newKeys = extractedKeys.filter(k => !(k in existingDict));
+            
+            store.addLog('info', `Found ${extractedKeys.length} variables (${newKeys.length} new, ${extractedKeys.length - newKeys.length} already mapped)`);
+            
+            if (newKeys.length > 0) {
+              store.addLog('active', `🤖 Calling AI to translate ${newKeys.length} variable names...`);
+              
+              // Use translated TavernHelper scripts as context
+              let schemaContext = store.translationConfig.customSchema || '';
+              if (!schemaContext.trim()) {
+                const allTranslatedSchemas = useStore.getState().fields
+                  .filter(f => f.group === 'tavern_helper' && f.status === 'done' && f.translated)
+                  .map(f => f.translated)
+                  .join('\n\n');
+                if (allTranslatedSchemas.trim()) {
+                  schemaContext = allTranslatedSchemas;
+                  store.addLog('info', '📋 Used translated TavernHelper scripts as context for variable translation');
+                } else if (store.card?.data?.extensions?.tavern_helper?.scripts) {
+                  schemaContext = store.card.data.extensions.tavern_helper.scripts.map(s => s.content).join('\n\n');
+                }
+              }
+
+              let keyDescriptions: Record<string, string> = {};
+              if (schemaContext) {
+                keyDescriptions = extractZodDescriptions(schemaContext);
+              }
+
+              const aiTranslations = await aiTranslateMvuKeys(
+                newKeys,
+                store.translationConfig.targetLanguage,
+                store.proxy,
+                abortRef.current?.signal,
+                schemaContext,
+                keyDescriptions
+              );
+              
+              const mergedDict = { ...existingDict };
+              let addedCount = 0;
+              for (const [k, v] of Object.entries(aiTranslations)) {
+                if (v && v.trim() && k !== v && !(k in mergedDict)) {
+                  mergedDict[k] = v;
+                  addedCount++;
+                }
+              }
+              
+              if (addedCount > 0) {
+                store.setTranslationConfig({ mvuDictionary: mergedDict });
+                store.addLog('success', `✅ Auto-added ${addedCount} variable translations to MVU Dictionary`);
+              } else {
+                store.addLog('info', 'All variables are already ASCII or mapped — no AI translation needed');
+              }
+            }
+          } else {
+            store.addLog('info', 'No MVU/Zod variables detected in this card');
+          }
+        } catch (mvuErr) {
+          const mvuMsg = mvuErr instanceof Error ? mvuErr.message : String(mvuErr);
+          if (mvuMsg === 'Cancelled' || checkAbort()) {
+            store.setPhase('cancelled');
+            return;
+          }
+          store.addLog('warning', `⚠️ MVU auto-detect failed (non-critical): ${mvuMsg}`);
+        }
+      }
 
       // ─── Batch mode for lorebook fields ───
       if (isBatchLorebook && lorebookGroups.includes(field.group)) {
