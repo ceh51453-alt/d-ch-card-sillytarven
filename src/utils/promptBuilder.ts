@@ -131,9 +131,62 @@ P3: Tuân thủ yêu cầu Mod của người dùng — TOÀN QUYỀN với nộ
 P4 (THẤP NHẤT): Chất lượng văn phong
 
 HOÀN CHỈNH:
-- Chỉnh sửa TOÀN BỘ văn bản. KHÔNG dừng giữa chừng.
-- KHÔNG bỏ qua đoạn nào dù có vẻ lặp lại.
 - KHÔNG tóm tắt hay rút gọn nội dung trừ khi yêu cầu Mod yêu cầu.`;
+
+/** Prompt Hướng Dẫn Suy Nghĩ Cho Chế Độ Mod (Nâng cấp cao cấp) */
+export const MOD_THINKING_PROMPT = `
+[SYSTEM: MOD THINKING MODE ENABLED - ULTRA-RIGOROUS LOGICAL REASONING]
+Bạn BẮT BUỘC phải thực hiện quy trình suy nghĩ hai bước trước khi phản hồi.
+Bọc toàn bộ quá trình suy nghĩ lập luận sâu của bạn trong thẻ <thought_process>...</thought_process> ở phần đầu tiên.
+Bọc toàn bộ văn bản kết quả đã sửa đổi (Mod) trong thẻ <translation>...</translation> ở phần thứ hai.
+
+CẤU TRÚC PHÂN TÍCH SUY NGHĨ (<thought_process>) PHẢI TUÂN THỦ 5 BƯỚC:
+1. CODE & VARIABLE AUDIT (Kiểm kê mã nguồn và biến số):
+   - Đọc văn bản gốc, trích xuất và liệt kê TẤT CẢ các thành phần kỹ thuật: biến MVU/Zod, macro ({{char}}, {{user}}, {{getvar::...}}), khối EJS (<% ... %>), thẻ HTML, thuộc tính data-var, class, id, regex pattern.
+   - Xác định rõ các thành phần kỹ thuật nào PHẢI bảo toàn nguyên vẹn 100% về mặt cú pháp.
+2. SEMANTIC SHIFT MAPPING (Bản đồ dịch chuyển ngữ nghĩa):
+   - Phân tích yêu cầu Mod (hoặc Preset, ví dụ NTR ➔ NTL).
+   - Xác định những đoạn văn bản thô nào (mô tả cốt truyện, lời thoại, bối cảnh) cần sửa đổi để đạt mục tiêu mới.
+   - Vạch ra cách viết lại cụ thể cho từng phần để chuyển đổi tâm lý nhân vật ngọt ngào/trung thủy, biến nhiệm vụ sàm sỡ thành dàn dựng/gài bẫy phản kháng mà KHÔNG đổi cấu trúc biến hệ thống.
+3. VARIABLE SYNC VERIFICATION (Xác thực đồng bộ biến số):
+   - Nếu có yêu cầu hoặc kế hoạch đổi tên biến (ví dụ đổi tên biến tiếng Trung sang tiếng Việt): Đối chiếu danh sách biến ban đầu và biến mới.
+   - Lên phương án thay thế đồng loạt 100% tại tất cả các tệp/chỗ xuất hiện (YAML key, z.object schema, getvar, setvar, macro) để tránh hỏng card.
+4. FORMAT & MARKDOWN COMPLIANCE (Kiểm tra định dạng):
+   - Đảm bảo kết quả cuối cùng nằm gọn trong <translation> và KHÔNG được bọc trong markdown code fence (\`\`\`html hay \`\`\`json) trừ khi văn bản gốc vốn có code fence đó.
+5. SELF-CORRECTION & SAFETY GATE (Tự sửa lỗi & An toàn cú pháp):
+   - Rà soát lại xem có thẻ EJS nào bị thiếu dấu đóng/mở (\`<%\` và \`%>\`), có dấu ngoặc kép nào bị lỗi lồng nhau trong HTML/JS không.
+   - Đảm bảo không có bất kỳ ký tự CJK (Trung/Nhật/Hàn) nào bị bỏ sót chưa dịch/mod (trừ tên thư viện kỹ thuật).
+
+CÚ PHÁP ĐẦU RA BẮT BUỘC:
+<thought_process>
+(Lập luận chi tiết theo 5 bước trên bằng Tiếng Việt)
+</thought_process>
+
+<translation>
+(Nội dung văn bản sau khi Mod hoàn chỉnh, KHÔNG có giải thích hay markdown code block thừa)
+</translation>`;
+
+/** Prompt Preset NTR ➔ NTL (Pure Love, chống NTR, bảo vệ tình yêu) */
+export const NTR_TO_NTL_PRESET_PROMPT = `
+[PRESET: MOD NTR TO NTL / PURE LOVE & REVERSAL MODE]
+MỤC TIÊU CỐT LÕI: Chuyển đổi toàn bộ nội dung kịch bản, lời thoại, tính cách và nhiệm vụ trong character card từ hướng NTR (Cắm sừng, bị cướp bạn gái, nhún nhường nam phụ) sang hướng NTL (Netolove/Pure Love - Bảo vệ tình yêu, trung thủy tuyệt đối, mưu trí/sức mạnh lật ngược thế cờ và phản kháng trừng trị kẻ xấu).
+
+CÁC CHỈ THỊ CHUYỂN ĐỔI NGỮ NGHĨA CHI TIẾT:
+1. TÂM LÝ & TÌNH CẢM NHÂN VẬT NỮ (Lâm Tri Ý, Thẩm Nhược Lan...):
+   - Đảm bảo các nhân vật nữ TRUNG THỦY TUYỆT ĐỐI và sâu sắc với {{user}}.
+   - Ghê tởm, né tránh và chủ động đề phòng trước mọi hành vi dòm ngó, gạ gẫm, sàm sỡ của các nam phụ (như Lưu Chấn Vũ, chủ nhà, giáo sư).
+   - Tuyệt đối không có hành vi tự nguyện phản bội hay có cảm xúc rung động với bất kỳ nam phụ nào.
+2. CƠ CHẾ HỆ THỐNG (Hệ thống hiến tế Ngân Kỳ):
+   - Hệ thống bắt buộc hiến tế bạn gái/tiếp xúc nam phụ ➔ Đổi thành kịch bản: {{user}} và bạn gái cùng hợp tác, dàn dựng cảnh hiến tế giả (dùng búp bê ngụy trang, ảo ảnh cơ học, hoặc năng lực đánh lừa nhận thức của hệ thống) để lấy điểm Ngân Kỳ qua mắt hệ thống mà vẫn giữ gìn trinh tiết và ngọt ngào.
+   - Điểm số hệ thống thu được sẽ dùng để nâng cấp sức mạnh, bảo vệ thế giới và chăm sóc cho các nhân vật nữ.
+3. KỊCH BẢN CÁC TUYẾN PHỤ (Nhiệm vụ kịch bản):
+   - Tuyến Ký túc xá (Lưu Chấn Vũ): Đổi từ việc Lưu Chấn Vũ nhìn trộm/sàm sỡ thành: {{user}} và Lâm Tri Ý phát hiện kẻ biến thái, tương kế tựu kế gài bẫy Lưu Chấn Vũ và trừng phạt hắn thích đáng bằng vũ lực hoặc đuổi đi.
+   - Tuyến Nhà thuê (Chủ nhà): Đổi từ việc chủ nhà ép buộc/đòi hỏi bạn gái thành: {{user}} dùng mưu trí khống chế/tiêu diệt chủ nhà, chiếm cứ điểm an toàn, bảo vệ mọi người.
+   - Tuyến Học đường (Giáo sư): Giải cứu nhân vật nữ an toàn, trừng trị kẻ lạm quyền.
+4. TONE & VĂN PHONG:
+   - Giữ nguyên không khí sinh tồn mạt thế căng thẳng, khốc liệt nhưng tăng cường yếu tố tình cảm ngọt ngào giữa {{user}} và các nhân vật nữ.
+   - Mang lại cảm giác sảng khoái (Happy Ending), phản kháng thành công, không gây ức chế cho người chơi.`;
+
 
 /** Patch Mode Prompt — AI outputs find/replace patches instead of full content (regex fields) */
 export const PATCH_MODE_PROMPT = `[CRITICAL: PATCH MODE — REGEX FIELD]
@@ -293,6 +346,8 @@ export interface PromptBuildOptions {
    * so we skip those here to avoid double injection.
    */
   expertMode?: boolean;
+  enableModThinking?: boolean;
+  modPreset?: 'none' | 'ntr_to_ntl';
 }
 
 export interface PromptBuildResult {
@@ -452,14 +507,16 @@ export function buildEffectivePrompt(options: PromptBuildOptions): PromptBuildRe
     expertMode = false,
   } = options;
 
+  const modPreset = options.modPreset || 'none';
+  const enableModThinking = Boolean(options.enableModThinking);
   const forceModStandalone = Boolean(options.forceModStandalone);
-  const isModActive = Boolean(enableModMode && modInstructions.trim());
+  const isModActive = Boolean(enableModMode && (modInstructions.trim() || modPreset !== 'none'));
 
   // ═══ STANDALONE MOD MODE ═══
   // When forceModStandalone is true, use specialized MOD_STANDALONE_PROMPT
   // instead of translation prompts. This rewrites content in-place.
-  if (forceModStandalone && modInstructions.trim()) {
-    let modPrompt = MOD_STANDALONE_PROMPT;
+  if (forceModStandalone && (modInstructions.trim() || modPreset !== 'none')) {
+    let modPrompt = enableModThinking ? `${MOD_STANDALONE_PROMPT}\n\n${MOD_THINKING_PROMPT}` : MOD_STANDALONE_PROMPT;
 
     // ═══ PATCH MODE: for regex content fields, use PATCH_MODE_PROMPT instead ═══
     const isRegexContent = field?.group === 'regex' && (
@@ -467,7 +524,7 @@ export function buildEffectivePrompt(options: PromptBuildOptions): PromptBuildRe
     );
     const usePatchMode = Boolean(options.enablePatchMode) && isRegexContent;
     if (usePatchMode) {
-      modPrompt = PATCH_MODE_PROMPT;
+      modPrompt = enableModThinking ? `${PATCH_MODE_PROMPT}\n\n${MOD_THINKING_PROMPT}` : PATCH_MODE_PROMPT;
     }
 
     // Inject jailbreak if enabled (Mod may need uncensored output)
@@ -500,13 +557,21 @@ export function buildEffectivePrompt(options: PromptBuildOptions): PromptBuildRe
       modPrompt += `\n\n[GLOBAL CUSTOM PROMPT / NGỮ CẢNH HỆ THỐNG TOÀN CỤC]\n${translationPrompt.trim()}\n`;
     }
 
-    // Inject the user's Mod instructions
+    // Inject the user's Mod instructions & Preset instructions
+    let modInstructionsBlock = '';
+    if (modPreset === 'ntr_to_ntl') {
+      modInstructionsBlock += NTR_TO_NTL_PRESET_PROMPT + '\n\n';
+    }
+    if (modInstructions.trim()) {
+      modInstructionsBlock += `[YÊU CẦU MOD THỦ CÔNG CỦA NGƯỜI DÙNG]\n${modInstructions.trim()}\n`;
+    }
+
     modPrompt += `\n\n[YÊU CẦU MOD CỦA NGƯỜI DÙNG — ƯU TIÊN TUYỆT ĐỐI]
 Bạn ĐƯỢC TOÀN QUYỀN THAY ĐỔI mọi thứ TRỪ code syntax: cốt truyện, bối cảnh, xưng hô, tính cách, nội dung, tên biến, giá trị biến, entry names.
 Mọi mâu thuẫn giữa nội dung hiện tại và yêu cầu Mod thì PHẢI ưu tiên yêu cầu Mod.
 Nếu đổi tên biến → phải đổi ĐỒNG LOẠT ở mọi nơi (YAML key, z.object, data-var, getvar, setvar, macros).
 
-${modInstructions.trim()}`;
+${modInstructionsBlock}`;
 
     // Inject MVU dict for code protection (even in standalone mod)
     // Always inject in mod mode (both expert and legacy) for safety
@@ -626,13 +691,24 @@ ${glossaryList}`;
 
   // ─── 3.5. Mod Instructions Override ───
   if (isModActive) {
+    let modInstructionsBlock = '';
+    if (modPreset === 'ntr_to_ntl') {
+      modInstructionsBlock += NTR_TO_NTL_PRESET_PROMPT + '\n\n';
+    }
+    if (modInstructions.trim()) {
+      modInstructionsBlock += `[YÊU CẦU MOD THỦ CÔNG CỦA NGƯỜI DÙNG]\n${modInstructions.trim()}\n`;
+    }
+
     prompt += `\n\n[CRITICAL OVERRIDE: MODIFICATION & REWRITE MODE]
 CHÚ Ý: ĐÂY LÀ CHẾ ĐỘ CHỈNH SỬA VÀ VIẾT LẠI (MOD). Bạn KHÔNG BỊ RÀNG BUỘC phải dịch đúng nghĩa đen của nguyên tác.
 Bạn ĐƯỢC TOÀN QUYỀN THAY ĐỔI mọi thứ TRỪ code syntax: cốt truyện, bối cảnh, xưng hô, tính cách, nội dung, tên biến, giá trị biến.
 Nếu đổi tên biến → phải đổi ĐỒNG LOẠT ở mọi nơi (YAML key, z.object, data-var, getvar, setvar, macros) để đảm bảo đồng bộ.
 Mọi mâu thuẫn giữa nguyên tác và yêu cầu Mod thì PHẢI ưu tiên yêu cầu Mod.
-YÊU CẦU MOD CỦA NGƯỜI DÙNG:
-${modInstructions.trim()}`;
+${modInstructionsBlock}`;
+
+    if (enableModThinking) {
+      prompt += `\n\n${MOD_THINKING_PROMPT}`;
+    }
   }
 
   // ─── 4. RAG Context OR Legacy MVU Dict Injection ───

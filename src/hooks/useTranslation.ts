@@ -214,6 +214,9 @@ export function useTranslation() {
         expertMode: effectiveProxy.expertMode,
         enableModMode: store.translationConfig.enableModMode,
         modInstructions: store.translationConfig.modInstructions,
+      
+        enableModThinking: store.translationConfig.enableModThinking,
+        modPreset: store.translationConfig.modPreset,
       });
 
       // ═══ Determine field type for Master Prompt (expert mode) ═══
@@ -469,6 +472,9 @@ export function useTranslation() {
         expertMode: effectiveProxy.expertMode,
         enableModMode: store.translationConfig.enableModMode,
         modInstructions: store.translationConfig.modInstructions,
+      
+        enableModThinking: store.translationConfig.enableModThinking,
+        modPreset: store.translationConfig.modPreset,
       });
 
       const results = await translateBatch(
@@ -1206,6 +1212,9 @@ export function useTranslation() {
         expertMode: effectiveProxy.expertMode,
         enableModMode: store.translationConfig.enableModMode,
         modInstructions: store.translationConfig.modInstructions,
+      
+        enableModThinking: store.translationConfig.enableModThinking,
+        modPreset: store.translationConfig.modPreset,
       });
 
       const resolvedFieldType = fieldGroupToFieldType(field.group, field.entryType);
@@ -1534,6 +1543,9 @@ export function useTranslation() {
         modInstructions: store.translationConfig.modInstructions,
         forceModStandalone: true,
         enablePatchMode: store.translationConfig.enablePatchMode,
+      
+        enableModThinking: store.translationConfig.enableModThinking,
+        modPreset: store.translationConfig.modPreset,
       });
 
       const resolvedFieldType = fieldGroupToFieldType(field.group, field.entryType);
@@ -1599,7 +1611,10 @@ export function useTranslation() {
               ragMaxFields: store.translationConfig.ragMaxFields,
               ragMaxChars: store.translationConfig.ragMaxChars,
               expertMode: effectiveProxy.expertMode,
-            });
+            
+        enableModThinking: store.translationConfig.enableModThinking,
+        modPreset: store.translationConfig.modPreset,
+      });
             result = await translateText(
               inputContent, field.label, effectiveProxy, effectiveLang, effectiveLang,
               fullPromptResult.effectivePrompt, fullPromptResult.schemaForApi,
@@ -1922,7 +1937,10 @@ export function useTranslation() {
           modInstructions: store.translationConfig.modInstructions,
           forceModStandalone: true,
           enablePatchMode: store.translationConfig.enablePatchMode,
-        });
+        
+        enableModThinking: store.translationConfig.enableModThinking,
+        modPreset: store.translationConfig.modPreset,
+      });
 
         const resolvedFieldType = fieldGroupToFieldType(field.group, field.entryType);
         const currentMvuDict = store.translationConfig.enableMvuSync
@@ -1989,7 +2007,10 @@ export function useTranslation() {
                 modInstructions: store.translationConfig.modInstructions,
                 forceModStandalone: true,
                 enablePatchMode: false,
-              });
+              
+        enableModThinking: store.translationConfig.enableModThinking,
+        modPreset: store.translationConfig.modPreset,
+      });
               result = await translateText(
                 inputContent, field.label, store.proxy, effectiveLang, effectiveLang,
                 fullPromptResult.effectivePrompt, fullPromptResult.schemaForApi,

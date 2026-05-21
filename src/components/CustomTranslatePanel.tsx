@@ -64,6 +64,8 @@ export default function CustomTranslatePanel() {
         expertMode: proxy.expertMode,
         enableModMode: translationConfig.enableModMode,
         modInstructions: translationConfig.modInstructions,
+        enableModThinking: translationConfig.enableModThinking,
+        modPreset: translationConfig.modPreset,
       });
 
       // Chunk size: ưu tiên cấu hình người dùng (translationConfig.chunkSize),

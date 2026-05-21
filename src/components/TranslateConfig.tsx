@@ -242,6 +242,44 @@ export default function TranslateConfig() {
                 </span>
               )}
 
+              {/* Dropdown Mod Preset */}
+              <div style={{ marginTop: '6px' }}>
+                <label className="label" style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                  {t.modPreset}
+                </label>
+                <select
+                  className="input"
+                  style={{ width: '100%', fontSize: '0.8rem', padding: '4px 8px' }}
+                  value={translationConfig.modPreset || 'none'}
+                  onChange={(e) => setTranslationConfig({ modPreset: e.target.value as any })}
+                >
+                  <option value="none">{t.modPresetNone}</option>
+                  <option value="ntr_to_ntl">{t.modPresetNtrToNtl}</option>
+                </select>
+                <span style={{ color: 'var(--text-muted)', fontSize: '0.6rem', display: 'block', marginTop: '2px' }}>
+                  {t.modPresetDesc}
+                </span>
+              </div>
+
+              {/* Mod Thinking Mode toggle */}
+              <label className="checkbox-wrapper" style={{ marginTop: '6px' }}>
+                <input
+                  type="checkbox"
+                  checked={translationConfig.enableModThinking || false}
+                  onChange={(e) => setTranslationConfig({ enableModThinking: e.target.checked })}
+                />
+                <div>
+                  <span style={{ color: translationConfig.enableModThinking ? '#9b59b6' : 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '5px', fontSize: '0.8rem', fontWeight: 500 }}>
+                    🧠 {locale === 'vi' ? 'Bật Chế Độ Thinking Cho Mod' : 'Enable Mod Thinking Mode'}
+                  </span>
+                  <span style={{ color: 'var(--text-muted)', fontSize: '0.6rem', display: 'block', marginTop: '2px' }}>
+                    {locale === 'vi' 
+                      ? 'AI sẽ suy nghĩ logic 5 bước (Kiểm kê biến, dịch chuyển ngữ nghĩa, an toàn EJS...) để tránh hỏng card.' 
+                      : 'AI will perform a 5-step logical reasoning (variable audit, semantic shift, EJS safety...) to avoid card break.'}
+                  </span>
+                </div>
+              </label>
+
               {/* Patch Mode toggle */}
               <label className="checkbox-wrapper" style={{ marginTop: '6px' }}>
                 <input

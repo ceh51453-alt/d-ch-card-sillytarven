@@ -12,6 +12,7 @@ import type {
   FieldGroupConfig,
   ExportKeyMode,
   GlossaryEntry,
+  ModPreset,
 } from './types/card';
 import type { Worldbook } from './utils/worldbookParser';
 import { DEFAULT_FIELD_GROUPS } from './utils/cardFields';
@@ -311,6 +312,9 @@ export const useStore = create<AppState>((set) => ({
     enableModelRouting: LS.get('st-translator-model-routing-enabled', false),
     groupModelRouting: LS.get('st-translator-group-model-routing', {}),
     entryModelRouting: LS.get('st-translator-entry-model-routing', {}),
+    modPreset: LS.get('st-translator-mod-preset', 'none') as ModPreset,
+    enableModThinking: LS.get('st-translator-mod-thinking', false),
+    enableEjsThinking: LS.get('st-translator-ejs-thinking', false),
   },
   setTranslationConfig: (partial) =>
     set((s) => {
@@ -374,6 +378,15 @@ export const useStore = create<AppState>((set) => ({
       }
       if ('targetLanguage' in partial) {
         LS.set('st-translator-target-lang', next.targetLanguage);
+      }
+      if ('modPreset' in partial) {
+        LS.set('st-translator-mod-preset', next.modPreset);
+      }
+      if ('enableModThinking' in partial) {
+        LS.set('st-translator-mod-thinking', next.enableModThinking);
+      }
+      if ('enableEjsThinking' in partial) {
+        LS.set('st-translator-ejs-thinking', next.enableEjsThinking);
       }
       return { translationConfig: next };
     }),

@@ -6,6 +6,7 @@ import { X, Copy, Save, Plus, Book, Sparkles, Upload, FileJson, ArrowRight, Aler
 import type { CharacterBookEntry } from '../types/card';
 import { callProvider } from '../utils/apiClient';
 import { isWorldbookFormat } from '../utils/worldbookParser';
+import { extractTranslationFromResponse } from '../utils/masterPrompt';
 import MvuEjsToolkit from './MvuEjsToolkit';
 
 const EJS_SNIPPETS = [
@@ -313,7 +314,7 @@ function GeneratedEntriesPreview({
 
 export default function EjsCreatorPanel({ onClose }: { onClose: () => void }) {
   const t = useT();
-  const { card, updateCard, addToast, proxy } = useStore();
+  const { card, updateCard, addToast, proxy, locale, translationConfig, setTranslationConfig } = useStore();
   
   const entries = card?.data?.character_book?.entries || [];
   
@@ -502,6 +503,33 @@ export default function EjsCreatorPanel({ onClose }: { onClose: () => void }) {
     }
   };
 
+  const EJS_THINKING_PROMPT = `
+[SYSTEM: EJS THINKING MODE ENABLED - ULTRA-RIGOROUS LOGICAL REASONING]
+Bạn BẮT BUỘC phải thực hiện quy trình suy nghĩ hai bước trước khi phản hồi.
+Bọc toàn bộ quá trình suy nghĩ lập luận sâu của bạn trong thẻ <thought_process>...</thought_process> ở phần đầu tiên.
+Bọc toàn bộ mã EJS hoặc mã JSON Array kết quả trong thẻ <translation>...</translation> ở phần thứ hai.
+
+CẤU TRÚC PHÂN TÍCH SUY NGHĨ (<thought_process>) PHẢI TUÂN THỦ 4 BƯỚC:
+1. WIDGET ARCHITECTURE (Kiến trúc Widget/Giao diện):
+   - Phân tích yêu cầu hiển thị/widget hoặc logic xử lý của người dùng. Thiết kế cấu trúc HTML, CSS (phối màu dark-mode tương thích SillyTavern, tính responsive).
+2. CONTEXT BINDING (Ràng buộc ngữ cảnh biến số thực tế):
+   - Đọc danh sách Lorebook entries và mô tả biến được cung cấp ở trên. Ánh xạ chính xác các khóa biến sẽ đọc/ghi. Tuyệt đối không tự bịa tên biến mới không có trong card nếu đề bài yêu cầu hiển thị thông tin thực tế.
+3. EXECUTION SAFETY & VARIABLE SCOPING (An toàn thực thi và phạm vi biến):
+   - Kiểm tra các hàm bất đồng bộ: đảm bảo sử dụng 'await' khi gọi getwi/activewi/execute.
+   - Tránh lỗi trùng tên biến khi chạy nhiều EJS block: dùng check typeof undefined hoặc khai báo @@private.
+   - Gán giá trị mặc định (fallback defaults) hợp lý khi biến chưa được khởi tạo.
+4. SYNTAX & TAG BALANCE (Kiểm tra cú pháp):
+   - Đảm bảo các cặp thẻ <% và %> cân bằng, đóng mở HTML chuẩn xác, cú pháp JS không bị lỗi dấu ngoặc.
+
+CÚ PHÁP ĐẦU RA BẮT BUỘC:
+<thought_process>
+(Lập luận chi tiết theo 4 bước trên bằng Tiếng Việt)
+</thought_process>
+
+<translation>
+[MÃ EJS HOẶC MÃ JSON ARRAY CHỨA ENTRIES Ở ĐÂY - KHÔNG markdown code block thừa, KHÔNG giải thích ngoài lề]
+</translation>`;
+
   // Hàm gọi AI chính với Chat History và Card Context
   const handleSendChat = async (overridePrompt?: string) => {
     const promptText = overridePrompt || chatInput;
@@ -637,8 +665,19 @@ For global initializers, use keys: ["*"] or no keys.
 If you return a single EJS block, do NOT wrap it in a JSON array, just return the raw EJS code.`;
 
     try {
-      const result = await callProvider(proxy, systemPrompt, structuredUserMsg);
-      const cleanResult = result.trim();
+      const finalSystemPrompt = translationConfig.enableEjsThinking
+        ? `${systemPrompt}\n\n${EJS_THINKING_PROMPT}`
+        : systemPrompt;
+
+      const result = await callProvider(proxy, finalSystemPrompt, structuredUserMsg);
+      let cleanResult = result.trim();
+      let thoughtProcess = '';
+
+      if (translationConfig.enableEjsThinking && (cleanResult.includes('<thought_process>') || cleanResult.includes('<translation>'))) {
+        const parsed = extractTranslationFromResponse(cleanResult);
+        cleanResult = parsed.translation.trim();
+        thoughtProcess = parsed.thoughtProcess || '';
+      }
 
       // Thử xem kết quả có phải là JSON array hay không
       let isJson = false;
@@ -656,12 +695,18 @@ If you return a single EJS block, do NOT wrap it in a JSON array, just return th
         }
       }
 
+      let assistantContent = '';
+      if (thoughtProcess) {
+        assistantContent += `> **Thought Process:**\n${thoughtProcess.split('\n').map(line => `> ${line}`).join('\n')}\n\n`;
+      }
+
       if (isJson) {
+        assistantContent += `Tôi đã thiết kế xong một hệ thống gồm ${parsedEntries.length} entries. Bạn có thể xem thử bên dưới và gộp chúng vào Card.`;
         setChatMessages(prev => [
           ...prev,
           {
             role: 'assistant',
-            content: `Tôi đã thiết kế xong một hệ thống gồm ${parsedEntries.length} entries. Bạn có thể xem thử bên dưới và gộp chúng vào Card.`,
+            content: assistantContent,
             generatedEntries: parsedEntries
           }
         ]);
@@ -671,11 +716,12 @@ If you return a single EJS block, do NOT wrap it in a JSON array, just return th
         if (rawCode.startsWith('```')) {
           rawCode = rawCode.replace(/^\`\`\`(ejs|html|javascript|js)?\n/, '').replace(/\n\`\`\`$/, '');
         }
+        assistantContent += rawCode;
         setChatMessages(prev => [
           ...prev,
           {
             role: 'assistant',
-            content: rawCode
+            content: assistantContent
           }
         ]);
         addToast('success', 'Đã tạo mã EJS thành công!');
@@ -1047,8 +1093,27 @@ If you return a single EJS block, do NOT wrap it in a JSON array, just return th
                   <div ref={chatEndRef} />
                 </div>
 
+                {/* Thinking Mode Option Row */}
+                <div style={{ display: 'flex', gap: '16px', alignItems: 'center', padding: '6px 8px', borderTop: '1px solid var(--border-subtle)', background: 'var(--bg-elevated)', flexShrink: 0, borderRadius: '4px', marginBottom: '4px' }}>
+                  <label className="checkbox-wrapper" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={translationConfig.enableEjsThinking || false}
+                      onChange={(e) => setTranslationConfig({ enableEjsThinking: e.target.checked })}
+                    />
+                    <span style={{ color: translationConfig.enableEjsThinking ? 'var(--accent-primary)' : 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 600, fontSize: '0.75rem' }}>
+                      🧠 {locale === 'vi' ? 'Bật Chế Độ Thinking Cho EJS' : 'Enable EJS Thinking Mode'}
+                    </span>
+                  </label>
+                  <span style={{ color: 'var(--text-muted)', fontSize: '0.65rem' }}>
+                    {locale === 'vi' 
+                      ? 'AI sẽ lập luận sâu 4 bước trước khi sinh code.' 
+                      : 'AI will perform 4-step deep reasoning before writing code.'}
+                  </span>
+                </div>
+
                 {/* Chat Input Box */}
-                <div style={{ display: 'flex', gap: '8px', paddingTop: '12px', borderTop: '1px solid var(--border-subtle)', flexShrink: 0 }}>
+                <div style={{ display: 'flex', gap: '8px', paddingTop: '8px', flexShrink: 0 }}>
                   <textarea
                     value={chatInput}
                     onChange={e => setChatInput(e.target.value)}

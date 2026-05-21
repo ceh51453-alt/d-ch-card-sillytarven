@@ -110,6 +110,10 @@ const en = {
   // Mod Mode
   modMode: 'Mod Mode',
   modModeDesc: 'Apply custom instructions to rewrite content without changing language',
+  modPreset: 'Mod Preset',
+  modPresetNone: 'None (Custom Instructions Only)',
+  modPresetNtrToNtl: 'NTR to NTL (Clean NTR content into Pure NTL/Loyalty)',
+  modPresetDesc: 'Select a pre-configured semantic rewrite ruleset',
   modInstructions: 'Mod Instructions',
   modInstructionsPlaceholder: 'Enter instructions for rewriting content (e.g., "Make the character more mysterious", "Add more detail to descriptions")...',
   modSave: 'Save Mod',
@@ -338,6 +342,10 @@ const vi: TranslationKeys = {
   // Mod Mode
   modMode: 'Chế độ Mod',
   modModeDesc: 'Áp dụng chỉ thị tùy chỉnh để viết lại nội dung mà không thay đổi ngôn ngữ',
+  modPreset: 'Preset Mod',
+  modPresetNone: 'Không (Chỉ dùng chỉ thị thủ công)',
+  modPresetNtrToNtl: 'NTR sang NTL (Tẩy NTR, giữ lòng trung thủy)',
+  modPresetDesc: 'Chọn bộ quy tắc viết lại ngữ nghĩa có sẵn',
   modInstructions: 'Chỉ thị Mod',
   modInstructionsPlaceholder: 'Nhập chỉ thị viết lại nội dung (VD: "Làm nhân vật bí ẩn hơn", "Thêm chi tiết vào mô tả")...',
   modSave: 'Lưu Mod',

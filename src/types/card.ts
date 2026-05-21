@@ -203,6 +203,8 @@ export interface GlossaryEntry {
   target: string;
 }
 
+export type ModPreset = 'none' | 'ntr_to_ntl';
+
 export interface TranslationConfig {
   sourceLanguage: string;
   targetLanguage: string;
@@ -232,6 +234,9 @@ export interface TranslationConfig {
   enableModelRouting: boolean; // Enable custom model routing per group/entry
   groupModelRouting: Record<string, string>; // Map of FieldGroup to model string
   entryModelRouting: Record<string, string>; // Map of field path to model string
+  modPreset?: ModPreset;
+  enableModThinking: boolean;
+  enableEjsThinking: boolean;
 }
 
 /* ─── Log Entry ─── */
