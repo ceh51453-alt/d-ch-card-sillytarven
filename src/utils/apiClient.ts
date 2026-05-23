@@ -911,8 +911,40 @@ export function chunkText(text: string, maxChars?: number, _maxTokens?: number):
 
     // ─── ULTIMATE FALLBACK: hard cut (should rarely happen) ───
     if (splitIdx < minPos) {
-      splitIdx = maxChars;
-      console.warn(`[chunkText] ⚠️ HARD CUT at ${maxChars} — no safe boundary found. Code may be corrupted at this seam.`);
+      // Flexible hard cut: search within +/- 5% tolerance of maxChars
+      const tolerance = Math.floor(maxChars * 0.05);
+      const startSearch = Math.max(0, maxChars - tolerance);
+      const endSearch = Math.min(remaining.length, maxChars + tolerance);
+      const searchRange = remaining.slice(startSearch, endSearch);
+      
+      // Look for best fallback separator in this tolerance range
+      // Priority: pipe (for regex), newline, semicolon, comma, space, period
+      const fallbackSeps = ['|', '\n', ';', ',', ' ', '.'];
+      let bestPos = -1;
+      
+      for (const sep of fallbackSeps) {
+        // Find nearest separator to maxChars (which corresponds to index 'tolerance' in searchRange)
+        const targetIdx = tolerance;
+        let nearestDist = Infinity;
+        let idx = searchRange.indexOf(sep);
+        while (idx !== -1) {
+          const dist = Math.abs(idx - targetIdx);
+          if (dist < nearestDist) {
+            nearestDist = dist;
+            bestPos = startSearch + idx + sep.length;
+          }
+          idx = searchRange.indexOf(sep, idx + 1);
+        }
+        if (bestPos !== -1) break;
+      }
+      
+      if (bestPos !== -1) {
+        splitIdx = bestPos;
+        console.log(`[chunkText] ⚠️ Flexible hard cut at ${splitIdx} (within 5% tolerance of ${maxChars}) using fallback separator`);
+      } else {
+        splitIdx = maxChars;
+        console.warn(`[chunkText] ⚠️ HARD CUT at ${maxChars} — no safe boundary or fallback separator found in tolerance range.`);
+      }
     }
 
     chunks.push(remaining.slice(0, splitIdx));
