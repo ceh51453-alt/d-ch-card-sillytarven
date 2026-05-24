@@ -19,6 +19,7 @@
 
 import type { TranslationField, GlossaryEntry } from '../types/card';
 import { buildUnifiedRAGContext } from './ragContext';
+import { buildEjsPromptBlock } from './ejsSync';
 
 /* ═══════════════════════════════════════════════════════════════════
    PROMPT CONSTANTS — Moved from useTranslation.ts
@@ -354,6 +355,11 @@ export interface PromptBuildOptions {
   expertMode?: boolean;
   enableModThinking?: boolean;
   modPreset?: 'none' | 'ntr_to_ntl';
+  /** EJS Sync — Strategy C */
+  enableEjsSync?: boolean;
+  ejsEntryNameDict?: Record<string, string>;
+  ejsKeywordDict?: Record<string, string>;
+  ejsDecoratorPreserve?: boolean;
 }
 
 export interface PromptBuildResult {
@@ -589,6 +595,15 @@ ${modInstructionsBlock}`;
       modPrompt += buildMvuDictInjection(mvuDictionary, checkLogic);
     }
 
+    // Inject EJS Sync prompt block (Strategy C)
+    if (options.enableEjsSync) {
+      modPrompt += buildEjsPromptBlock(
+        options.ejsEntryNameDict || {},
+        options.ejsKeywordDict || {},
+        options.ejsDecoratorPreserve ?? true,
+      );
+    }
+
     // Inject Entry Name Dictionary for EJS auto-trigger sync (standalone mod)
     if (entryNameDictionary && Object.keys(entryNameDictionary).length > 0) {
       const entryList = Object.entries(entryNameDictionary)
@@ -754,6 +769,15 @@ ${modInstructionsBlock}`;
         : isLogicField(field);
       prompt = (prompt || '') + buildMvuDictInjection(mvuDictionary, checkLogic);
     }
+  }
+
+  // ─── 5. EJS Sync prompt block (Strategy C) ───
+  if (options.enableEjsSync) {
+    prompt = (prompt || '') + buildEjsPromptBlock(
+      options.ejsEntryNameDict || {},
+      options.ejsKeywordDict || {},
+      options.ejsDecoratorPreserve ?? true,
+    );
   }
 
   return {

@@ -237,6 +237,10 @@ export interface TranslationConfig {
   modPreset?: ModPreset;
   enableModThinking: boolean;
   enableEjsThinking: boolean;
+  enableEjsSync: boolean;             // Enable Strategy C (EJS Entry Name & Keyword Sync)
+  ejsEntryNameDict: Record<string, string>;  // EJS getwi() entry name → translated name
+  ejsKeywordDict: Record<string, string>;    // EJS keyword/alias → translated
+  ejsDecoratorPreserve: boolean;       // Auto-detect & protect EJS decorators (@@, [GENERATE:], @INJECT)
 }
 
 /* ─── Log Entry ─── */

@@ -144,9 +144,13 @@ export const useStore = create<AppState>((set) => ({
       translationConfig: {
         ...s.translationConfig,
         mvuDictionary: {}, // Clear dictionary for new card
+        ejsEntryNameDict: {}, // Clear EJS dictionaries for new card
+        ejsKeywordDict: {},
       },
     }));
     LS.set('st-translator-mvu-dict', {});
+    LS.set('st-translator-ejs-entry-dict', {});
+    LS.set('st-translator-ejs-keyword-dict', {});
     // Clear stale fields cache in IDB so it won't reload old card's fields
     IDB.remove('st-translator-fields-data');
     // Separate image from card data in IDB — avoids serializing huge base64/blob
@@ -200,9 +204,13 @@ export const useStore = create<AppState>((set) => ({
       translationConfig: {
         ...s.translationConfig,
         mvuDictionary: {},
+        ejsEntryNameDict: {},
+        ejsKeywordDict: {},
       },
     }));
     LS.set('st-translator-mvu-dict', {});
+    LS.set('st-translator-ejs-entry-dict', {});
+    LS.set('st-translator-ejs-keyword-dict', {});
     IDB.remove('st-translator-card-data');
     IDB.remove('st-translator-fields-data');
     IDB.remove('st-translator-image-data');
@@ -330,6 +338,10 @@ export const useStore = create<AppState>((set) => ({
     modPreset: LS.get('st-translator-mod-preset', 'none') as ModPreset,
     enableModThinking: LS.get('st-translator-mod-thinking', false),
     enableEjsThinking: LS.get('st-translator-ejs-thinking', false),
+    enableEjsSync: false,
+    ejsEntryNameDict: LS.get('st-translator-ejs-entry-dict', {}) as Record<string, string>,
+    ejsKeywordDict: LS.get('st-translator-ejs-keyword-dict', {}) as Record<string, string>,
+    ejsDecoratorPreserve: LS.get('st-translator-ejs-decorator-preserve', true),
   },
   setTranslationConfig: (partial) =>
     set((s) => {
@@ -402,6 +414,15 @@ export const useStore = create<AppState>((set) => ({
       }
       if ('enableEjsThinking' in partial) {
         LS.set('st-translator-ejs-thinking', next.enableEjsThinking);
+      }
+      if ('ejsEntryNameDict' in partial) {
+        LS.set('st-translator-ejs-entry-dict', next.ejsEntryNameDict);
+      }
+      if ('ejsKeywordDict' in partial) {
+        LS.set('st-translator-ejs-keyword-dict', next.ejsKeywordDict);
+      }
+      if ('ejsDecoratorPreserve' in partial) {
+        LS.set('st-translator-ejs-decorator-preserve', next.ejsDecoratorPreserve);
       }
       if ('mode' in partial) {
         LS.set('st-translator-translation-mode', next.mode);

@@ -11,6 +11,7 @@ import { buildEffectivePrompt } from '../utils/promptBuilder';
 import { surgicalTranslate } from '../utils/surgical';
 import { parsePatchOutput, applyPatches, validatePatchResult } from '../utils/patchEngine';
 import { injectMvuZodSystem } from '../utils/mvuGenerator';
+import { detectEjsCard, extractEjsEntryNames, extractEjsKeywords, aiTranslateEjsEntries, validateEjsSync } from '../utils/ejsSync';
 import type { FieldGroup, FieldGroupConfig, TranslationField } from '../types/card';
 
 
@@ -217,6 +218,10 @@ export function useTranslation() {
       
         enableModThinking: store.translationConfig.enableModThinking,
         modPreset: store.translationConfig.modPreset,
+        enableEjsSync: store.translationConfig.enableEjsSync,
+        ejsEntryNameDict: useStore.getState().translationConfig.ejsEntryNameDict,
+        ejsKeywordDict: useStore.getState().translationConfig.ejsKeywordDict,
+        ejsDecoratorPreserve: store.translationConfig.ejsDecoratorPreserve,
       });
 
       // ═══ Determine field type for Master Prompt (expert mode) ═══
@@ -488,6 +493,10 @@ export function useTranslation() {
       
         enableModThinking: store.translationConfig.enableModThinking,
         modPreset: store.translationConfig.modPreset,
+        enableEjsSync: store.translationConfig.enableEjsSync,
+        ejsEntryNameDict: useStore.getState().translationConfig.ejsEntryNameDict,
+        ejsKeywordDict: useStore.getState().translationConfig.ejsKeywordDict,
+        ejsDecoratorPreserve: store.translationConfig.ejsDecoratorPreserve,
       });
 
       const results = await translateBatch(
@@ -740,14 +749,8 @@ export function useTranslation() {
       store.addLog('info', '🧠 Cross-field Context RAG enabled — each field will receive context from related translated fields');
     }
 
-    // ═══ Auto-detect MVU card + suggest enabling sync ═══
-    if (store.card && !store.translationConfig.enableMvuSync) {
-      const mvuSummary = getMvuCardSummary(store.card);
-      if (mvuSummary.isMvu) {
-        store.addToast('info', `🔧 MVU card detected (${mvuSummary.reasons.join(', ')}). Consider enabling Strategy B for variable sync.`);
-        store.addLog('info', `🔍 MVU card auto-detected: confidence=${(mvuSummary.confidence * 100).toFixed(0)}%, vars=${mvuSummary.variableCount}, initvar=${mvuSummary.initvarCount}`);
-      }
-    }
+    // ═══ (MVU auto-suggest removed per user request) ═══
+
 
 
 
@@ -805,6 +808,7 @@ export function useTranslation() {
 
     let i = 0;
     let hasBuiltMvuDict = false;
+    let hasBuiltEjsDict = false;
 
     while (i < fields.length) {
       // Check abort
@@ -896,6 +900,80 @@ export function useTranslation() {
             return;
           }
           store.addLog('warning', `⚠️ MVU auto-detect failed (non-critical): ${mvuMsg}`);
+        }
+      }
+
+      // ═══ Deferred EJS Dictionary Building (Strategy C) ═══
+      // Extract and AI-translate EJS entry names & keywords before translating narrative
+      if (store.translationConfig.enableEjsSync && !hasBuiltEjsDict && field.group !== 'tavern_helper' && store.card) {
+        hasBuiltEjsDict = true;
+        try {
+          store.addLog('info', '🔮 Strategy C: Scanning EJS entry names & keywords...');
+
+          // Extract getwi() entry name references
+          const ejsEntryRefs = extractEjsEntryNames(store.card);
+          // Extract keyword/alias references
+          const ejsKeywords = extractEjsKeywords(store.card);
+
+          const existingEntryDict = store.translationConfig.ejsEntryNameDict;
+          const existingKwDict = store.translationConfig.ejsKeywordDict;
+
+          const newEntryNames = ejsEntryRefs
+            .map(r => r.name)
+            .filter(n => !(n in existingEntryDict));
+          const newKeywords = ejsKeywords
+            .map(k => k.keyword)
+            .filter(k => !(k in existingKwDict));
+
+          store.addLog('info', `Found ${ejsEntryRefs.length} entry refs (${newEntryNames.length} new), ${ejsKeywords.length} keywords (${newKeywords.length} new)`);
+
+          if (newEntryNames.length > 0 || newKeywords.length > 0) {
+            store.addLog('active', `🤖 Calling AI to translate ${newEntryNames.length} entry names + ${newKeywords.length} keywords...`);
+
+            // Build EJS context from card
+            const ejsContext = (store.card.data?.character_book?.entries || [])
+              .filter((e: any) => e.content && /<%[\s\S]*?%>/.test(e.content))
+              .map((e: any) => e.content)
+              .join('\n\n')
+              .slice(0, 3000);
+
+            const { entryTranslations, keywordTranslations } = await aiTranslateEjsEntries(
+              newEntryNames,
+              newKeywords,
+              store.translationConfig.targetLanguage,
+              store.proxy,
+              abortRef.current?.signal,
+              ejsContext,
+            );
+
+            const mergedEntryDict = { ...existingEntryDict, ...entryTranslations };
+            const mergedKwDict = { ...existingKwDict, ...keywordTranslations };
+
+            const addedEntries = Object.keys(entryTranslations).length;
+            const addedKw = Object.keys(keywordTranslations).length;
+
+            if (addedEntries > 0 || addedKw > 0) {
+              store.setTranslationConfig({ ejsEntryNameDict: mergedEntryDict, ejsKeywordDict: mergedKwDict });
+              store.addLog('success', `✅ Strategy C: Added ${addedEntries} entry name translations + ${addedKw} keyword translations`);
+            } else {
+              store.addLog('info', 'All EJS items already mapped or no CJK content to translate');
+            }
+          }
+
+          // Detect decorators for info
+          if (store.translationConfig.ejsDecoratorPreserve) {
+            const ejsDetection = detectEjsCard(store.card);
+            if (ejsDetection.hasDecorators) {
+              store.addLog('info', '🛡️ Strategy C: Decorator preservation active — @@, [GENERATE:], @INJECT lines will be protected');
+            }
+          }
+        } catch (ejsErr) {
+          const ejsMsg = ejsErr instanceof Error ? ejsErr.message : String(ejsErr);
+          if (ejsMsg === 'Cancelled' || checkAbort()) {
+            store.setPhase('cancelled');
+            return;
+          }
+          store.addLog('warning', `⚠️ EJS auto-detect failed (non-critical): ${ejsMsg}`);
         }
       }
 
@@ -1158,6 +1236,58 @@ export function useTranslation() {
         }
       }
     }
+
+    // ═══ Post-Translation EJS Sync Verification (Strategy C) ═══
+    if (store.translationConfig.enableEjsSync) {
+      const ejsEntryDict = store.translationConfig.ejsEntryNameDict;
+      const ejsKwDict = store.translationConfig.ejsKeywordDict;
+      if (Object.keys(ejsEntryDict).length > 0 || Object.keys(ejsKwDict).length > 0) {
+        const doneFields = store.fields.filter(f => f.status === 'done');
+        const ejsSyncResult = validateEjsSync(
+          doneFields.map(f => ({
+            path: f.path,
+            group: f.group,
+            original: f.original,
+            translated: f.translated,
+            status: f.status,
+          })),
+          ejsEntryDict,
+          ejsKwDict,
+        );
+
+        // Report entry name sync
+        if (ejsSyncResult.totalEntryNames > 0) {
+          if (ejsSyncResult.missingEntryNames.length === 0) {
+            store.addLog('success', `✅ Strategy C: All ${ejsSyncResult.matchedEntryNames} getwi() entry names correctly synced!`);
+          } else {
+            store.addLog('warning', `⚠️ Strategy C: ${ejsSyncResult.missingEntryNames.length} getwi() entry name(s) NOT synced!`);
+            for (const m of ejsSyncResult.missingEntryNames.slice(0, 5)) {
+              store.addLog('error', `  getwi() "${m.name}" → "${m.translatedName}" still using original in: ${m.referencedIn.join(', ')}`);
+            }
+          }
+        }
+
+        // Report keyword sync
+        if (ejsSyncResult.totalKeywords > 0) {
+          if (ejsSyncResult.missingKeywords.length === 0) {
+            store.addLog('success', `✅ Strategy C: All ${ejsSyncResult.matchedKeywords} EJS keywords correctly synced!`);
+          } else {
+            store.addLog('warning', `⚠️ Strategy C: ${ejsSyncResult.missingKeywords.length} EJS keyword(s) NOT synced!`);
+            for (const m of ejsSyncResult.missingKeywords.slice(0, 5)) {
+              store.addLog('error', `  Keyword "${m.keyword}" → "${m.translatedKeyword}" still original in: ${m.foundIn}`);
+            }
+          }
+        }
+
+        // Report broken decorators
+        if (ejsSyncResult.brokenDecorators.length > 0) {
+          store.addLog('warning', `⚠️ Strategy C: ${ejsSyncResult.brokenDecorators.length} decorator(s) modified or missing!`);
+          for (const d of ejsSyncResult.brokenDecorators.slice(0, 5)) {
+            store.addLog('error', `  Decorator "${d.original}" → ${d.translated} in: ${d.fieldPath}`);
+          }
+        }
+      }
+    }
   }, [prepareFields, store]);
 
   const pauseTranslation = useCallback(() => {
@@ -1228,6 +1358,10 @@ export function useTranslation() {
       
         enableModThinking: store.translationConfig.enableModThinking,
         modPreset: store.translationConfig.modPreset,
+        enableEjsSync: store.translationConfig.enableEjsSync,
+        ejsEntryNameDict: useStore.getState().translationConfig.ejsEntryNameDict,
+        ejsKeywordDict: useStore.getState().translationConfig.ejsKeywordDict,
+        ejsDecoratorPreserve: store.translationConfig.ejsDecoratorPreserve,
       });
 
       const resolvedFieldType = fieldGroupToFieldType(field.group, field.entryType);
@@ -1559,6 +1693,10 @@ export function useTranslation() {
       
         enableModThinking: store.translationConfig.enableModThinking,
         modPreset: store.translationConfig.modPreset,
+        enableEjsSync: store.translationConfig.enableEjsSync,
+        ejsEntryNameDict: useStore.getState().translationConfig.ejsEntryNameDict,
+        ejsKeywordDict: useStore.getState().translationConfig.ejsKeywordDict,
+        ejsDecoratorPreserve: store.translationConfig.ejsDecoratorPreserve,
       });
 
       const resolvedFieldType = fieldGroupToFieldType(field.group, field.entryType);
@@ -1627,6 +1765,10 @@ export function useTranslation() {
             
         enableModThinking: store.translationConfig.enableModThinking,
         modPreset: store.translationConfig.modPreset,
+        enableEjsSync: store.translationConfig.enableEjsSync,
+        ejsEntryNameDict: useStore.getState().translationConfig.ejsEntryNameDict,
+        ejsKeywordDict: useStore.getState().translationConfig.ejsKeywordDict,
+        ejsDecoratorPreserve: store.translationConfig.ejsDecoratorPreserve,
       });
             result = await translateText(
               inputContent, field.label, effectiveProxy, effectiveLang, effectiveLang,
@@ -1953,6 +2095,10 @@ export function useTranslation() {
         
         enableModThinking: store.translationConfig.enableModThinking,
         modPreset: store.translationConfig.modPreset,
+        enableEjsSync: store.translationConfig.enableEjsSync,
+        ejsEntryNameDict: useStore.getState().translationConfig.ejsEntryNameDict,
+        ejsKeywordDict: useStore.getState().translationConfig.ejsKeywordDict,
+        ejsDecoratorPreserve: store.translationConfig.ejsDecoratorPreserve,
       });
 
         const resolvedFieldType = fieldGroupToFieldType(field.group, field.entryType);
@@ -2023,6 +2169,10 @@ export function useTranslation() {
               
         enableModThinking: store.translationConfig.enableModThinking,
         modPreset: store.translationConfig.modPreset,
+        enableEjsSync: store.translationConfig.enableEjsSync,
+        ejsEntryNameDict: useStore.getState().translationConfig.ejsEntryNameDict,
+        ejsKeywordDict: useStore.getState().translationConfig.ejsKeywordDict,
+        ejsDecoratorPreserve: store.translationConfig.ejsDecoratorPreserve,
       });
               result = await translateText(
                 inputContent, field.label, store.proxy, effectiveLang, effectiveLang,

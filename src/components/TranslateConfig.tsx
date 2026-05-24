@@ -8,6 +8,7 @@ import { aiExtractGlossaryTerms } from '../utils/mvuSync';
 import type { TranslationMode, LorebookStrategy, FieldGroupConfig, FieldGroup, GlossaryEntry } from '../types/card';
 import { Languages, Settings2, FileJson, BookOpen, Plus, Trash2, Download, Upload, Bot, Loader2, Save, RotateCcw, CheckCircle, Zap } from 'lucide-react';
 import MvuSyncPanel from './MvuSyncPanel';
+import EjsSyncPanel from './EjsSyncPanel';
 
 /** Map field group IDs to i18n keys */
 function useGroupLabels() {
@@ -1013,6 +1014,11 @@ export default function TranslateConfig() {
             {/* MVU Sync Panel (Chiến Lược B) */}
             <div style={{ marginTop: '8px' }}>
               <MvuSyncPanel />
+            </div>
+
+            {/* EJS Sync Panel (Chiến Lược C) — ngay dưới Strategy B */}
+            <div style={{ marginTop: '8px' }}>
+              <EjsSyncPanel />
             </div>
           </>
         )}
