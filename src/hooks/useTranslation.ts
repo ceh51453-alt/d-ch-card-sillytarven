@@ -1178,6 +1178,30 @@ export function useTranslation() {
               store.addLog('info', '📋 Live Schema: captured translated TavernHelper → context for remaining fields');
             }
           }
+
+          // ═══ Early Key Mapping Injection (Cross-Script Covariance) ═══
+          // Extract key mappings from ALL translated TavernHelper scripts so far
+          // and inject them into mvuDictionary immediately.
+          // This ensures the NEXT tavern_helper script receives these mappings
+          // in its prompt (via buildEffectivePrompt → mvuDictionary), forcing
+          // the AI to use the same variable names across all scripts.
+          if (store.translationConfig.enableMvuSync && store.card) {
+            try {
+              const earlyMappings = extractMappingFromTranslatedSchemas(store.card, useStore.getState().fields);
+              const earlyMappingCount = Object.keys(earlyMappings).length;
+              if (earlyMappingCount > 0) {
+                const currentDict = useStore.getState().translationConfig.mvuDictionary;
+                const newEntries = Object.keys(earlyMappings).filter(k => !(k in currentDict));
+                if (newEntries.length > 0) {
+                  const mergedDict = { ...currentDict, ...earlyMappings };
+                  store.setTranslationConfig({ mvuDictionary: mergedDict });
+                  store.addLog('info', `🔗 Cross-Script Covariance: injected ${newEntries.length} key mapping(s) from translated schema → dictionary (total: ${earlyMappingCount})`);
+                }
+              }
+            } catch (err) {
+              console.error('Failed to extract early key mappings:', err);
+            }
+          }
         }
       } catch {
         // Cancel was thrown
