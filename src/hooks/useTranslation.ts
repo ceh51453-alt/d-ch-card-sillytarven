@@ -330,21 +330,22 @@ export function useTranslation() {
           currentMvuDict,
           store.translationConfig.chunkSize,
           prevChunks,
-          // onChunkComplete: save chunk progress in real-time
+          // onChunkComplete: save chunk progress in real-time (supports out-of-order for parallel)
           (chunkIdx, translatedChunk, totalChunks) => {
-            // Read fresh field state to merge with any concurrent updates
             const currentField = useStore.getState().fields.find(f => f.path === field.path);
             const currentCompleted = currentField?.completedChunks || [];
-            // Only update if this chunk is new (avoid duplicates from retries)
-            if (chunkIdx >= currentCompleted.length) {
-              const updatedChunks = [...currentCompleted];
-              updatedChunks[chunkIdx] = translatedChunk;
-              store.updateField(field.path, {
-                completedChunks: updatedChunks,
-                totalChunks,
-              });
-            }
+            // Index-based storage: safe for both sequential and parallel
+            const updatedChunks = [...currentCompleted];
+            // Extend array if needed (parallel may complete out-of-order)
+            while (updatedChunks.length <= chunkIdx) updatedChunks.push('');
+            updatedChunks[chunkIdx] = translatedChunk;
+            store.updateField(field.path, {
+              completedChunks: updatedChunks,
+              totalChunks,
+            });
           },
+          // parallelChunks
+          store.translationConfig.parallelChunks,
         );
       }
 
@@ -1628,19 +1629,19 @@ export function useTranslation() {
         currentMvuDict,
         store.translationConfig.chunkSize,
         prevChunks,
-        // onChunkComplete: save chunk progress in real-time
+        // onChunkComplete: save chunk progress in real-time (supports out-of-order for parallel)
         (chunkIdx, translatedChunk, totalChunks) => {
           const currentField = useStore.getState().fields.find(f => f.path === field.path);
           const currentCompleted = currentField?.completedChunks || [];
-          if (chunkIdx >= currentCompleted.length) {
-            const updatedChunks = [...currentCompleted];
-            updatedChunks[chunkIdx] = translatedChunk;
-            store.updateField(field.path, {
-              completedChunks: updatedChunks,
-              totalChunks,
-            });
-          }
-        }
+          const updatedChunks = [...currentCompleted];
+          while (updatedChunks.length <= chunkIdx) updatedChunks.push('');
+          updatedChunks[chunkIdx] = translatedChunk;
+          store.updateField(field.path, {
+            completedChunks: updatedChunks,
+            totalChunks,
+          });
+        },
+        store.translationConfig.parallelChunks,
       );
 
       // Post-process regex HTML: font swap + underscore display
@@ -1777,19 +1778,19 @@ export function useTranslation() {
             undefined,
             store.translationConfig.chunkSize,
             prevChunks,
-            // onChunkComplete: save chunk progress in real-time
+            // onChunkComplete: save chunk progress in real-time (supports out-of-order for parallel)
             (chunkIdx, translatedChunk, totalChunks) => {
               const currentField = useStore.getState().fields.find(f => f.path === field.path);
               const currentCompleted = currentField?.completedChunks || [];
-              if (chunkIdx >= currentCompleted.length) {
-                const updatedChunks = [...currentCompleted];
-                updatedChunks[chunkIdx] = translatedChunk;
-                store.updateField(field.path, {
-                  completedChunks: updatedChunks,
-                  totalChunks,
-                });
-              }
+              const updatedChunks = [...currentCompleted];
+              while (updatedChunks.length <= chunkIdx) updatedChunks.push('');
+              updatedChunks[chunkIdx] = translatedChunk;
+              store.updateField(field.path, {
+                completedChunks: updatedChunks,
+                totalChunks,
+              });
             },
+            store.translationConfig.parallelChunks,
           );
 
           // Clear chunk state on success

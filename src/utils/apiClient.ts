@@ -2249,6 +2249,8 @@ export async function translateText(
   previouslyCompletedChunks?: string[],
   /** Callback fired after each chunk is successfully translated */
   onChunkComplete?: (chunkIndex: number, translatedChunk: string, totalChunks: number) => void,
+  /** Number of chunks to translate in parallel (1 = sequential, 2+ = concurrent) */
+  parallelChunks?: number,
 ): Promise<string> {
   if (!text || text.trim() === '') return '';
 
@@ -2296,110 +2298,199 @@ export async function translateText(
     );
   }
 
-  // ═══ MULTIPLE CHUNKS — sequential translation with context continuity ═══
-  // CRITICAL: Translate sequentially so each chunk gets the FULL previous
-  // translated chunk as context. This prevents word loss at chunk boundaries
-  // and preserves code structure across splits.
-  //
-  // ═══ CHUNK-LEVEL RESUME: If previouslyCompletedChunks is provided, skip
-  // already-completed chunks and resume from the failed chunk index. ═══
-  const hasResume = previouslyCompletedChunks && previouslyCompletedChunks.length > 0
-    && previouslyCompletedChunks.length < chunks.length;
-  const resumeFromIdx = hasResume ? previouslyCompletedChunks!.length : 0;
+  // ═══ MULTIPLE CHUNKS — sequential OR parallel translation ═══
+  const concurrency = Math.max(1, parallelChunks || 1);
+  const isParallel = concurrency > 1 && chunks.length > 1;
+
+  // ═══ CHUNK-LEVEL RESUME: Support both contiguous (sequential) and sparse (parallel) ═══
+  // For parallel, completedChunks may have undefined gaps: [chunk0, undefined, chunk2]
+  // For sequential, completedChunks is always contiguous from index 0
+  const hasResume = !!(previouslyCompletedChunks && previouslyCompletedChunks.length > 0 && (
+    previouslyCompletedChunks.length < chunks.length ||
+    previouslyCompletedChunks.some(c => !c)
+  ));
 
   if (hasResume) {
-    console.log(`[translateText] ${fieldName}: RESUMING from chunk ${resumeFromIdx + 1}/${chunks.length} (${resumeFromIdx} chunks already done)`);
+    console.log(`[translateText] ${fieldName}: RESUMING (${previouslyCompletedChunks!.filter(c => c).length} chunks already done)`);
   } else {
-    console.log(`[translateText] ${fieldName}: Translating ${chunks.length} chunks sequentially (with full context)...`);
+    console.log(`[translateText] ${fieldName}: Translating ${chunks.length} chunks ${isParallel ? `(${concurrency} parallel)` : 'sequentially'}...`);
   }
 
-  const ORIGINAL_BOUNDARY_CHARS = 500; // Tail of original prev chunk for code structure awareness
-  const translatedChunks: string[] = [];
-
-  // Pre-fill with previously completed chunks (already cleaned)
+  const ORIGINAL_BOUNDARY_CHARS = 500;
+  // Pre-fill results array with previously completed chunks
+  const translatedChunks: (string | undefined)[] = new Array(chunks.length).fill(undefined);
   if (hasResume) {
     for (let ri = 0; ri < previouslyCompletedChunks!.length; ri++) {
-      translatedChunks.push(previouslyCompletedChunks![ri]);
+      if (previouslyCompletedChunks![ri]) {
+        translatedChunks[ri] = previouslyCompletedChunks![ri];
+      }
     }
   }
 
-  for (let idx = hasResume ? resumeFromIdx : 0; idx < chunks.length; idx++) {
+  // Build list of chunk indices that still need translation
+  const pendingIndices: number[] = [];
+  for (let i = 0; i < chunks.length; i++) {
+    if (!translatedChunks[i]) pendingIndices.push(i);
+  }
+
+  if (isParallel) {
+    // ═══ PARALLEL PATH — concurrent chunk translation with semaphore ═══
+    console.log(`[translateText] ${fieldName}: ${pendingIndices.length} chunks pending, concurrency=${concurrency}`);
+
+    let queueIdx = 0; // Shared queue index (safe: JS single-threaded, yields only at await)
+    const errors: { idx: number; err: Error }[] = [];
+
+    const worker = async () => {
+      while (queueIdx < pendingIndices.length) {
+        if (signal?.aborted) return;
+        const myQueuePos = queueIdx++;
+        if (myQueuePos >= pendingIndices.length) return;
+        const idx = pendingIndices[myQueuePos];
+
+        // Parallel: use original text boundary only (no prev translation context)
+        // Code-heavy fields don't benefit much from cross-chunk context
+        // Narrative fields get original boundary for structural awareness
+        let prevContext = '';
+        if (idx > 0) {
+          const originalBoundaryTail = chunks[idx - 1].slice(-ORIGINAL_BOUNDARY_CHARS);
+          prevContext = `=== ORIGINAL TEXT BOUNDARY (last ${ORIGINAL_BOUNDARY_CHARS} chars before this chunk — for code structure awareness) ===\n${originalBoundaryTail}`;
+          // If previous chunk is already translated (from resume), include tail
+          if (translatedChunks[idx - 1]) {
+            const CONTEXT_TAIL_CHARS = 1000; // Shorter for parallel to reduce prompt size
+            const prevTail = translatedChunks[idx - 1]!.slice(-CONTEXT_TAIL_CHARS);
+            prevContext = `=== PREVIOUS CHUNK TRANSLATION TAIL ===\n${prevTail}\n\n${prevContext}`;
+          }
+        }
+
+        const { system, user } = buildTranslationMessages(
+          chunks[idx], `${fieldName} [part ${idx + 1}/${chunks.length}]`, targetLang, config.systemPromptPrefix,
+          sourceLang, customPrompt, customSchema, contextHint, glossary,
+          prevContext,
+          idx === 0 && !hasResume ? previousTranslationToUpdate : undefined,
+          fieldType, isExpert, mvuDictionary,
+        );
+
+        try {
+          const translated = await translateChunk(
+            chunks[idx], idx, chunks.length, fieldName, config, targetLang, sourceLang, system, user, signal
+          );
+          const chunkCleaned = cleanTranslationResponse(chunks[idx], translated, isExpert, true);
+          translatedChunks[idx] = chunkCleaned;
+          console.log(`[translateText] ${fieldName}: chunk ${idx + 1}/${chunks.length} done ✓`);
+
+          if (onChunkComplete) {
+            onChunkComplete(idx, chunkCleaned, chunks.length);
+          }
+        } catch (err: any) {
+          if (signal?.aborted || err?.message === 'Cancelled') {
+            return; // Stop this worker
+          }
+          errors.push({ idx, err: err instanceof Error ? err : new Error(String(err)) });
+          // Continue with other chunks — don't fail entire batch
+        }
+      }
+    };
+
+    // Launch concurrent workers
+    const workers = Array.from({ length: Math.min(concurrency, pendingIndices.length) }, () => worker());
+    await Promise.allSettled(workers);
+
+    // Check for cancellation
     if (signal?.aborted) throw new Error('Cancelled');
 
-    // Build rich context: tail of previous translated chunk + original boundary
-    // LIMIT context size to avoid overflowing the model's context window on very large chunks.
-    let prevContext = '';
-    if (idx > 0 && translatedChunks[idx - 1]) {
-      const prevTranslation = translatedChunks[idx - 1];
-      // Only send tail of previous translation to avoid context overflow on very large chunks
-      const CONTEXT_TAIL_CHARS = 2000;
-      const prevTranslationTail = prevTranslation.length > CONTEXT_TAIL_CHARS
-        ? '...[earlier content truncated for brevity]...\n' + prevTranslation.slice(-CONTEXT_TAIL_CHARS)
-        : prevTranslation;
-      const originalBoundaryTail = chunks[idx - 1].slice(-ORIGINAL_BOUNDARY_CHARS);
-      prevContext =
-        `=== PREVIOUS CHUNK TRANSLATION TAIL (for terminology & flow consistency) ===\n` +
-        `${prevTranslationTail}\n\n` +
-        `=== ORIGINAL TEXT BOUNDARY (last ${ORIGINAL_BOUNDARY_CHARS} chars before this chunk — for code structure awareness) ===\n` +
-        `${originalBoundaryTail}`;
+    // Check for failures — create ChunkError with completed chunks
+    const completedList = translatedChunks.filter((c): c is string => c !== undefined);
+    if (errors.length > 0 && completedList.length < chunks.length) {
+      // Convert sparse array to contiguous for ChunkError compatibility
+      const completedForResume = translatedChunks.map(c => c || '') as string[];
+      const firstFailedIdx = errors[0].idx;
+      if (completedList.length > 0) {
+        throw new ChunkError(
+          `Parallel: ${errors.length} chunk(s) failed. First: chunk ${firstFailedIdx + 1}/${chunks.length}: ${errors[0].err.message}`,
+          completedForResume,
+          firstFailedIdx,
+          chunks.length,
+          errors[0].err,
+        );
+      }
+      throw errors[0].err;
+    }
+  } else {
+    // ═══ SEQUENTIAL PATH — original behavior with full context continuity ═══
+    let resumeFromIdx = 0;
+    if (hasResume) {
+      const firstPending = translatedChunks.findIndex(c => !c);
+      resumeFromIdx = firstPending !== -1 ? firstPending : 0;
     }
 
-    const { system, user } = buildTranslationMessages(
-      chunks[idx], `${fieldName} [part ${idx + 1}/${chunks.length}]`, targetLang, config.systemPromptPrefix,
-      sourceLang, customPrompt, customSchema, contextHint, glossary,
-      prevContext, // ← context from previous chunk's translation
-      idx === 0 && !hasResume ? previousTranslationToUpdate : undefined,
-      fieldType, isExpert, mvuDictionary,
-    );
+    for (let idx = resumeFromIdx; idx < chunks.length; idx++) {
+      if (signal?.aborted) throw new Error('Cancelled');
 
-    try {
-      const translated = await translateChunk(
-        chunks[idx], idx, chunks.length, fieldName, config, targetLang, sourceLang, system, user, signal
+      // Build rich context: tail of previous translated chunk + original boundary
+      let prevContext = '';
+      if (idx > 0 && translatedChunks[idx - 1]) {
+        const prevTranslation = translatedChunks[idx - 1]!;
+        const CONTEXT_TAIL_CHARS = 2000;
+        const prevTranslationTail = prevTranslation.length > CONTEXT_TAIL_CHARS
+          ? '...[earlier content truncated for brevity]...\n' + prevTranslation.slice(-CONTEXT_TAIL_CHARS)
+          : prevTranslation;
+        const originalBoundaryTail = chunks[idx - 1].slice(-ORIGINAL_BOUNDARY_CHARS);
+        prevContext =
+          `=== PREVIOUS CHUNK TRANSLATION TAIL (for terminology & flow consistency) ===\n` +
+          `${prevTranslationTail}\n\n` +
+          `=== ORIGINAL TEXT BOUNDARY (last ${ORIGINAL_BOUNDARY_CHARS} chars before this chunk — for code structure awareness) ===\n` +
+          `${originalBoundaryTail}`;
+      }
+
+      const { system, user } = buildTranslationMessages(
+        chunks[idx], `${fieldName} [part ${idx + 1}/${chunks.length}]`, targetLang, config.systemPromptPrefix,
+        sourceLang, customPrompt, customSchema, contextHint, glossary,
+        prevContext,
+        idx === 0 && !hasResume ? previousTranslationToUpdate : undefined,
+        fieldType, isExpert, mvuDictionary,
       );
-      // Clean each chunk individually against its OWN original text.
-      // Pass isChunkedPart=true to SKIP arrow cleanup (→) — chunks are text fragments
-      // where → is often legitimate content (CSS transitions, code mappings, etc.)
-      const chunkCleaned = cleanTranslationResponse(chunks[idx], translated, isExpert, true);
-      translatedChunks.push(chunkCleaned);
-      console.log(`[translateText] ${fieldName}: chunk ${idx + 1}/${chunks.length} done ✓`);
 
-      // Notify caller of chunk progress for real-time state persistence
-      if (onChunkComplete) {
-        onChunkComplete(idx, chunkCleaned, chunks.length);
-      }
-    } catch (err: any) {
-      if (signal?.aborted || err?.message === 'Cancelled') {
-        throw new Error('Cancelled');
-      }
-      // ═══ CHUNK-LEVEL RESUME: Wrap error with partial progress ═══
-      // Save all successfully translated chunks so the caller can persist them
-      // and resume from this chunk on retry instead of starting over.
-      if (translatedChunks.length > 0) {
-        const chunkErr = new ChunkError(
-          `Chunk ${idx + 1}/${chunks.length} failed: ${err?.message || String(err)}`,
-          [...translatedChunks], // Copy — don't mutate
-          idx,
-          chunks.length,
-          err instanceof Error ? err : new Error(String(err)),
+      try {
+        const translated = await translateChunk(
+          chunks[idx], idx, chunks.length, fieldName, config, targetLang, sourceLang, system, user, signal
         );
-        throw chunkErr;
+        const chunkCleaned = cleanTranslationResponse(chunks[idx], translated, isExpert, true);
+        translatedChunks[idx] = chunkCleaned;
+        console.log(`[translateText] ${fieldName}: chunk ${idx + 1}/${chunks.length} done ✓`);
+
+        if (onChunkComplete) {
+          onChunkComplete(idx, chunkCleaned, chunks.length);
+        }
+      } catch (err: any) {
+        if (signal?.aborted || err?.message === 'Cancelled') {
+          throw new Error('Cancelled');
+        }
+        // Save completed chunks for resume
+        const completedForResume = translatedChunks.filter((c): c is string => c !== undefined);
+        if (completedForResume.length > 0) {
+          throw new ChunkError(
+            `Chunk ${idx + 1}/${chunks.length} failed: ${err?.message || String(err)}`,
+            completedForResume,
+            idx,
+            chunks.length,
+            err instanceof Error ? err : new Error(String(err)),
+          );
+        }
+        throw err;
       }
-      throw err;
     }
   }
 
   console.log(`[translateText] ${fieldName}: All ${chunks.length} chunks done. Verifying seams...`);
 
   // ═══ SEAM VERIFICATION — check chunk boundaries for coherence ═══
-  // When resuming, only verify seams that include newly-translated chunks
-  const verifiedChunks = await verifySeams(translatedChunks, chunks, config, targetLang, signal);
+  const finalChunks = translatedChunks.filter((c): c is string => c !== undefined);
+  const verifiedChunks = await verifySeams(finalChunks, chunks, config, targetLang, signal);
 
-  // For HTML and Code/Regex content, join without separator to avoid injecting text nodes
-  // that break code structure. For plain text, use \n\n as a fallback to maintain paragraph separation.
+  // For HTML and Code/Regex content, join without separator
   const isHtmlContent = /<[a-z][^>]*>/i.test(maskedText) && /<\/[a-z]+>/i.test(maskedText);
   const joiner = (isHtmlContent || isCodeHeavy) ? '' : '\n\n';
   const rawResult = verifiedChunks.join(joiner);
-  // Chunks already individually cleaned above — unmask URLs and secrets here
   let cleaned = unmaskUrls(rawResult, urlMap);
   cleaned = unmaskSecrets(cleaned, secretMap);
   

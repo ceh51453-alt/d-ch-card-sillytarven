@@ -921,6 +921,27 @@ export default function TranslateConfig() {
                   ? 'Ghi đè giới hạn cắt đoạn mặc định. Đặt 0 để tự động tính dựa trên Max Tokens của proxy. Dùng cho Regex/MVU lớn để tránh cắt ngang cấu trúc code.' 
                   : 'Override default chunking threshold. Set to 0 to auto-calculate based on proxy Max Tokens. Use large chunks for Regex/MVU to prevent breaking code structure.'}
               </div>
+
+              {/* Parallel Chunks */}
+              <div style={{ marginTop: '10px' }}>
+                <label className="label" style={{ marginBottom: '6px' }}>
+                  {locale === 'vi' ? '⚡ Dịch song song (Parallel Chunks)' : '⚡ Parallel Chunks'}
+                </label>
+                <input
+                  className="input"
+                  type="number"
+                  min={1}
+                  max={10}
+                  value={translationConfig.parallelChunks || 1}
+                  onChange={(e) => setTranslationConfig({ parallelChunks: Math.max(1, Math.min(10, parseInt(e.target.value) || 1)) })}
+                  style={{ width: '100%' }}
+                />
+                <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: '4px', lineHeight: '1.4' }}>
+                  {locale === 'vi' 
+                    ? '1 = tuần tự (mặc định, tốt cho văn bản cần nhất quán). 2-5 = dịch nhiều chunk cùng lúc, nhanh gấp bội cho card Regex lớn. ⚠️ Mỗi chunk chạy song song sẽ không có context từ chunk trước.' 
+                    : '1 = sequential (default, best for narrative consistency). 2-5 = translate multiple chunks simultaneously, much faster for large Regex cards. ⚠️ Parallel chunks lack context from previous chunks.'}
+                </div>
+              </div>
             </div>
             )}
 

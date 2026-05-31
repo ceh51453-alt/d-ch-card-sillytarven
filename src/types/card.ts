@@ -224,6 +224,7 @@ export interface TranslationConfig {
   ragMaxFields: number; // Max context fields to include (default: 5)
   ragMaxChars: number; // Max total chars for RAG context (default: 3000)
   chunkSize: number; // Tùy chỉnh kích thước chia chunk (số ký tự)
+  parallelChunks: number; // Số chunk dịch song song (1 = tuần tự, 2+ = song song)
   enableJailbreak: boolean; // Enable Catbox Jailbreak for NSFW cards
   enableObjectiveMode: boolean; // Enable Bạch miêu (objective translation)
   surgicalMode: boolean; // Extract and translate only CJK substrings for code-heavy fields

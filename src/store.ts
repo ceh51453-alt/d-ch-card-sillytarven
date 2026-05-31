@@ -326,6 +326,7 @@ export const useStore = create<AppState>((set) => ({
     ragMaxFields: LS.get('st-translator-rag-max-fields', 5),
     ragMaxChars: LS.get('st-translator-rag-max-chars', 3000),
     chunkSize: LS.get('st-translator-chunk-size', 0),
+    parallelChunks: LS.get('st-translator-parallel-chunks', 1),
     enableJailbreak: LS.get('st-translator-jailbreak', true),
     enableObjectiveMode: LS.get('st-translator-objective-mode', true),
     surgicalMode: LS.get('st-translator-surgical-mode', false),
@@ -364,6 +365,9 @@ export const useStore = create<AppState>((set) => ({
       }
       if ('chunkSize' in partial) {
         LS.set('st-translator-chunk-size', next.chunkSize);
+      }
+      if ('parallelChunks' in partial) {
+        LS.set('st-translator-parallel-chunks', next.parallelChunks);
       }
       if ('enableJailbreak' in partial) {
         LS.set('st-translator-jailbreak', next.enableJailbreak);
