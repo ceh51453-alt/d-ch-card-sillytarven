@@ -362,6 +362,12 @@ export function useTranslation() {
           store.translationConfig.parallelChunks,
           // enableChunkVerification
           store.translationConfig.enableChunkVerification,
+          // onChunksReady
+          (rawChunks) => {
+            store.updateField(field.path, {
+              rawChunks,
+            });
+          }
         );
       }
 
@@ -532,8 +538,8 @@ export function useTranslation() {
         }
       }
 
-      // Clear chunk state on success — full translation is in `translated`
-      store.updateField(field.path, { status: 'done', translated, completedChunks: undefined, totalChunks: undefined, failedChunkIndex: undefined });
+      // Keep chunk progress for export, clear failed index only
+      store.updateField(field.path, { status: 'done', translated, failedChunkIndex: undefined });
       store.addLog('success', `Translated: ${field.label} (${translated.length} chars)`);
       // Store to Translation Memory (non-blocking)
       if (store.translationConfig.enableTranslationMemory) {
@@ -1747,7 +1753,7 @@ export function useTranslation() {
     } else {
       store.addLog('active', `Re-translating: ${field.label}`);
       // Clear chunk progress if we are translating from scratch
-      store.updateField(path, { completedChunks: undefined, failedChunkIndex: undefined, totalChunks: undefined });
+      store.updateField(path, { completedChunks: undefined, rawChunks: undefined, failedChunkIndex: undefined, totalChunks: undefined });
     }
 
     try {
@@ -1832,6 +1838,12 @@ export function useTranslation() {
         },
         store.translationConfig.parallelChunks,
         store.translationConfig.enableChunkVerification,
+        // onChunksReady
+        (rawChunks) => {
+          store.updateField(field.path, {
+            rawChunks,
+          });
+        }
       );
 
       // Post-process regex HTML: font swap + underscore display
@@ -1847,8 +1859,6 @@ export function useTranslation() {
       store.updateField(path, {
         status: 'done',
         translated,
-        completedChunks: undefined,
-        totalChunks: undefined,
         failedChunkIndex: undefined,
       });
       store.addLog('success', `Re-translated: ${field.label}`);
@@ -2033,12 +2043,18 @@ export function useTranslation() {
             },
             store.translationConfig.parallelChunks,
             store.translationConfig.enableChunkVerification,
+            // onChunksReady
+            (rawChunks) => {
+              store.updateField(field.path, {
+                rawChunks,
+              });
+            }
           );
 
-          // Clear chunk state on success
+          // Keep chunk progress for export, clear failed index only
           store.updateField(field.path, {
             status: 'done', translated, retries: field.retries + attempts + 1,
-            completedChunks: undefined, totalChunks: undefined, failedChunkIndex: undefined,
+            failedChunkIndex: undefined,
           });
           store.addLog('success', `✓ Retry OK: ${field.label}`);
           successCount++;

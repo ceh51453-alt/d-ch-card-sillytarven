@@ -1,10 +1,10 @@
-import { useState, useMemo, useRef, useCallback, useEffect, lazy, Suspense } from 'react';
+import { useState, useMemo, useRef, useCallback, useEffect, lazy, Suspense, memo } from 'react';
 import { useStore } from '../store';
 import { useTranslation } from '../hooks/useTranslation';
 import { useT } from '../i18n/useLocale';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { FieldGroup, TranslationField, TranslationStatus } from '../types/card';
-import { RotateCcw, AlertTriangle, CheckCircle2, Clock, ArrowLeftRight, BarChart3, Ban, Search, X, Copy, Check, Eye, Wand2, Zap, Brain } from 'lucide-react';
+import { RotateCcw, AlertTriangle, CheckCircle2, Clock, ArrowLeftRight, BarChart3, Ban, Search, X, Copy, Check, Eye, Wand2, Zap, Brain, Download } from 'lucide-react';
 
 const RAGDebugPanel = lazy(() => import('./RAGDebugPanel'));
 
@@ -189,6 +189,8 @@ function ChunkStatusAndResume({
   phase: string;
 }) {
   const { proxy, translationConfig } = useStore();
+  const [expanded, setExpanded] = useState(false);
+
   const currentMaxTokens = proxy.maxTokens;
   const currentChunkSize = translationConfig.chunkSize;
   const CHUNK_THRESHOLD = currentChunkSize && currentChunkSize > 0
@@ -202,88 +204,253 @@ function ChunkStatusAndResume({
   const totalChunks = field.totalChunks || Math.ceil(field.original.length / CHUNK_THRESHOLD);
   const failedIdx = field.failedChunkIndex !== undefined ? field.failedChunkIndex : (field.status === 'error' ? completedCount : undefined);
 
-  // If status is translating, show current progress
-  if (field.status === 'translating') {
+  const downloadChunk = (idx: number) => {
+    const raw = field.rawChunks?.[idx] || '';
+    const translated = field.completedChunks?.[idx] || '';
+    const chunkData = {
+      path: field.path,
+      label: field.label,
+      chunkIndex: idx + 1,
+      totalChunks,
+      raw,
+      translated,
+    };
+    const json = JSON.stringify(chunkData, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    
+    // Clean label for file name
+    const baseName = (field.label || 'chunk').replace(/[^a-zA-Z0-9_\u00C0-\u1EF9-]/g, '_');
+    const fileName = `${baseName}_chunk_${idx + 1}.json`;
+    
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const renderDetailsButton = () => {
+    if (completedCount === 0 && (!field.rawChunks || field.rawChunks.length === 0)) return null;
     return (
-      <div style={{ fontSize: '0.62rem', color: 'var(--accent-info)', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-        <span style={{ padding: '1px 5px', background: 'rgba(124,106,240,0.12)', borderRadius: '3px', fontWeight: 600 }}>
-          Dịch chunk: {completedCount + 1}/{totalChunks}
-        </span>
-        <span style={{ color: 'var(--text-muted)' }}>
-          (Đã hoàn thành {completedCount} chunk)
-        </span>
-      </div>
+      <button
+        onClick={() => setExpanded(!expanded)}
+        style={{
+          background: 'none',
+          border: 'none',
+          color: 'var(--accent-primary)',
+          fontSize: '0.65rem',
+          fontWeight: 600,
+          cursor: 'pointer',
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: '4px',
+          padding: '2px 0',
+          marginTop: '4px'
+        }}
+      >
+        {expanded ? '▲ Hide Chunk Details' : `▼ View Chunk Details (${completedCount}/${totalChunks})`}
+      </button>
     );
-  }
+  };
 
-  // If status is done, no need to show chunk details
-  if (field.status === 'done') return null;
-
-  // If status is error, show the failed chunk index and a button to resume
-  if (field.status === 'error') {
+  const renderDetailsList = () => {
+    if (!expanded) return null;
     return (
       <div style={{
         marginTop: '6px',
         padding: '8px',
-        background: 'rgba(231, 76, 60, 0.04)',
-        border: '1px solid rgba(231, 76, 60, 0.15)',
+        background: 'rgba(0,0,0,0.15)',
+        border: '1px solid var(--border-subtle)',
         borderRadius: 'var(--radius-md)',
         display: 'flex',
         flexDirection: 'column',
-        gap: '6px'
+        gap: '8px',
+        maxHeight: '220px',
+        overflowY: 'auto'
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.68rem', color: 'var(--accent-danger)' }}>
-          <AlertTriangle size={12} />
-          <span style={{ fontWeight: 600 }}>
-            Lỗi ở chunk {(failedIdx !== undefined ? failedIdx : 0) + 1}/{totalChunks}
-          </span>
-          {completedCount > 0 && (
-            <span style={{ color: 'var(--text-muted)' }}>
-              (Đã lưu {completedCount} chunk)
-            </span>
-          )}
-        </div>
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-          <button
-            className="btn btn-ghost btn-xs"
-            onClick={() => retranslateField(field.path, true)}
-            disabled={phase === 'translating'}
-            style={{
-              padding: '3px 8px',
-              fontSize: '0.68rem',
-              fontWeight: 600,
-              background: 'var(--accent-primary)',
-              color: 'white',
-              border: 'none',
+        {Array.from({ length: totalChunks }).map((_, idx) => {
+          const raw = field.rawChunks?.[idx] || '';
+          const trans = field.completedChunks?.[idx] || '';
+          const isDone = !!trans;
+          
+          return (
+            <div key={idx} style={{
+              padding: '6px',
+              background: 'rgba(255,255,255,0.02)',
+              border: '1px solid rgba(255,255,255,0.05)',
               borderRadius: 'var(--radius-sm)',
-              cursor: phase === 'translating' ? 'not-allowed' : 'pointer',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '4px',
-            }}
-          >
-            <RotateCcw size={10} />
-            {completedCount > 0 ? `Dịch tiếp từ chunk ${completedCount + 1}` : 'Dịch lại từ đầu'}
-          </button>
-          {completedCount > 0 && (
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '4px'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '0.65rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                  Chunk {idx + 1}
+                </span>
+                <button
+                  onClick={() => downloadChunk(idx)}
+                  style={{
+                    padding: '2px 6px',
+                    fontSize: '0.55rem',
+                    fontWeight: 600,
+                    background: 'rgba(124, 106, 240, 0.15)',
+                    color: 'var(--accent-primary)',
+                    border: '1px solid rgba(124, 106, 240, 0.25)',
+                    borderRadius: 'var(--radius-xs)',
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '3px'
+                  }}
+                  title="Download JSON for this chunk"
+                >
+                  <Download size={10} /> JSON
+                </button>
+              </div>
+              
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                  <span style={{ fontSize: '0.52rem', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Raw</span>
+                  <div style={{
+                    padding: '4px',
+                    background: 'rgba(0,0,0,0.2)',
+                    borderRadius: '3px',
+                    fontSize: '0.62rem',
+                    fontFamily: 'monospace',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-word',
+                    maxHeight: '50px',
+                    overflowY: 'auto',
+                    color: 'var(--text-secondary)'
+                  }}>
+                    {raw || <span style={{ fontStyle: 'italic', color: 'var(--text-muted)' }}>Empty</span>}
+                  </div>
+                </div>
+                
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                  <span style={{ fontSize: '0.52rem', textTransform: 'uppercase', color: isDone ? 'var(--accent-success)' : 'var(--text-muted)' }}>Translated</span>
+                  <div style={{
+                    padding: '4px',
+                    background: isDone ? 'rgba(76,175,80,0.04)' : 'rgba(0,0,0,0.2)',
+                    borderLeft: isDone ? '1px solid var(--accent-success)' : 'none',
+                    borderRadius: '3px',
+                    fontSize: '0.62rem',
+                    fontFamily: 'monospace',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-word',
+                    maxHeight: '50px',
+                    overflowY: 'auto',
+                    color: isDone ? 'var(--text-primary)' : 'var(--text-muted)'
+                  }}>
+                    {trans || <span style={{ fontStyle: 'italic' }}>Pending...</span>}
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  // If status is translating, show current progress
+  if (field.status === 'translating') {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
+        <div style={{ fontSize: '0.62rem', color: 'var(--accent-info)', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <span style={{ padding: '1px 5px', background: 'rgba(124,106,240,0.12)', borderRadius: '3px', fontWeight: 600 }}>
+            Dịch chunk: {completedCount + 1}/{totalChunks}
+          </span>
+          <span style={{ color: 'var(--text-muted)' }}>
+            (Đã hoàn thành {completedCount} chunk)
+          </span>
+        </div>
+        {renderDetailsButton()}
+        {renderDetailsList()}
+      </div>
+    );
+  }
+
+  // If status is done, show chunk details browser
+  if (field.status === 'done') {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
+        {renderDetailsButton()}
+        {renderDetailsList()}
+      </div>
+    );
+  }
+
+  // If status is error, show the failed chunk index and a button to resume
+  if (field.status === 'error') {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
+        <div style={{
+          marginTop: '6px',
+          padding: '8px',
+          background: 'rgba(231, 76, 60, 0.04)',
+          border: '1px solid rgba(231, 76, 60, 0.15)',
+          borderRadius: 'var(--radius-md)',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '6px'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.68rem', color: 'var(--accent-danger)' }}>
+            <AlertTriangle size={12} />
+            <span style={{ fontWeight: 600 }}>
+              Lỗi ở chunk {(failedIdx !== undefined ? failedIdx : 0) + 1}/{totalChunks}
+            </span>
+            {completedCount > 0 && (
+              <span style={{ color: 'var(--text-muted)' }}>
+                (Đã lưu {completedCount} chunk)
+              </span>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             <button
               className="btn btn-ghost btn-xs"
-              onClick={() => retranslateField(field.path, false)}
+              onClick={() => retranslateField(field.path, true)}
               disabled={phase === 'translating'}
               style={{
                 padding: '3px 8px',
                 fontSize: '0.68rem',
-                fontWeight: 500,
-                color: 'var(--text-muted)',
-                border: '1px solid var(--border-subtle)',
+                fontWeight: 600,
+                background: 'var(--accent-primary)',
+                color: 'white',
+                border: 'none',
                 borderRadius: 'var(--radius-sm)',
                 cursor: phase === 'translating' ? 'not-allowed' : 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px',
               }}
             >
-              Dịch lại từ đầu
+              <RotateCcw size={10} />
+              {completedCount > 0 ? `Dịch tiếp từ chunk ${completedCount + 1}` : 'Dịch lại từ đầu'}
             </button>
-          )}
+            {completedCount > 0 && (
+              <button
+                className="btn btn-ghost btn-xs"
+                onClick={() => retranslateField(field.path, false)}
+                disabled={phase === 'translating'}
+                style={{
+                  padding: '3px 8px',
+                  fontSize: '0.68rem',
+                  fontWeight: 500,
+                  color: 'var(--text-muted)',
+                  border: '1px solid var(--border-subtle)',
+                  borderRadius: 'var(--radius-sm)',
+                  cursor: phase === 'translating' ? 'not-allowed' : 'pointer',
+                }}
+              >
+                Dịch lại từ đầu
+              </button>
+            )}
+          </div>
         </div>
+        {renderDetailsButton()}
+        {renderDetailsList()}
       </div>
     );
   }
@@ -291,26 +458,30 @@ function ChunkStatusAndResume({
   // If status is pending or ignored, but it already has completed chunks cached
   if (completedCount > 0) {
     return (
-      <div style={{ fontSize: '0.62rem', color: 'var(--accent-info)', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-        <span style={{ padding: '1px 5px', background: 'rgba(124,106,240,0.12)', borderRadius: '3px', fontWeight: 600 }}>
-          Đã lưu {completedCount}/{totalChunks} chunks
-        </span>
-        <button
-          className="btn btn-ghost btn-xs"
-          onClick={() => retranslateField(field.path, true)}
-          disabled={phase === 'translating'}
-          style={{
-            padding: '1px 5px',
-            fontSize: '0.6rem',
-            color: 'var(--accent-primary)',
-            background: 'transparent',
-            border: '1px solid rgba(124, 106, 240, 0.3)',
-            borderRadius: '3px',
-            cursor: phase === 'translating' ? 'not-allowed' : 'pointer',
-          }}
-        >
-          Tiếp tục dịch
-        </button>
+      <div style={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
+        <div style={{ fontSize: '0.62rem', color: 'var(--accent-info)', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <span style={{ padding: '1px 5px', background: 'rgba(124,106,240,0.12)', borderRadius: '3px', fontWeight: 600 }}>
+            Đã lưu {completedCount}/{totalChunks} chunks
+          </span>
+          <button
+            className="btn btn-ghost btn-xs"
+            onClick={() => retranslateField(field.path, true)}
+            disabled={phase === 'translating'}
+            style={{
+              padding: '1px 5px',
+              fontSize: '0.6rem',
+              color: 'var(--accent-primary)',
+              background: 'transparent',
+              border: '1px solid rgba(124, 106, 240, 0.3)',
+              borderRadius: '3px',
+              cursor: phase === 'translating' ? 'not-allowed' : 'pointer',
+            }}
+          >
+            Tiếp tục dịch
+          </button>
+        </div>
+        {renderDetailsButton()}
+        {renderDetailsList()}
       </div>
     );
   }
@@ -574,7 +745,227 @@ function RegexSimulatorToggle({ regexStr }: { regexStr: string }) {
   );
 }
 
-/** Virtualized Table View — only renders visible rows */
+const VirtualFieldTableRow = memo(({
+  field,
+  updateField,
+  retranslateField,
+  applyModToField,
+  phase,
+  t,
+  modEnabled,
+  allFields,
+  setFields,
+  addToast,
+  locale,
+  setRagDebugField,
+}: {
+  field: any;
+  updateField: any;
+  retranslateField: any;
+  applyModToField: any;
+  phase: string;
+  t: Record<string, string>;
+  modEnabled: boolean;
+  allFields: any[];
+  setFields: any;
+  addToast: any;
+  locale: string;
+  setRagDebugField: any;
+}) => {
+  const handleRowCheckboxChange = (field: any, checked: boolean) => {
+    if (checked) {
+      const nextStatus = field.translated?.trim() ? 'done' : 'pending';
+      updateField(field.path, { status: nextStatus });
+    } else {
+      updateField(field.path, { status: 'ignored' });
+    }
+  };
+
+  return (
+    <div
+      className={`field-grid-layout field-grid-row ${field.status === 'error' ? 'field-error' : ''}`}
+      style={{
+        opacity: field.status === 'ignored' ? 0.5 : 1,
+      }}
+    >
+      {/* Field name */}
+      <div className="field-grid-cell">
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', width: '100%' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', marginTop: '2px', flexShrink: 0 }}>
+            <label className="checkbox-wrapper" style={{ cursor: phase === 'translating' ? 'not-allowed' : 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={field.status !== 'ignored'}
+                onChange={(e) => handleRowCheckboxChange(field, e.target.checked)}
+                disabled={phase === 'translating'}
+              />
+            </label>
+            {(() => {
+              const baseKey = getFieldBaseKey(field.path);
+              const matchingFields = allFields.filter(f => getFieldBaseKey(f.path) === baseKey && f.path !== field.path);
+              if (matchingFields.length === 0) return null;
+              return (
+                <button
+                  className="btn btn-ghost tooltip"
+                  data-tooltip={locale === 'vi' ? `Áp dụng trạng thái chọn cho tất cả ${baseKey}` : `Apply selection to all ${baseKey}`}
+                  onClick={() => {
+                    const targetStatus = field.status;
+                    const nextFields = allFields.map(f => {
+                      if (getFieldBaseKey(f.path) === baseKey) {
+                        if (targetStatus === 'ignored') {
+                          return { ...f, status: 'ignored' as const };
+                        } else {
+                          const activeStatus = f.translated?.trim() ? 'done' as const : 'pending' as const;
+                          return { ...f, status: activeStatus };
+                        }
+                      }
+                      return f;
+                    });
+                    setFields(nextFields);
+                    addToast('success', locale === 'vi' 
+                      ? `Đã áp dụng chọn cho tất cả các trường ${baseKey}` 
+                      : `Applied selection to all ${baseKey} fields`
+                    );
+                  }}
+                  disabled={phase === 'translating'}
+                  style={{ padding: '2px', height: '18px', width: '18px', minHeight: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--accent-primary)', opacity: 0.8 }}
+                  title={locale === 'vi' ? `Áp dụng trạng thái chọn cho tất cả ${baseKey}` : `Apply selection to all ${baseKey}`}
+                >
+                  <Zap size={10} />
+                </button>
+              );
+            })()}
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div
+              className="field-name"
+              style={{
+                textDecoration: field.status === 'ignored' ? 'line-through' : 'none',
+                color: field.status === 'ignored' ? 'var(--text-muted)' : 'var(--accent-secondary)',
+              }}
+            >
+              {field.label}
+            </div>
+            <div style={{ marginTop: '4px', display: 'flex', flexWrap: 'wrap', gap: '3px', alignItems: 'center' }}>
+              {field.entryType === 'json_patch' && (
+                <span style={{ fontSize: '0.55rem', padding: '1px 4px', background: 'rgba(236,72,153,0.1)', color: '#f472b6', borderRadius: '3px', fontWeight: 600 }}>PATCH</span>
+              )}
+              <StatusBadge status={field.status} t={t} />
+              {field.surgicalResult && <SurgicalResultBadge result={field.surgicalResult} />}
+              <CharRatio original={field.original} translated={field.translated} />
+            </div>
+            {field.error && (
+              <div
+                style={{
+                  fontSize: '0.65rem',
+                  color: 'var(--accent-danger)',
+                  marginTop: '4px',
+                  wordBreak: 'break-word',
+                }}
+              >
+                {field.error}
+              </div>
+            )}
+            <ChunkStatusAndResume
+              field={field}
+              retranslateField={retranslateField}
+              phase={phase}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Original */}
+      <div className="field-grid-cell">
+        <div className="field-original" style={{ position: 'relative', paddingRight: '24px', width: '100%' }}>
+          <div style={{ position: 'absolute', top: '2px', right: '2px', zIndex: 10 }}>
+            <CopyButton text={field.original} />
+          </div>
+          {field.original.length > 500
+            ? field.original.slice(0, 500) + '...'
+            : field.original}
+        </div>
+      </div>
+
+      {/* Translated */}
+      <div className="field-grid-cell field-translated">
+        <textarea
+          value={field.translated}
+          onChange={(e) => {
+            const val = e.target.value;
+            updateField(field.path, {
+              translated: val,
+              status: val.trim() ? 'done' : 'pending',
+              error: undefined
+            });
+          }}
+          placeholder={field.status === 'pending' ? 'Not translated yet' : ''}
+          rows={Math.min(Math.max(field.original.split('\n').length, 2), 8)}
+        />
+        {field.group === 'regex' && field.path.includes('findRegex') && (
+          <RegexSimulatorToggle regexStr={field.translated || field.original} />
+        )}
+      </div>
+
+      {/* Actions */}
+      <div className="field-grid-cell" style={{ alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', width: '100%' }}>
+          <button
+            className="btn btn-ghost btn-xs tooltip"
+            data-tooltip={t.ignored}
+            onClick={() => updateField(field.path, { status: field.status === 'ignored' ? 'pending' : 'ignored' })}
+            disabled={phase === 'translating'}
+            style={{ padding: '4px' }}
+          >
+            {field.status === 'ignored' ? <RotateCcw size={14} /> : <Ban size={14} />}
+          </button>
+          {modEnabled ? (
+            <>
+              <button
+                className="btn btn-ghost btn-xs tooltip"
+                data-tooltip={t.modField}
+                onClick={() => applyModToField(field.path)}
+                disabled={phase === 'translating'}
+                style={{ padding: '4px', color: '#9b59b6' }}
+              >
+                <Wand2 size={14} />
+              </button>
+              <button
+                className="btn btn-ghost btn-xs tooltip"
+                data-tooltip={t.retranslate}
+                onClick={() => retranslateField(field.path)}
+                disabled={phase === 'translating'}
+                style={{ padding: '4px', opacity: 0.5 }}
+              >
+                <RotateCcw size={14} />
+              </button>
+            </>
+          ) : (
+            <button
+              className="btn btn-ghost btn-xs tooltip"
+              data-tooltip={t.retranslate}
+              onClick={() => retranslateField(field.path)}
+              disabled={phase === 'translating'}
+              style={{ padding: '4px' }}
+            >
+              <RotateCcw size={14} />
+            </button>
+          )}
+          <button
+            className="btn btn-ghost btn-xs tooltip"
+            data-tooltip="RAG Debug"
+            onClick={() => setRagDebugField(field)}
+            style={{ padding: '4px', color: 'var(--text-muted)', opacity: 0.6 }}
+          >
+            <Brain size={14} />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+});
+
+/** Virtualized Table View — only renders visible rows using CSS Grid */
 function VirtualTableView({
   fields,
   updateField,
@@ -636,19 +1027,48 @@ function VirtualTableView({
     setFields(nextFields);
   };
 
-  const handleRowCheckboxChange = (field: any, checked: boolean) => {
-    if (checked) {
-      const nextStatus = field.translated?.trim() ? 'done' : 'pending';
-      updateField(field.path, { status: nextStatus });
-    } else {
-      updateField(field.path, { status: 'ignored' });
+  const estimateRowHeight = useCallback((index: number) => {
+    const field = fields[index];
+    if (!field) return 80;
+
+    let contentHeight = 0;
+
+    // 1. Textarea height estimation
+    const textareaRows = Math.min(Math.max(field.original.split('\n').length, 2), 8);
+    const textareaHeight = textareaRows * 20 + 12; // 20px per line + padding
+
+    // 2. Original text height estimation (capped at 120px max-height in css)
+    const originalLines = field.original.split('\n').length;
+    const originalHeight = Math.min(originalLines * 18 + 12, 120);
+
+    // Grid row content height is determined by the maximum height of columns
+    contentHeight = Math.max(originalHeight, textareaHeight);
+
+    // 3. Error message height
+    if (field.error) {
+      contentHeight += 24;
     }
-  };
+
+    // 4. Chunk details block height estimation
+    const isChunked = field.original.length > 100000 || field.totalChunks > 1 || (field.completedChunks && field.completedChunks.length > 0);
+    if (isChunked) {
+      contentHeight += 32;
+    }
+
+    // 5. Regex simulator toggle space
+    const isRegexFind = field.group === 'regex' && field.path.includes('findRegex');
+    if (isRegexFind) {
+      contentHeight += 28;
+    }
+
+    // Add extra padding (16px vertical) and border spacing
+    return Math.max(contentHeight + 20, 80);
+  }, [fields]);
 
   const virtualizer = useVirtualizer({
     count: fields.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: useCallback(() => 80, []),
+    estimateSize: estimateRowHeight,
     overscan: 8,
   });
 
@@ -669,30 +1089,26 @@ function VirtualTableView({
         overflowX: 'auto',
       }}
     >
-      {/* Sticky header */}
-      <table className="field-table" style={{ tableLayout: 'fixed', width: '100%' }}>
-        <thead>
-          <tr>
-            <th style={{ width: '180px' }}>
-              <label className="checkbox-wrapper" style={{ display: 'inline-flex', cursor: phase === 'translating' ? 'not-allowed' : 'pointer' }}>
-                <input
-                  type="checkbox"
-                  ref={headerCheckboxRef}
-                  checked={allChecked}
-                  onChange={handleHeaderCheckboxChange}
-                  disabled={phase === 'translating' || activeFields.length === 0}
-                />
-                <span style={{ fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>
-                  {t.field}
-                </span>
-              </label>
-            </th>
-            <th style={{ width: '40%' }}>{t.original}</th>
-            <th>{modEnabled ? t.modResult : t.translated}</th>
-            <th style={{ width: '100px', textAlign: 'center' }}>{t.actions}</th>
-          </tr>
-        </thead>
-      </table>
+      {/* Sticky header using CSS Grid */}
+      <div className="field-grid-layout field-grid-header">
+        <div className="field-grid-header-cell">
+          <label className="checkbox-wrapper" style={{ display: 'inline-flex', cursor: phase === 'translating' ? 'not-allowed' : 'pointer' }}>
+            <input
+              type="checkbox"
+              ref={headerCheckboxRef}
+              checked={allChecked}
+              onChange={handleHeaderCheckboxChange}
+              disabled={phase === 'translating' || activeFields.length === 0}
+            />
+            <span style={{ fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>
+              {t.field}
+            </span>
+          </label>
+        </div>
+        <div className="field-grid-header-cell">{t.original}</div>
+        <div className="field-grid-header-cell">{modEnabled ? t.modResult : t.translated}</div>
+        <div className="field-grid-header-cell" style={{ justifyContent: 'center' }}>{t.actions}</div>
+      </div>
 
       {/* Virtualized body */}
       <div
@@ -715,194 +1131,23 @@ function VirtualTableView({
                 left: 0,
                 width: '100%',
                 transform: `translateY(${virtualRow.start}px)`,
+                willChange: 'transform',
               }}
             >
-              <table className="field-table" style={{ tableLayout: 'fixed', width: '100%' }}>
-                <tbody>
-                  <tr
-                    className={field.status === 'error' ? 'field-error' : ''}
-                    style={{
-                      opacity: field.status === 'ignored' ? 0.5 : 1,
-                      transition: 'opacity 0.2s ease',
-                    }}
-                  >
-                    {/* Field name */}
-                    <td style={{ width: '180px' }}>
-                      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
-                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', marginTop: '2px', flexShrink: 0 }}>
-                          <label className="checkbox-wrapper" style={{ cursor: phase === 'translating' ? 'not-allowed' : 'pointer' }}>
-                            <input
-                              type="checkbox"
-                              checked={field.status !== 'ignored'}
-                              onChange={(e) => handleRowCheckboxChange(field, e.target.checked)}
-                              disabled={phase === 'translating'}
-                            />
-                          </label>
-                          {(() => {
-                            const baseKey = getFieldBaseKey(field.path);
-                            const matchingFields = allFields.filter(f => getFieldBaseKey(f.path) === baseKey && f.path !== field.path);
-                            if (matchingFields.length === 0) return null;
-                            return (
-                              <button
-                                className="btn btn-ghost tooltip"
-                                data-tooltip={locale === 'vi' ? `Áp dụng trạng thái chọn cho tất cả ${baseKey}` : `Apply selection to all ${baseKey}`}
-                                onClick={() => {
-                                  const targetStatus = field.status;
-                                  const nextFields = allFields.map(f => {
-                                    if (getFieldBaseKey(f.path) === baseKey) {
-                                      if (targetStatus === 'ignored') {
-                                        return { ...f, status: 'ignored' as const };
-                                      } else {
-                                        const activeStatus = f.translated?.trim() ? 'done' as const : 'pending' as const;
-                                        return { ...f, status: activeStatus };
-                                      }
-                                    }
-                                    return f;
-                                  });
-                                  setFields(nextFields);
-                                  addToast('success', locale === 'vi' 
-                                    ? `Đã áp dụng chọn cho tất cả các trường ${baseKey}` 
-                                    : `Applied selection to all ${baseKey} fields`
-                                  );
-                                }}
-                                disabled={phase === 'translating'}
-                                style={{ padding: '2px', height: '18px', width: '18px', minHeight: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--accent-primary)', opacity: 0.8 }}
-                                title={locale === 'vi' ? `Áp dụng trạng thái chọn cho tất cả ${baseKey}` : `Apply selection to all ${baseKey}`}
-                              >
-                                <Zap size={10} />
-                              </button>
-                            );
-                          })()}
-                        </div>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div
-                            className="field-name"
-                            style={{
-                              textDecoration: field.status === 'ignored' ? 'line-through' : 'none',
-                              color: field.status === 'ignored' ? 'var(--text-muted)' : 'var(--accent-secondary)',
-                            }}
-                          >
-                            {field.label}
-                          </div>
-                      <div style={{ marginTop: '4px', display: 'flex', flexWrap: 'wrap', gap: '3px', alignItems: 'center' }}>
-                        {field.entryType === 'json_patch' && (
-                          <span style={{ fontSize: '0.55rem', padding: '1px 4px', background: 'rgba(236,72,153,0.1)', color: '#f472b6', borderRadius: '3px', fontWeight: 600 }}>PATCH</span>
-                        )}
-                        <StatusBadge status={field.status} t={t} />
-                        {field.surgicalResult && <SurgicalResultBadge result={field.surgicalResult} />}
-                        <CharRatio original={field.original} translated={field.translated} />
-                      </div>
-                      {field.error && (
-                        <div
-                          style={{
-                            fontSize: '0.65rem',
-                            color: 'var(--accent-danger)',
-                            marginTop: '4px',
-                            wordBreak: 'break-word',
-                          }}
-                        >
-                          {field.error}
-                        </div>
-                      )}
-                      <ChunkStatusAndResume
-                        field={field}
-                        retranslateField={retranslateField}
-                        phase={phase}
-                      />
-                        </div>
-                      </div>
-                    </td>
-
-                    {/* Original */}
-                    <td style={{ width: '40%' }}>
-                      <div className="field-original" style={{ position: 'relative', paddingRight: '24px' }}>
-                        <div style={{ position: 'absolute', top: '2px', right: '2px', zIndex: 10 }}>
-                          <CopyButton text={field.original} />
-                        </div>
-                        {field.original.length > 500
-                          ? field.original.slice(0, 500) + '...'
-                          : field.original}
-                      </div>
-                    </td>
-
-                    {/* Translated */}
-                    <td className="field-translated">
-                      <textarea
-                        value={field.translated}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          updateField(field.path, {
-                            translated: val,
-                            status: val.trim() ? 'done' : 'pending',
-                            error: undefined
-                          });
-                        }}
-                        placeholder={field.status === 'pending' ? 'Not translated yet' : ''}
-                        rows={Math.min(Math.max(field.original.split('\n').length, 2), 8)}
-                      />
-                      {/* Show Regex Simulator toggle for findRegex fields */}
-                      {field.group === 'regex' && field.path.includes('findRegex') && (
-                        <RegexSimulatorToggle regexStr={field.translated || field.original} />
-                      )}
-                    </td>
-
-                    {/* Actions */}
-                    <td style={{ width: '100px' }}>
-                      <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
-                        <button
-                          className="btn btn-ghost btn-xs tooltip"
-                          data-tooltip={t.ignored}
-                          onClick={() => updateField(field.path, { status: field.status === 'ignored' ? 'pending' : 'ignored' })}
-                          disabled={phase === 'translating'}
-                          style={{ padding: '4px' }}
-                        >
-                          {field.status === 'ignored' ? <RotateCcw size={14} /> : <Ban size={14} />}
-                        </button>
-                        {modEnabled ? (
-                          <>
-                            <button
-                              className="btn btn-ghost btn-xs tooltip"
-                              data-tooltip={t.modField}
-                              onClick={() => applyModToField(field.path)}
-                              disabled={phase === 'translating'}
-                              style={{ padding: '4px', color: '#9b59b6' }}
-                            >
-                              <Wand2 size={14} />
-                            </button>
-                            <button
-                              className="btn btn-ghost btn-xs tooltip"
-                              data-tooltip={t.retranslate}
-                              onClick={() => retranslateField(field.path)}
-                              disabled={phase === 'translating'}
-                              style={{ padding: '4px', opacity: 0.5 }}
-                            >
-                              <RotateCcw size={14} />
-                            </button>
-                          </>
-                        ) : (
-                          <button
-                            className="btn btn-ghost btn-xs tooltip"
-                            data-tooltip={t.retranslate}
-                            onClick={() => retranslateField(field.path)}
-                            disabled={phase === 'translating'}
-                            style={{ padding: '4px' }}
-                          >
-                            <RotateCcw size={14} />
-                          </button>
-                        )}
-                        <button
-                          className="btn btn-ghost btn-xs tooltip"
-                          data-tooltip="RAG Debug"
-                          onClick={() => setRagDebugField(field)}
-                          style={{ padding: '4px', color: 'var(--text-muted)', opacity: 0.6 }}
-                        >
-                          <Brain size={14} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+              <VirtualFieldTableRow
+                field={field}
+                updateField={updateField}
+                retranslateField={retranslateField}
+                applyModToField={applyModToField}
+                phase={phase}
+                t={t}
+                modEnabled={modEnabled}
+                allFields={allFields}
+                setFields={setFields}
+                addToast={addToast}
+                locale={locale}
+                setRagDebugField={setRagDebugField}
+              />
             </div>
           );
         })}
@@ -911,6 +1156,183 @@ function VirtualTableView({
     </>
   );
 }
+
+/** Virtualized Diff View */
+const VirtualFieldCardRow = memo(({
+  field,
+  updateField,
+  retranslateField,
+  applyModToField,
+  phase,
+  t,
+  modEnabled,
+  allFields,
+  setFields,
+  addToast,
+  locale,
+}: {
+  field: any;
+  updateField: any;
+  retranslateField: any;
+  applyModToField: any;
+  phase: string;
+  t: Record<string, string>;
+  modEnabled: boolean;
+  allFields: any[];
+  setFields: any;
+  addToast: any;
+  locale: string;
+}) => {
+  const handleRowCheckboxChange = (field: any, checked: boolean) => {
+    if (checked) {
+      const nextStatus = field.translated?.trim() ? 'done' : 'pending';
+      updateField(field.path, { status: nextStatus });
+    } else {
+      updateField(field.path, { status: 'ignored' });
+    }
+  };
+
+  return (
+    <div
+      style={{
+        padding: '12px',
+        background: 'var(--bg-primary)',
+        borderRadius: 'var(--radius-md)',
+        border: `1px solid ${field.status === 'error' ? 'var(--accent-danger)' : 'var(--border-subtle)'}`,
+        opacity: field.status === 'ignored' ? 0.5 : 1,
+        transition: 'opacity 0.2s ease',
+      }}
+    >
+      <div style={{
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        marginBottom: '8px',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+            <label className="checkbox-wrapper" style={{ cursor: phase === 'translating' ? 'not-allowed' : 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={field.status !== 'ignored'}
+                onChange={(e) => handleRowCheckboxChange(field, e.target.checked)}
+                disabled={phase === 'translating'}
+              />
+            </label>
+            {(() => {
+              const baseKey = getFieldBaseKey(field.path);
+              const matchingFields = allFields.filter(f => getFieldBaseKey(f.path) === baseKey && f.path !== field.path);
+              if (matchingFields.length === 0) return null;
+              return (
+                <button
+                  className="btn btn-ghost tooltip"
+                  data-tooltip={locale === 'vi' ? `Áp dụng trạng thái chọn cho tất cả ${baseKey}` : `Apply selection to all ${baseKey}`}
+                  onClick={() => {
+                    const targetStatus = field.status;
+                    const nextFields = allFields.map(f => {
+                      if (getFieldBaseKey(f.path) === baseKey) {
+                        if (targetStatus === 'ignored') {
+                          return { ...f, status: 'ignored' as const };
+                        } else {
+                          const activeStatus = f.translated?.trim() ? 'done' as const : 'pending' as const;
+                          return { ...f, status: activeStatus };
+                        }
+                      }
+                      return f;
+                    });
+                    setFields(nextFields);
+                    addToast('success', locale === 'vi' 
+                      ? `Đã áp dụng chọn cho tất cả các trường ${baseKey}` 
+                      : `Applied selection to all ${baseKey} fields`
+                    );
+                  }}
+                  disabled={phase === 'translating'}
+                  style={{ padding: '2px', height: '18px', width: '18px', minHeight: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--accent-primary)', opacity: 0.8 }}
+                  title={locale === 'vi' ? `Áp dụng trạng thái chọn cho tất cả ${baseKey}` : `Apply selection to all ${baseKey}`}
+                >
+                  <Zap size={10} />
+                </button>
+              );
+            })()}
+          </div>
+          <span style={{
+            fontWeight: 600,
+            fontSize: '0.8rem',
+            textDecoration: field.status === 'ignored' ? 'line-through' : 'none',
+            color: field.status === 'ignored' ? 'var(--text-muted)' : 'var(--text-primary)',
+          }}>
+            {field.label}
+          </span>
+          {field.entryType === 'json_patch' && (
+            <span style={{ fontSize: '0.55rem', padding: '1px 4px', background: 'rgba(236,72,153,0.1)', color: '#f472b6', borderRadius: '3px', fontWeight: 600 }}>PATCH</span>
+          )}
+          <StatusBadge status={field.status} t={t} />
+          <CharRatio original={field.original} translated={field.translated} />
+        </div>
+        <div style={{ display: 'flex', gap: '4px' }}>
+          <button
+            className="btn btn-ghost btn-xs tooltip"
+            data-tooltip={t.ignored}
+            onClick={() => updateField(field.path, { status: field.status === 'ignored' ? 'pending' : 'ignored' })}
+            disabled={phase === 'translating'}
+            style={{ padding: '3px 6px' }}
+          >
+            {field.status === 'ignored' ? <RotateCcw size={12} /> : <Ban size={12} />}
+          </button>
+          {modEnabled ? (
+            <>
+              <button
+                className="btn btn-ghost btn-xs tooltip"
+                data-tooltip={t.modField}
+                onClick={() => applyModToField(field.path)}
+                disabled={phase === 'translating'}
+                style={{ padding: '3px 6px', color: '#9b59b6' }}
+              >
+                <Wand2 size={12} />
+              </button>
+              <button
+                className="btn btn-ghost btn-xs tooltip"
+                data-tooltip={t.retranslate}
+                onClick={() => retranslateField(field.path)}
+                disabled={phase === 'translating'}
+                style={{ padding: '3px 6px', opacity: 0.5 }}
+              >
+                <RotateCcw size={12} />
+              </button>
+            </>
+          ) : (
+            <button
+              className="btn btn-ghost btn-xs tooltip"
+              data-tooltip={t.retranslate}
+              onClick={() => retranslateField(field.path)}
+              disabled={phase === 'translating'}
+              style={{ padding: '3px 6px' }}
+            >
+              <RotateCcw size={12} />
+            </button>
+          )}
+        </div>
+      </div>
+      <DiffView original={field.original} translated={field.translated} />
+      {/* Show HTML preview toggle for regex fields */}
+      {field.group === 'regex' && field.path.includes('replaceString') && field.translated && (
+        <HtmlPreviewToggle html={field.translated} />
+      )}
+      {/* Show Regex Simulator toggle for findRegex fields */}
+      {field.group === 'regex' && field.path.includes('findRegex') && (
+        <RegexSimulatorToggle regexStr={field.translated || field.original} />
+      )}
+      {field.error && (
+        <div style={{ fontSize: '0.65rem', color: 'var(--accent-danger)', marginTop: '6px' }}>
+          {field.error}
+        </div>
+      )}
+      <ChunkStatusAndResume
+        field={field}
+        retranslateField={retranslateField}
+        phase={phase}
+      />
+    </div>
+  );
+});
 
 /** Virtualized Diff View */
 function VirtualDiffView({
@@ -974,19 +1396,58 @@ function VirtualDiffView({
     setFields(nextFields);
   };
 
-  const handleRowCheckboxChange = (field: any, checked: boolean) => {
-    if (checked) {
-      const nextStatus = field.translated?.trim() ? 'done' : 'pending';
-      updateField(field.path, { status: nextStatus });
+  const estimateCardHeight = useCallback((index: number) => {
+    const field = fields[index];
+    if (!field) return 160;
+
+    let height = 48; // header + padding + margins
+
+    if (!field.translated) {
+      height += 24; // "No translation" message
     } else {
-      updateField(field.path, { status: 'ignored' });
+      // Original diff panel height
+      const origText = field.original.length > 800 ? field.original.slice(0, 800) : field.original;
+      const origLines = origText.split('\n').length;
+      const origHeight = Math.min(origLines * 16 + 20, 200);
+
+      // Translated diff panel height
+      const transText = field.translated.length > 800 ? field.translated.slice(0, 800) : field.translated;
+      const transLines = transText.split('\n').length;
+      const transHeight = Math.min(transLines * 16 + 20, 200);
+
+      height += origHeight + transHeight + 6; // panels + gap
     }
-  };
+
+    // HTML Preview toggle space
+    const isRegexReplace = field.group === 'regex' && field.path.includes('replaceString') && field.translated;
+    if (isRegexReplace) {
+      height += 24;
+    }
+
+    // Regex Simulator toggle space
+    const isRegexFind = field.group === 'regex' && field.path.includes('findRegex');
+    if (isRegexFind) {
+      height += 24;
+    }
+
+    // Error message space
+    if (field.error) {
+      height += 24;
+    }
+
+    // Chunk status space
+    const isChunked = field.original.length > 100000 || field.totalChunks > 1 || (field.completedChunks && field.completedChunks.length > 0);
+    if (isChunked) {
+      height += 32;
+    }
+
+    return Math.max(height, 100);
+  }, [fields]);
 
   const virtualizer = useVirtualizer({
     count: fields.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: useCallback(() => 160, []),
+    estimateSize: estimateCardHeight,
     overscan: 5,
   });
 
@@ -1039,146 +1500,22 @@ function VirtualDiffView({
                 width: '100%',
                 transform: `translateY(${virtualRow.start}px)`,
                 paddingBottom: '8px',
+                willChange: 'transform',
               }}
             >
-              <div
-                style={{
-                  padding: '12px',
-                  background: 'var(--bg-primary)',
-                  borderRadius: 'var(--radius-md)',
-                  border: `1px solid ${field.status === 'error' ? 'var(--accent-danger)' : 'var(--border-subtle)'}`,
-                  opacity: field.status === 'ignored' ? 0.5 : 1,
-                  transition: 'opacity 0.2s ease',
-                }}
-              >
-                <div style={{
-                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                  marginBottom: '8px',
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
-                      <label className="checkbox-wrapper" style={{ cursor: phase === 'translating' ? 'not-allowed' : 'pointer' }}>
-                        <input
-                          type="checkbox"
-                          checked={field.status !== 'ignored'}
-                          onChange={(e) => handleRowCheckboxChange(field, e.target.checked)}
-                          disabled={phase === 'translating'}
-                        />
-                      </label>
-                      {(() => {
-                        const baseKey = getFieldBaseKey(field.path);
-                        const matchingFields = allFields.filter(f => getFieldBaseKey(f.path) === baseKey && f.path !== field.path);
-                        if (matchingFields.length === 0) return null;
-                        return (
-                          <button
-                            className="btn btn-ghost tooltip"
-                            data-tooltip={locale === 'vi' ? `Áp dụng trạng thái chọn cho tất cả ${baseKey}` : `Apply selection to all ${baseKey}`}
-                            onClick={() => {
-                              const targetStatus = field.status;
-                              const nextFields = allFields.map(f => {
-                                if (getFieldBaseKey(f.path) === baseKey) {
-                                  if (targetStatus === 'ignored') {
-                                    return { ...f, status: 'ignored' as const };
-                                  } else {
-                                    const activeStatus = f.translated?.trim() ? 'done' as const : 'pending' as const;
-                                    return { ...f, status: activeStatus };
-                                  }
-                                }
-                                return f;
-                              });
-                              setFields(nextFields);
-                              addToast('success', locale === 'vi' 
-                                ? `Đã áp dụng chọn cho tất cả các trường ${baseKey}` 
-                                : `Applied selection to all ${baseKey} fields`
-                              );
-                            }}
-                            disabled={phase === 'translating'}
-                            style={{ padding: '2px', height: '18px', width: '18px', minHeight: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--accent-primary)', opacity: 0.8 }}
-                            title={locale === 'vi' ? `Áp dụng trạng thái chọn cho tất cả ${baseKey}` : `Apply selection to all ${baseKey}`}
-                          >
-                            <Zap size={10} />
-                          </button>
-                        );
-                      })()}
-                    </div>
-                    <span style={{
-                      fontWeight: 600,
-                      fontSize: '0.8rem',
-                      textDecoration: field.status === 'ignored' ? 'line-through' : 'none',
-                      color: field.status === 'ignored' ? 'var(--text-muted)' : 'var(--text-primary)',
-                    }}>
-                      {field.label}
-                    </span>
-                    {field.entryType === 'json_patch' && (
-                      <span style={{ fontSize: '0.55rem', padding: '1px 4px', background: 'rgba(236,72,153,0.1)', color: '#f472b6', borderRadius: '3px', fontWeight: 600 }}>PATCH</span>
-                    )}
-                    <StatusBadge status={field.status} t={t} />
-                    <CharRatio original={field.original} translated={field.translated} />
-                  </div>
-                  <div style={{ display: 'flex', gap: '4px' }}>
-                    <button
-                      className="btn btn-ghost btn-xs tooltip"
-                      data-tooltip={t.ignored}
-                      onClick={() => updateField(field.path, { status: field.status === 'ignored' ? 'pending' : 'ignored' })}
-                      disabled={phase === 'translating'}
-                      style={{ padding: '3px 6px' }}
-                    >
-                      {field.status === 'ignored' ? <RotateCcw size={12} /> : <Ban size={12} />}
-                    </button>
-                    {modEnabled ? (
-                      <>
-                        <button
-                          className="btn btn-ghost btn-xs tooltip"
-                          data-tooltip={t.modField}
-                          onClick={() => applyModToField(field.path)}
-                          disabled={phase === 'translating'}
-                          style={{ padding: '3px 6px', color: '#9b59b6' }}
-                        >
-                          <Wand2 size={12} />
-                        </button>
-                        <button
-                          className="btn btn-ghost btn-xs tooltip"
-                          data-tooltip={t.retranslate}
-                          onClick={() => retranslateField(field.path)}
-                          disabled={phase === 'translating'}
-                          style={{ padding: '3px 6px', opacity: 0.5 }}
-                        >
-                          <RotateCcw size={12} />
-                        </button>
-                      </>
-                    ) : (
-                      <button
-                        className="btn btn-ghost btn-xs tooltip"
-                        data-tooltip={t.retranslate}
-                        onClick={() => retranslateField(field.path)}
-                        disabled={phase === 'translating'}
-                        style={{ padding: '3px 6px' }}
-                      >
-                        <RotateCcw size={12} />
-                      </button>
-                    )}
-                  </div>
-                </div>
-                <DiffView original={field.original} translated={field.translated} />
-                {/* Show HTML preview toggle for regex fields */}
-                {field.group === 'regex' && field.path.includes('replaceString') && field.translated && (
-                  <HtmlPreviewToggle html={field.translated} />
-                )}
-                {/* Show Regex Simulator toggle for findRegex fields */}
-                {field.group === 'regex' && field.path.includes('findRegex') && (
-                  <RegexSimulatorToggle regexStr={field.translated || field.original} />
-                )}
-                {field.error && (
-                  <div style={{ fontSize: '0.65rem', color: 'var(--accent-danger)', marginTop: '6px' }}>
-                    {field.error}
-                  </div>
-                )}
-                <ChunkStatusAndResume
-                  field={field}
-                  retranslateField={retranslateField}
-                  phase={phase}
-                />
-              </div>
+              <VirtualFieldCardRow
+                field={field}
+                updateField={updateField}
+                retranslateField={retranslateField}
+                applyModToField={applyModToField}
+                phase={phase}
+                t={t}
+                modEnabled={modEnabled}
+                allFields={allFields}
+                setFields={setFields}
+                addToast={addToast}
+                locale={locale}
+              />
             </div>
           );
         })}

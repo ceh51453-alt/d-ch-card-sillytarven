@@ -2600,6 +2600,8 @@ export async function translateText(
   parallelChunks?: number,
   /** Enable AI verification per chunk (compare original vs translated) */
   enableChunkVerification?: boolean,
+  /** Callback fired when chunks are determined and unmasked */
+  onChunksReady?: (rawChunks: string[]) => void,
 ): Promise<string> {
   if (!text || text.trim() === '') return '';
 
@@ -2617,6 +2619,15 @@ export async function translateText(
     effectiveChunkSize = 30000; // ~10K tokens output — an toàn cho mọi model
   }
   const chunks = chunkText(maskedText, effectiveChunkSize, config.maxTokens);
+
+  if (onChunksReady) {
+    const unmaskedChunks = chunks.map(chunk => {
+      let unmasked = unmaskUrls(chunk, urlMap);
+      unmasked = unmaskSecrets(unmasked, secretMap);
+      return unmasked;
+    });
+    onChunksReady(unmaskedChunks);
+  }
 
   // ═══ SINGLE CHUNK — fast path (no parallelism needed) ═══
   if (chunks.length === 1) {

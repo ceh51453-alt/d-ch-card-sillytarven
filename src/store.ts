@@ -607,6 +607,7 @@ export const useStore = create<AppState>((set) => ({
             status: 'pending' as const,
             error: undefined,
             completedChunks: undefined,
+            rawChunks: undefined,
             totalChunks: undefined,
             failedChunkIndex: undefined,
           }))
@@ -655,6 +656,7 @@ export const useStore = create<AppState>((set) => ({
           status: 'pending' as const,
           error: undefined,
           completedChunks: undefined,
+          rawChunks: undefined,
           totalChunks: undefined,
           failedChunkIndex: undefined,
         }))

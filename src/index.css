@@ -548,40 +548,62 @@ input[type="range"]::-webkit-slider-thumb {
 .log-active { color: var(--accent-primary); }
 .log-retry { color: #ffb74d; }
 
-/* ─── Field Editor Table ─── */
-.field-table {
+/* ─── Field Editor Grid (CSS Grid Replacement for Tables) ─── */
+.field-grid-layout {
+  display: grid;
+  grid-template-columns: 180px 40% 1fr 100px;
   width: 100%;
-  border-collapse: separate;
-  border-spacing: 0;
 }
-.field-table th {
+
+.field-grid-header {
   position: sticky;
   top: 0;
   background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-default);
+  z-index: 2;
+}
+
+.field-grid-header-cell {
+  padding: 8px;
   font-size: 0.75rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--text-muted);
-  padding: 6px 8px;
-  text-align: left;
-  border-bottom: 1px solid var(--border-default);
-  z-index: 2;
+  display: flex;
+  align-items: center;
 }
-.field-table td {
-  padding: 6px 8px;
+
+.field-grid-row {
   border-bottom: 1px solid var(--border-subtle);
-  vertical-align: top;
-  font-size: 0.85rem;
+  background: transparent;
+  transition: background 0.15s, opacity 0.2s ease;
 }
-.field-table tr:hover td {
+
+.field-grid-row:hover {
   background: var(--bg-hover);
 }
+
+.field-grid-row.field-error {
+  background: rgba(240, 106, 106, 0.05);
+}
+
+.field-grid-cell {
+  padding: 8px;
+  font-size: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  min-width: 0; /* Prevents cell content from stretching layout */
+}
+
 .field-name {
   font-family: var(--font-mono);
   font-size: 0.75rem;
   color: var(--accent-secondary);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .field-original {
   color: var(--text-secondary);

@@ -139,6 +139,8 @@ export interface TranslationField {
   surgicalResult?: { type: 'success' | 'fallback'; info?: string };
   /** Chunk-level resume: successfully translated chunks from a previous attempt */
   completedChunks?: string[];
+  /** Chunk-level resume: raw chunks for this field (unmasked) */
+  rawChunks?: string[];
   /** Chunk-level resume: total number of chunks for this field */
   totalChunks?: number;
   /** Chunk-level resume: index of the chunk that failed (resume from here) */

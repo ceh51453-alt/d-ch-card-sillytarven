@@ -88,25 +88,42 @@ function LogFilterBar() {
 function LogPanel({ logEndRef }: { logEndRef: React.RefObject<HTMLDivElement | null> }) {
   const { logs, logFilter } = useStore();
   if (logs.length === 0) return null;
+
+  const filteredLogs = logs.filter((log) => logFilter === 'all' || log.level === logFilter);
+  const visibleLogs = filteredLogs.slice(-300);
+  const isTruncated = filteredLogs.length > 300;
+
   return (
     <div>
       <LogFilterBar />
       <div className="log-panel">
-        {logs
-          .filter((log) => logFilter === 'all' || log.level === logFilter)
-          .map((log) => (
-            <div key={log.id} className={`log-entry log-${log.level}`}>
-              <span style={{ flexShrink: 0 }}>
-                {log.level === 'success' && '[✓]'}
-                {log.level === 'error' && '[✗]'}
-                {log.level === 'warning' && '[!]'}
-                {log.level === 'active' && '[~]'}
-                {log.level === 'info' && '[i]'}
-                {log.level === 'retry' && '[↻]'}
-              </span>
-              <span>{log.message}</span>
-            </div>
-          ))}
+        {isTruncated && (
+          <div style={{
+            fontSize: '0.68rem',
+            color: 'var(--text-muted)',
+            padding: '6px 8px',
+            textAlign: 'center',
+            borderBottom: '1px dashed var(--border-subtle)',
+            marginBottom: '6px',
+            fontStyle: 'italic',
+            background: 'rgba(255,255,255,0.01)',
+          }}>
+            Showing last 300 logs (total: {filteredLogs.length})
+          </div>
+        )}
+        {visibleLogs.map((log) => (
+          <div key={log.id} className={`log-entry log-${log.level}`}>
+            <span style={{ flexShrink: 0 }}>
+              {log.level === 'success' && '[✓]'}
+              {log.level === 'error' && '[✗]'}
+              {log.level === 'warning' && '[!]'}
+              {log.level === 'active' && '[~]'}
+              {log.level === 'info' && '[i]'}
+              {log.level === 'retry' && '[↻]'}
+            </span>
+            <span>{log.message}</span>
+          </div>
+        ))}
         <div ref={logEndRef} />
       </div>
     </div>
