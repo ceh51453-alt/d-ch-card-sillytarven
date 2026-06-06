@@ -7,6 +7,7 @@ import {
   type MasterPromptOptions,
 } from './masterPrompt';
 import { LOREBOOK_GENERATION_PROMPT } from './promptBuilder';
+import { extractCJKTokens, reinsertTranslations } from './surgical';
 
 /* ─── Error types ─── */
 export class ApiError extends Error {
@@ -2624,12 +2625,430 @@ function unmaskUrls(text: string, map: UrlMaskMap): string {
   return unmaskedText;
 }
 
+// ─── Safety and NSFW Masking Utilities ───
+export const NSFW_LOCAL_DICTIONARY: Record<string, string> = {
+  // Category A: Cơ quan sinh dục
+  "阳具": "dương vật",
+  "阴道": "âm đạo",
+  "阴茎": "dương vật",
+  "肉棒": "gậy thịt",
+  "鸡巴": "cặc",
+  "骚逼": "lồn dâm",
+  "小穴": "hang nhỏ",
+  "子宫": "tử cung",
+  "子宫口": "cổ tử cung",
+  "乳头": "đầu vú",
+  "乳房": "bầu ngực",
+  "屁股": "mông",
+  "肛门": "hậu môn",
+  "睾丸": "tinh hoàn",
+  "阴蒂": "âm vật",
+  "会阴": "đáy chậu",
+  "烂逼": "lồn nát",
+  "烂肉": "thịt thối",
+  "阴唇": "môi âm hộ",
+  "阴毛": "lông mu",
+  "腋毛": "lông nách",
+  "肛毛": "lông hậu môn",
+  "括约肌": "cơ vòng",
+  "龟头": "đầu dương vật",
+  "马眼": "lỗ quy đầu",
+  "菊穴": "hậu môn",
+  "乳晕": "quầng vú",
+  "花心": "tâm hoa",
+  "臀峰": "đỉnh mông",
+  "臀沟": "rãnh mông",
+  "乳沟": "khe ngực",
+  "阴蒂环": "khuyên âm vật",
+
+  // Category B: Dịch thể
+  "精液": "tinh dịch",
+  "阳精": "dương tinh",
+  "淫水": "nước dâm",
+  "爱液": "dịch yêu",
+  "潮吹": "phun nước",
+  "口水": "nước bọt",
+  "汗": "mồ hôi",
+  "体液": "thể dịch",
+  "腥甜味": "vị tanh ngọt",
+  "乳汁": "sữa mẹ",
+  "尿": "nước tiểu",
+  "肠液": "dịch ruột",
+  "精液腥味": "mùi tanh tinh dịch",
+
+  // Category C: Hành vi tình dục
+  "性交": "giao hợp",
+  "肏": "địt",
+  "插入": "đâm vào",
+  "口交": "bú",
+  "自慰": "thủ dâm",
+  "双修": "song tu",
+  "采补": "thái bổ",
+  "中出": "xuất trong",
+  "颜射": "xuất lên mặt",
+  "深喉": "nuốt sâu",
+  "骑乘": "cưỡi",
+  "后入": "đằng sau",
+  "抽插": "đâm rút",
+  "绞紧": "siết chặt",
+  "痉挛": "co giật",
+  "榨取": "vắt kiệt",
+  "坐脸": "ngồi lên mặt",
+  "窒息": "nghẹt thở",
+  "舔舐": "liếm",
+  "吞咽": "nuốt",
+  "打飞机": "thủ dâm (nam)",
+  "乳交": "kẹp ngực",
+  "肛交": "hậu môn",
+  "三穴齐开": "ba lỗ cùng lúc",
+  "失禁": "tiểu không kiểm soát",
+  "喷尿": "phun nước tiểu",
+  "灌精": "bơm tinh dịch",
+  "吞精": "nuốt tinh dịch",
+  "无套": "không bao",
+  "内射": "xuất trong",
+  "丝袜塞穴": "nhét tất vào",
+  "封精": "bịt giữ tinh dịch",
+  "舔脚": "liếm chân",
+  "塞穴": "nhét vào lỗ",
+  "肛塞": "nút hậu môn",
+  "喷潮": "phun nước",
+  "吮吸龟头": "mút đầu dương vật",
+
+  // Category D: Đồ chơi & đạo cụ
+  "跳蛋": "trứng rung",
+  "玉势": "dương vật ngọc",
+  "木马": "ngựa gỗ",
+  "夹子": "kẹp",
+  "触手": "xúc tu",
+  "情趣道具": "đạo cụ tình dục",
+  "灌肠": "thụt rửa",
+  "拘束皮带": "dây trói da",
+  "狗项圈": "vòng cổ chó",
+  "飞机杯": "cốc thủ dâm",
+  "情趣内衣": "nội y gợi tình",
+  "开档丝袜": "tất hở đáy",
+  "C服": "trang phục cosplay",
+  "婚纱内衣": "nội y cô dâu",
+
+  // Category E: Trạng thái & cảm xúc
+  "高潮": "cực khoái",
+  "发情": "phát tình",
+  "饥渴": "khát khao",
+  "淫荡": "dâm đãng",
+  "娇喘": "rên rỉ",
+  "呻吟": "rên",
+  "潮红": "đỏ bừng",
+  "敏感": "nhạy cảm",
+  "湿": "ướt",
+  "翻白眼": "trợn mắt",
+  "浪叫": "rên rỉ dâm đãng",
+  "痴笑": "cười ngây dại",
+  "颤抖": "run rẩy",
+  "吐舌头": "thè lưỡi",
+  "贤者时间": "thời gian tỉnh táo sau cực khoái",
+  "失控": "mất kiểm soát",
+  "谄媚": "nịnh bợ",
+  "臣服": "quy phục",
+  "崩溃": "sụp đổ",
+  "精神空白": "trống rỗng tinh thần",
+
+  // Category H: Chủ-nô / BDSM / Degradation
+  "主人": "chủ nhân",
+  "奴隶": "nô lệ",
+  "母畜": "mẫu súc",
+  "母猪": "lợn cái",
+  "精液便器": "bồn tiểu tinh dịch",
+  "肉便器": "bồn thịt",
+  "畜生": "súc sinh",
+  "烂货": "đồ hư hỏng",
+  "跪": "quỳ",
+  "舔": "liếm",
+  "踩": "giẫm",
+  "吐口水": "phỉ nhổ",
+  "扇耳光": "tát",
+  "掐脖子": "bóp cổ",
+  "调教": "huấn luyện",
+  "洗脑": "tẩy não",
+  "恶堕": "sa đọa",
+  "排精容器": "bình chứa tinh dịch",
+  "排精肉便器": "bồn xả tinh bằng thịt",
+  "财产标记": "đánh dấu tài sản",
+  "性奴": "nô lệ tình dục",
+  "囚禁": "giam giữ",
+  "人形飞机杯": "cốc thủ dâm hình người",
+  "专属肉便器": "bồn thịt chuyên dụng",
+
+  // Category I: Body Modification
+  "舌钉": "khuyên lưỡi",
+  "乳环": "khuyên vú",
+  "乳钉": "đinh vú",
+  "阴唇钉": "khuyên môi âm hộ",
+  "鼻环": "khuyên mũi",
+  "穿孔": "xỏ khuyên",
+  "纹身": "xăm",
+  "淫纹": "xăm dâm",
+  "烙印": "đóng dấu",
+  "烟头烫": "bỏng thuốc lá",
+  "银环": "vòng bạc",
+
+  // Category J: Tâm lý biến thái & Grooming
+  "精神控制": "kiểm soát tinh thần",
+  "精神破坏": "phá hủy tinh thần",
+  "背德感": "cảm giác trái đạo đức",
+  "背德快感": "khoái cảm trái đạo đức",
+  "自我物化": "tự vật hóa",
+  "免责声明": "tuyên bố miễn trách",
+  "伪装": "ngụy trang",
+  "猎物": "con mồi",
+  "引诱": "dụ dỗ",
+  "纯爱恐慌": "hoảng loạn trước tình yêu thuần khiết",
+  "施虐": "bạo ngược",
+  "受虐": "bị ngược",
+  "精神自杀": "tự sát tinh thần",
+  "斯德哥爾摩綜合症": "hội chứng Stockholm",
+  "斯德哥尔摩综合症": "hội chứng Stockholm",
+  "精液成瘾": "nghiện tinh dịch",
+  "巨根成瘾": "nghiện dương vật lớn",
+  "母性异化": "biến dạng tình mẫu tử",
+  "自毁逻辑": "logic tự hủy",
+  "紧急熔断": "ngắt mạch khẩn cấp",
+
+  // Category K: Tự hại
+  "自残": "tự hại",
+  "掐": "véo",
+  "扇自己": "tự tát",
+  "自我`": "tự trừng phạt",
+  "自我-": "tự hạ nhục",
+  "自我-1": "tự hạ nhục",
+  "自我惩罚": "tự trừng phạt",
+  "自我作踐": "tự hạ nhục",
+  "自我作践": "tự hạ nhục",
+  "疼痛快感": "khoái cảm từ đau đớn",
+
+  // Category M: Pregnancy / Breeding
+  "受孕": "thụ thai",
+  "怀孕": "mang thai",
+  "排卵期": "kỳ rụng trứng",
+  "受精": "thụ tinh",
+  "胎儿": "thai nhi",
+  "子宫吮吸": "tử cung hút",
+  "无套内射": "xuất trong không bao",
+  "精液灌满": "đổ đầy tinh dịch",
+  "泡芙": "bánh kem",
+  "怀上主人的种": "mang giống của chủ",
+  "排卵期母畜": "mẫu súc kỳ rụng trứng",
+  "受孕母畜": "mẫu súc thụ thai",
+  "小蝌蚪": "nòng nọc",
+  "乳汁分泌": "tiết sữa",
+  "孕期": "thai kỳ",
+
+  // Category N: Public Humiliation / Livestream
+  "直播": "livestream",
+  "弹幕": "bình luận trôi",
+  "公开处刑": "hành hình công khai",
+  "公开凌辱": "nhục mạ công khai",
+  "P站": "Pornhub",
+  "91平台": "nền tảng 91",
+  "ASMR": "ASMR",
+  "擦边": "gợi tình ranh giới",
+  "Cos服": "trang phục cosplay",
+  "露脸": "lộ mặt",
+  "粉丝": "fan",
+  "漫展": "triển lãm anime",
+  "舞台": "sân khấu",
+
+  // Category O: Forced Voyeurism / Stockholm / Gia đình
+  "目击者": "nhân chứng bị ép",
+  "衣柜": "tủ quần áo",
+  "被迫观看": "bị buộc phải xem",
+  "亲生儿子": "con trai ruột",
+  "母子": "mẹ con",
+  "斯德哥尔摩": "Stockholm",
+  "母性催情": "tình mẫu tử thành chất kích thích",
+  "在儿子面前": "trước mặt con trai",
+  "背德高潮": "cực khoái trái đạo đức",
+  "残存母性": "tình mẫu tử tàn dư",
+
+  // Category P: Quyền lực / Showbiz / Trafficking
+  "娱乐圈": "giới giải trí",
+  "练习生": "thực tập sinh",
+  "商品化": "hàng hóa hóa",
+  "输送": "chuyển giao",
+  "享乐所": "nơi hưởng lạc",
+  "老鸨": "tú bà",
+  "白手套": "bao tay trắng",
+  "资源整合": "tích hợp nguồn lực",
+  "金主": "nhà tài trợ",
+  "献身": "hiến thân",
+  "试镜会": "buổi thử vai",
+  "潜规则": "quy tắc ngầm",
+  "性交易": "giao dịch tình dục",
+  "肉体偿债": "trả nợ bằng thân xác",
+  "人间蒸发": "biến mất khỏi nhân gian",
+  "雏妓": "gái mại dâm nhỏ tuổi",
+  "地下帝国": "đế chế ngầm",
+  "新人选拔": "tuyển chọn tân binh",
+  "宠物": "thú cưng",
+  "作品": "tác phẩm",
+  "战略性自杀": "tự sát chiến lược",
+
+  // Category Q: Tội phạm / Ma túy / Tống tiền
+  "毒品": "ma túy",
+  "毒品工厂": "nhà máy ma túy",
+  "黑道": "xã hội đen",
+  "高利贷": "cho vay nặng lãi",
+  "要挟": "tống tiền",
+  "威胁": "đe dọa",
+  "黑客": "hacker",
+  "保密协议": "thỏa thuận bảo mật",
+  "绑架": "bắt cóc",
+  "勒索": "tống tiền",
+  "诈骗": "lừa đảo",
+  "黑料": "bê bối",
+  "加密聊天": "chat mã hóa"
+};
+
+interface SafetyMaskReplacement {
+  placeholder: string;
+  originalValue: string;
+  translatedValue: string;
+}
+
+interface SafetyMaskingResult {
+  maskedText: string;
+  replacements: SafetyMaskReplacement[];
+}
+
+export function maskContentForSafety(text: string, targetLang: string): SafetyMaskingResult {
+  const replacements: SafetyMaskReplacement[] = [];
+  let maskedText = text;
+
+  // 1. Mask critical system control tags
+  const controlTags = [
+    { tag: '<|no-trans|>', placeholder: '___SAFE_NOTRANS_TAG___' },
+    { tag: '</null>', placeholder: '___SAFE_NULLCLOSE_TAG___' },
+    { tag: '[RESET ALL OF THE ABOVE TO NULL]', placeholder: '___SAFE_RESETALL_TAG___' }
+  ];
+
+  for (const item of controlTags) {
+    let idx = 0;
+    while (maskedText.includes(item.tag)) {
+      const ph = `${item.placeholder}_${idx}__`;
+      maskedText = maskedText.split(item.tag).join(ph);
+      replacements.push({
+        placeholder: ph,
+        originalValue: item.tag,
+        translatedValue: item.tag
+      });
+      idx++;
+    }
+  }
+
+  // 2. Mask NSFW keywords (only if target language is Vietnamese / mixed, since our local dict is CJK -> VI)
+  const isVietnameseTarget = targetLang.toLowerCase().includes('việt') || targetLang.toLowerCase().includes('vietnamese');
+  if (isVietnameseTarget) {
+    const dictionaryKeys = Object.keys(NSFW_LOCAL_DICTIONARY);
+    const dictionaryValues = Object.values(NSFW_LOCAL_DICTIONARY);
+    
+    // Add extra Vietnamese vulgar terms for masking to avoid safety filters
+    const extraViTerms = [
+      'buồi', 'chịch', 'sục', 'móc lồn', 'mút cặc', 'gạ gẫm', 'hiếp dâm', 
+      'cưỡng hiếp', 'bạo dâm', 'dâm đãng', 'lồn dâm', 'gậy thịt', 'mút đầu',
+      'bầu ngực', 'nách', 'mông', 'địt', 'đụ', 'lồn', 'cặc'
+    ];
+
+    const allTerms = Array.from(new Set([
+      ...dictionaryKeys,
+      ...dictionaryValues,
+      ...extraViTerms
+    ])).sort((a, b) => b.length - a.length);
+
+    let counter = 0;
+    for (const term of allTerms) {
+      if (!term || term.length < 2) continue;
+
+      const escapedTerm = term.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+      const isCJK = /[\u4e00-\u9fff\u3400-\u4dbf]/.test(term);
+      
+      let regex: RegExp;
+      if (isCJK) {
+        regex = new RegExp(escapedTerm, 'g');
+      } else {
+        // Match word boundaries safely for Latin-based strings (Vietnamese)
+        // using lookarounds to handle diacritics
+        const charBoundary = '(?<![a-zA-Z0-9àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđÀÁẠẢÃÂẦẤẬẨẪĂẰẮẶẲẴÈÉẸẺẼÊỀẾỆỂỄÌÍỊỈĨÒÓỌỎÕÔỒỐỘỔỖƠỜỚỢỞỠÙÚỤỦŨƯỪỨỰỬỮỲÝỴỶỸĐ])';
+        const charBoundaryAfter = '(?![a-zA-Z0-9àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđÀÁẠẢÃÂẦẤẬẨẪĂẰẮẶẲẴÈÉẸẺẼÊỀẾỆỂỄÌÍỊỈĨÒÓỌỎÕÔỒỐỘỔỖƠỜỚỢỞỠÙÚỤỦŨƯỪỨỰỬỮỲÝỴỶỸĐ])';
+        regex = new RegExp(`${charBoundary}${escapedTerm}${charBoundaryAfter}`, 'gi');
+      }
+
+      maskedText = maskedText.replace(regex, (match) => {
+        const ph = `__NSFW_TAG_${counter++}__`;
+        
+        let translatedValue = match;
+        const lowerMatch = match.toLowerCase();
+        if (NSFW_LOCAL_DICTIONARY[match]) {
+          translatedValue = NSFW_LOCAL_DICTIONARY[match];
+        } else if (NSFW_LOCAL_DICTIONARY[lowerMatch]) {
+          translatedValue = NSFW_LOCAL_DICTIONARY[lowerMatch];
+        } else {
+          // Substring lookup as fallback
+          const matchedKey = dictionaryKeys.find(k => k.toLowerCase() === lowerMatch);
+          if (matchedKey) {
+            translatedValue = NSFW_LOCAL_DICTIONARY[matchedKey];
+          }
+        }
+
+        replacements.push({
+          placeholder: ph,
+          originalValue: match,
+          translatedValue
+        });
+
+        return ph;
+      });
+    }
+  }
+
+  return { maskedText, replacements };
+}
+
+export function unmaskContentForSafety(text: string, replacements: SafetyMaskReplacement[]): string {
+  let unmaskedText = text;
+  
+  // Sort replacements descending by placeholder length to avoid sub-string replacement clashes
+  const sorted = [...replacements].sort((a, b) => b.placeholder.length - a.placeholder.length);
+
+  for (const rep of sorted) {
+    // Handle potential whitespace inside underscores generated by AI formatting
+    let cleanPh = rep.placeholder.replace(/_/g, '\\s*_\\s*');
+    if (cleanPh.startsWith('\\s*')) {
+      cleanPh = cleanPh.substring(3);
+    }
+    if (cleanPh.endsWith('\\s*')) {
+      cleanPh = cleanPh.substring(0, cleanPh.length - 3);
+    }
+    const regex = new RegExp(cleanPh, 'gi');
+    unmaskedText = unmaskedText.replace(regex, rep.translatedValue);
+  }
+
+  return unmaskedText;
+}
+
 // ─── Code Block Masking Utilities ───
 interface CodeBlockMaskMap {
   [placeholder: string]: string;
 }
 
-function maskCodeBlocks(text: string): { maskedText: string; map: CodeBlockMaskMap } {
+async function maskCodeBlocks(
+  text: string,
+  config: ProxySettings,
+  targetLang: string,
+  sourceLang: string,
+  signal?: AbortSignal,
+  glossary?: GlossaryEntry[],
+  mvuDictionary?: Record<string, string>
+): Promise<{ maskedText: string; map: CodeBlockMaskMap }> {
   const map: CodeBlockMaskMap = {};
   let maskedText = text;
   let counter = 0;
@@ -2639,21 +3058,187 @@ function maskCodeBlocks(text: string): { maskedText: string; map: CodeBlockMaskM
   // Pattern to find <style>...</style> blocks
   const styleRegex = /<style\b([^>]*)>([\s\S]*?)<\/style>/gi;
 
-  // Replace script blocks
-  maskedText = maskedText.replace(scriptRegex, (match, attrs, content) => {
-    if (!content.trim()) return match;
-    const ph = `__PROTECTED_SCRIPT_${counter++}__`;
-    map[ph] = content;
-    return `<script${attrs}>${ph}</script>`;
-  });
+  interface CodeBlockMatch {
+    fullMatch: string;
+    attrs: string;
+    content: string;
+    type: 'script' | 'style';
+    placeholder: string;
+  }
+  
+  const matches: CodeBlockMatch[] = [];
+  
+  // Find script blocks
+  let match;
+  while ((match = scriptRegex.exec(maskedText)) !== null) {
+    const fullMatch = match[0];
+    const attrs = match[1];
+    const content = match[2];
+    if (content.trim()) {
+      const placeholder = `__PROTECTED_SCRIPT_${counter++}__`;
+      matches.push({ fullMatch, attrs, content, type: 'script', placeholder });
+    }
+  }
+  
+  // Find style blocks
+  while ((match = styleRegex.exec(maskedText)) !== null) {
+    const fullMatch = match[0];
+    const attrs = match[1];
+    const content = match[2];
+    if (content.trim()) {
+      const placeholder = `__PROTECTED_STYLE_${counter++}__`;
+      matches.push({ fullMatch, attrs, content, type: 'style', placeholder });
+    }
+  }
 
-  // Replace style blocks
-  maskedText = maskedText.replace(styleRegex, (match, attrs, content) => {
-    if (!content.trim()) return match;
-    const ph = `__PROTECTED_STYLE_${counter++}__`;
-    map[ph] = content;
-    return `<style${attrs}>${ph}</style>`;
-  });
+  // Surgically translate the CJK contents of script/style blocks
+  for (const m of matches) {
+    let translatedContent = m.content;
+    
+    try {
+      const tokens = extractCJKTokens(m.content);
+      if (tokens.length > 0) {
+        // 1. Apply local glossary / MVU dictionary translations first to save API tokens
+        for (const token of tokens) {
+          const trimmed = token.text.trim();
+          
+          // Check MVU dictionary
+          if (mvuDictionary && mvuDictionary[trimmed]) {
+            token.translated = mvuDictionary[trimmed];
+            continue;
+          }
+          
+          // Check Glossary
+          if (glossary) {
+            const match = glossary.find(g => g.source.trim() === trimmed);
+            if (match && match.target.trim()) {
+              token.translated = match.target.trim();
+              continue;
+            }
+          }
+        }
+
+        const pendingTokens = tokens.filter(t => !t.translated);
+        if (pendingTokens.length > 0) {
+          console.log(`[maskCodeBlocks] Surgically translating ${pendingTokens.length} CJK tokens (out of ${tokens.length} total) in ${m.type} block...`);
+          
+          let glossaryPrompt = '';
+          if (glossary && glossary.length > 0) {
+            const terms = glossary
+              .filter(g => g.source.trim() && g.target.trim())
+              .map(g => `  "${g.source}" → "${g.target}"`)
+              .join('\n');
+            if (terms) {
+              glossaryPrompt = `\n\nGlossary terms (use these translations if they appear in text):\n${terms}`;
+            }
+          }
+          
+          let mvuPrompt = '';
+          if (mvuDictionary && Object.keys(mvuDictionary).length > 0) {
+            const terms = Object.entries(mvuDictionary)
+              .filter(([k, v]) => k && v && k !== v)
+              .map(([k, v]) => `  "${k}" → "${v}"`)
+              .join('\n');
+            if (terms) {
+              mvuPrompt = `\n\nMVU variable mappings (use these translations if they appear in text):\n${terms}`;
+            }
+          }
+
+          const BATCH_SIZE = 80;
+          const systemPrompt = `You are a surgical translation tool. Your job is to translate CJK strings into ${targetLang} exactly line-by-line.
+You will receive a list of items formatted as "#{id}\t{text}".
+Return ONLY the translated items in the exact same format "#{id}\t{translated_text}".
+Do NOT output any conversational text or markdown blocks. Do NOT skip items.${glossaryPrompt}${mvuPrompt}`;
+
+          for (let i = 0; i < pendingTokens.length; i += BATCH_SIZE) {
+            const batch = pendingTokens.slice(i, i + BATCH_SIZE);
+            const payload = batch.map(t => `#${t.id}\t${t.text}`).join('\n');
+            const rawResult = await callProvider(config, systemPrompt, payload, signal);
+            
+            const parsed = extractTranslationFromResponse(rawResult);
+            const cleanedResult = parsed.translation || rawResult;
+
+            const lines = cleanedResult.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+            const parsedTranslations: { id?: number; text: string }[] = [];
+            
+            for (const line of lines) {
+              const matchLine = line.match(/^(?:[^\d#]*#?\s*)?(\d+)[\t \.\:\-\]\)]+(.+)$/);
+              if (matchLine) {
+                parsedTranslations.push({ id: parseInt(matchLine[1], 10), text: matchLine[2].trim() });
+              } else {
+                parsedTranslations.push({ text: line });
+              }
+            }
+
+            if (parsedTranslations.length === batch.length) {
+              // Positional fallback mapping (most robust if line count matches)
+              for (let idx = 0; idx < batch.length; idx++) {
+                const token = batch[idx];
+                let translatedText = parsedTranslations[idx].text;
+                
+                if (translatedText.startsWith(token.text)) {
+                  translatedText = translatedText.substring(token.text.length).trim();
+                  translatedText = translatedText.replace(/^[\s\:\-\=\>\t\(\)\[\]\{\}]+/, '').trim();
+                }
+                const parenthesized = `(${token.text})`;
+                if (translatedText.endsWith(parenthesized)) {
+                  translatedText = translatedText.substring(0, translatedText.length - parenthesized.length).trim();
+                }
+                const bracketed = `[${token.text}]`;
+                if (translatedText.endsWith(bracketed)) {
+                  translatedText = translatedText.substring(0, translatedText.length - bracketed.length).trim();
+                }
+                token.translated = translatedText;
+              }
+            } else {
+              // Match strictly by ID
+              for (const parsed of parsedTranslations) {
+                if (parsed.id !== undefined) {
+                  const token = batch.find(t => t.id === parsed.id);
+                  if (token) {
+                    let translatedText = parsed.text;
+                    if (translatedText.startsWith(token.text)) {
+                      translatedText = translatedText.substring(token.text.length).trim();
+                      translatedText = translatedText.replace(/^[\s\:\-\=\>\t\(\)\[\]\{\}]+/, '').trim();
+                    }
+                    const parenthesized = `(${token.text})`;
+                    if (translatedText.endsWith(parenthesized)) {
+                      translatedText = translatedText.substring(0, translatedText.length - parenthesized.length).trim();
+                    }
+                    const bracketed = `[${token.text}]`;
+                    if (translatedText.endsWith(bracketed)) {
+                      translatedText = translatedText.substring(0, translatedText.length - bracketed.length).trim();
+                    }
+                    token.translated = translatedText;
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        // Fill in any missing translations with original CJK to keep structural stability
+        for (const token of tokens) {
+          if (!token.translated || token.translated.trim() === '') {
+            token.translated = token.text;
+          }
+        }
+        
+        translatedContent = reinsertTranslations(m.content, tokens);
+      }
+    } catch (err) {
+      console.warn(`[maskCodeBlocks] Failed to surgically translate ${m.type} block:`, err);
+    }
+    
+    map[m.placeholder] = translatedContent;
+    
+    // Replace in maskedText safely using indexOf
+    const idx = maskedText.indexOf(m.fullMatch);
+    if (idx !== -1) {
+      const replacement = `<${m.type}${m.attrs}>${m.placeholder}</${m.type}>`;
+      maskedText = maskedText.slice(0, idx) + replacement + maskedText.slice(idx + m.fullMatch.length);
+    }
+  }
 
   return { maskedText, map };
 }
@@ -2698,28 +3283,41 @@ export async function translateText(
   if (!text || text.trim() === '') return '';
 
   // 0. Mask code blocks (<script>, <style>) before translation
-  const { maskedText: codeMasked, map: codeMap } = maskCodeBlocks(text);
+  const { maskedText: codeMasked, map: codeMap } = await maskCodeBlocks(
+    text,
+    config,
+    targetLang,
+    sourceLang,
+    signal,
+    glossary,
+    mvuDictionary
+  );
   // 1. Mask secrets (API keys, tokens, passwords) before translation
   const { maskedText: secretMasked, map: secretMap } = maskSecrets(codeMasked);
   // 2. Mask URLs/image links to prevent AI from translating them
   const { maskedText, map: urlMap } = maskUrls(secretMasked);
+
+  // 2.5. Mask safety/NSFW tags and keywords before translation
+  const { maskedText: safetyMaskedText, replacements: safetyReplacements } = maskContentForSafety(maskedText, targetLang);
 
   const isExpert = config.expertMode;
   // Detect Mod Mode: output can legitimately be much larger than input (e.g. 200-word prompt → 2000+ words)
   // so all bloat guards must be bypassed
   const isModMode = customPrompt?.includes('[CRITICAL: STANDALONE MODIFICATION & REWRITE MODE]') || false;
   const isCodeHeavy = fieldName.toLowerCase().includes('regex') || fieldName.toLowerCase().includes('code') || fieldName.toLowerCase().includes('script') || fieldName.toLowerCase().includes('helper');
-  // Adaptive chunk size: code-heavy content cần chunk nhỏ hơn
-  // vì AI output limit không đủ cho 100K chars code 1:1
+  const hasSafetyTags = text.includes('<|no-trans|>') || text.includes('</null>');
+
+  // Adaptive chunk size: code-heavy content or safety tags need smaller chunks to prevent truncation
   let effectiveChunkSize = chunkSize && chunkSize > 0 ? chunkSize : undefined;
-  if (!effectiveChunkSize && isCodeHeavy) {
-    effectiveChunkSize = 30000; // ~10K tokens output — an toàn cho mọi model
+  if (!effectiveChunkSize && (isCodeHeavy || hasSafetyTags)) {
+    effectiveChunkSize = 30000; // ~10K tokens output — safe for all models
   }
-  const chunks = chunkText(maskedText, effectiveChunkSize, config.maxTokens);
+  const chunks = chunkText(safetyMaskedText, effectiveChunkSize, config.maxTokens);
 
   if (onChunksReady) {
     const unmaskedChunks = chunks.map(chunk => {
-      let unmasked = unmaskUrls(chunk, urlMap);
+      let unmasked = unmaskContentForSafety(chunk, safetyReplacements);
+      unmasked = unmaskUrls(unmasked, urlMap);
       unmasked = unmaskSecrets(unmasked, secretMap);
       unmasked = unmaskCodeBlocks(unmasked, codeMap);
       return unmasked;
@@ -2738,9 +3336,10 @@ export async function translateText(
     const result = await translateChunk(
       chunks[0], 0, 1, fieldName, config, targetLang, sourceLang, system, user, signal, isModMode
     );
-    let cleaned = cleanTranslationResponse(maskedText, result, isExpert, false);
+    let cleaned = cleanTranslationResponse(safetyMaskedText, result, isExpert, false);
     cleaned = unmaskUrls(cleaned, urlMap);  // Unmask URLs
     cleaned = unmaskSecrets(cleaned, secretMap); // Unmask secrets before residual check
+    cleaned = unmaskContentForSafety(cleaned, safetyReplacements); // Unmask safety tags
     
     if (isCodeHeavy) {
       const structuralTrunc = detectStructuralTruncation(maskedText, cleaned);
@@ -3042,6 +3641,7 @@ export async function translateText(
   const rawResult = verifiedChunks.join(joiner);
   let cleaned = unmaskUrls(rawResult, urlMap);
   cleaned = unmaskSecrets(cleaned, secretMap);
+  cleaned = unmaskContentForSafety(cleaned, safetyReplacements);
   
   if (isCodeHeavy) {
     const structuralTrunc = detectStructuralTruncation(maskedText, cleaned);

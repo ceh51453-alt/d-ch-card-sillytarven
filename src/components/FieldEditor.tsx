@@ -34,7 +34,7 @@ function CopyButton({ text }: { text: string }) {
 }
 
 const TAB_IDS: (FieldGroup | 'all')[] = [
-  'all', 'core', 'messages', 'lorebook', 'lorebook_keys', 'system', 'creator', 'regex', 'depth_prompt', 'tavern_helper',
+  'all', 'core', 'messages', 'lorebook', 'lorebook_keys', 'system', 'creator', 'depth_prompt', 'tavern_helper',
 ];
 
 function useTabLabels() {
@@ -1535,7 +1535,9 @@ export default function FieldEditor() {
   const [searchQuery, setSearchQuery] = useState('');
 
   const filteredFields = useMemo(() => {
-    let result = activeTab === 'all' ? fields : fields.filter((f) => f.group === activeTab);
+    let result = activeTab === 'all' 
+      ? fields.filter((f) => f.group !== 'regex') 
+      : fields.filter((f) => f.group === activeTab);
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       result = result.filter(
@@ -1551,9 +1553,11 @@ export default function FieldEditor() {
 
   // Count fields per tab
   const tabCounts = useMemo(() => {
-    const counts: Record<string, number> = { all: fields.length };
+    const counts: Record<string, number> = { all: fields.filter(f => f.group !== 'regex').length };
     for (const f of fields) {
-      counts[f.group] = (counts[f.group] || 0) + 1;
+      if (f.group !== 'regex') {
+        counts[f.group] = (counts[f.group] || 0) + 1;
+      }
     }
     return counts;
   }, [fields]);

@@ -89,7 +89,9 @@ export default function CustomTranslatePanel() {
           input,
           proxy,
           translationConfig.targetLanguage,
-          abortRef.current.signal
+          abortRef.current.signal,
+          translationConfig.glossary,
+          translationConfig.enableMvuSync ? translationConfig.mvuDictionary : undefined
         );
         result = sResult.translated;
         

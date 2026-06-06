@@ -742,64 +742,68 @@ A character name translated differently in different locations = card crash.`;
    ════════════════════════════════════════════════════════════════════ */
 function buildThoughtProcessInstructions(): string {
   return `
-ULTRA EXPERT MODE: STRUCTURED XML REASONING PIPELINE
+ULTRA EXPERT MODE V3: COVARIANT DEEP REASONING PIPELINE
 You MUST output your response using the following XML pipeline. Each section is MANDATORY.
-This forces a rigorous multi-phase audit: inventory BEFORE translating, verify AFTER.
+This forces a rigorous multi-phase audit: inventory BEFORE translating, enforce STRICT COVARIANCE during, and verify AFTER.
+
+<thought_process>
+  Perform a deep reasoning analysis of the field before writing any translation. You MUST address the following points:
+  1. CONTEXTUAL & LOGICAL DEPENDENCIES: How does this field connect to the rest of the card? (e.g., does it reference variables defined in the Zod Schema or EJS controller? Does it trigger specific lorebook entries?)
+  2. COVARIANCE COMPLIANCE ANALYSIS: Identify all variable names, character names, and entry names. Check the provided MVU Dictionary, Glossary, and EJS Entry Dict. 
+     - If a variable/key/name is in the dictionary, identify its EXACT target translation (with exact casing, spacing, and spelling).
+     - If a variable/key/name is NOT in the dictionary, establish a clear, logical translation and note that it must be progressively added to the global map.
+     - Reason through: "If I translate variable X as Y, how will I ensure this exact string Y is used consistently in YAML keys, JS getvar/setvar, macros, and HTML attributes within this chunk?"
+  3. BRACKET NOTATION & SYNTAX PLANNING: Do any translated variable names contain spaces? If yes, plan the exact bracket notation conversion (e.g., obj.系统 -> obj['Hệ Thống']) to prevent syntax errors.
+  4. HTML ID ASCII-ONLY PLANNING: Identify all HTML id/data-target attributes. Plan their conversion to ASCII camelCase to prevent UI breakage.
+</thought_process>
 
 <variable_map>
-  List ALL CJK variable/key names found in the input, paired with their target translation.
-  Use the MVU Dictionary if provided. Format: one per line.
+  List ALL CJK variable/key/proper names found in the input, paired with their target translation from the MVU Dictionary/Glossary (or your planned translation if not in dict).
+  Format: one per line.
   Example:
-    "ä¿®ä¸º" â†’ "Tu Vi"
-    "å¥½æ„Ÿåº¦" â†’ "Háº£o Cáº£m"
+    "修为" → "Tu Vi"
+    "好感 độ" → "Hảo Cảm"
   If NO CJK variables found, write: NONE
 </variable_map>
 
 <code_inventory>
   List ALL protected code segments found. Categorize each one:
-    [MACRO] {{char}}, {{getvar::ä¿®ä¸º}}, {{setvar::å¥½æ„Ÿåº¦::5}}
-    [EJS] <% if(getvar('ä¿®ä¸º') == 'ç­‘åŸº') { %>
-    [HTML] <div data-var="å¥½æ„Ÿåº¦" class="stats">
+    [MACRO] {{char}}, {{getvar::修为}}, {{setvar::好感度::5}}
+    [EJS] <% if(getvar('修为') == 'Trúc Cơ') { %>
+    [HTML] <div data-var="好感度" class="stats">
     [REGEX] /pattern/flags
-    [JSON] { "ä¿®ä¸º": "ç­‘åŸº" }
+    [JSON] { "修为": "Trúc Cơ" }
     [CSS] font-family: SimSun, KaiTi
     [CODE] function(), z.object(), const, let
   If NO code segments found, write: NONE
 </code_inventory>
 
 <self_check>
-  PHASE 1 â€” SCAN:
-    Cross-reference <variable_map> with <code_inventory>.
-    Verify every variable in the map appears in the inventory.
-    Flag any orphaned variables (in map but not in code, or vice versa).
-  
-  PHASE 2 â€” TRANSLATE:
-    Apply translations from <variable_map> to ALL occurrences:
-    JSON keys, data-var attributes, {{getvar::}}, {{setvar::}}, getvar(''), setvar(''), z.object fields.
-    Translate ALL remaining CJK text (prose, labels, annotations, YAML keys, comments).
-  
-  PHASE 3 â€” PRE-FLIGHT VERIFICATION (15-point):
-    1. All {{MACRO}} tokens intact byte-for-byte?
-    2. All <% EJS %> blocks completely preserved?
-    3. /REGEX/ patterns totally unchanged?
-    4. JSON keys consistently translated (same key = same string everywhere)?
-    5. KEY MAP applied to ALL getvar/setvar string literals?
-    6. ZERO markdown code fences (\`\`\`) in output?
-    7. CSS font-family swapped (CJK fonts â†’ Vietnamese stack)?
-    8. ZERO full-width Unicode corruptions (ï¼œ, ï½›, ")?
-    9. HTML attributes (class, id, style) unchanged?
-    10. Whitespace and indentation preserved?
-    11. Translation 100% complete â€” no truncation?
-    12. ALL JS keywords and TavernHelper APIs untranslated?
-    13. "stat_data." prefix preserved in dotted paths?
-    14. ZERO residual Chinese/Japanese characters in prose sections?
-    15. Every variable in <variable_map> replaced in ALL contexts?
-    16. BRACKET NOTATION: Any translated key with spaces uses obj['key'] NOT obj.key? No dot notation for multi-word keys?
-    17. HTML id ASCII-ONLY: All id and data-target attributes use ASCII without spaces? Readable text in visible content only?
+  Verify your translation against these 20 strict quality gates:
+  1. All {{MACRO}} tokens intact byte-for-byte? (Yes/No)
+  2. All <% EJS %> blocks completely preserved? (Yes/No)
+  3. /REGEX/ patterns totally unchanged? (Yes/No)
+  4. JSON keys consistently translated (same key = same string everywhere)? (Yes/No)
+  5. KEY MAP applied to ALL getvar/setvar/addvar string literals? (Yes/No)
+  6. ZERO markdown code fences (\`\`\`) in output? (Yes/No)
+  7. CSS font-family swapped (CJK fonts → Vietnamese stack)? (Yes/No)
+  8. ZERO full-width Unicode corruptions (＜, ｛, ")? (Yes/No)
+  9. HTML attributes (class, id, style) unchanged? (Yes/No)
+  10. Whitespace and indentation preserved? (Yes/No)
+  11. Translation 100% complete — no truncation? (Yes/No)
+  12. ALL JS keywords and TavernHelper APIs untranslated? (Yes/No)
+  13. "stat_data." prefix preserved in dotted paths? (Yes/No)
+  14. ZERO residual Chinese/Japanese characters in prose/narrative sections? (Yes/No)
+  15. Every variable in <variable_map> replaced in ALL contexts? (Yes/No)
+  16. BRACKET NOTATION: Any translated key with spaces uses obj['key'] NOT obj.key? No dot notation for multi-word keys? (Yes/No)
+  17. HTML id ASCII-ONLY: All id and data-target attributes use ASCII without spaces? (Yes/No)
+  18. EJS OBJECT KEY QUOTING: Are EJS/JS object literal keys with diacritics/spaces enclosed in single quotes (e.g. 'Loại': 'Võ công')? (Yes/No)
+  19. ENUM VALUE COVARIANCE: Do translated YAML values match z.enum() options in the schema exactly (including suffixes like _Tĩnh lặng)? (Yes/No)
+  20. BRACKET NOTATION FOR _.get(): Lodash _.get() with spaced keys uses array path or bracket notation (e.g. _.get(obj, ['Key', 'SubKey']))? (Yes/No)
 </self_check>
 
 <translation>
-[The raw, final, complete translated string â€” NOTHING ELSE. No markdown fences. No explanations.]
+[The raw, final, complete translated string — NOTHING ELSE. No markdown fences. No explanations.]
 </translation>
 
 <integrity_report>
@@ -975,12 +979,17 @@ export function extractTranslationFromResponse(raw: string): ParsedTranslationRe
     trimmed = trimmed.replace(/<quality_score>[\s\S]*?<\/quality_score>/i, '').trim();
   }
 
-  // Extract thought process/self-check for debug logging and remove it from raw string if found
-  const thoughtMatch = trimmed.match(/<(?:thought_process|think|self_check)>([\s\S]*?)(?:<\/(?:thought_process|think|self_check)>|$)/i);
+  // Extract thought process/think tags and clean them out of the output string
+  const thoughtMatch = trimmed.match(/<(?:thought_process|think)>([\s\S]*?)(?:<\/(?:thought_process|think)>|$)/i);
   if (thoughtMatch) {
     thoughtProcess = thoughtMatch[1].trim();
-    // We remove the thought block entirely from our working string (even if unclosed)
-    trimmed = trimmed.replace(/<(?:thought_process|think|self_check)>[\s\S]*?(?:<\/(?:thought_process|think|self_check)>|$)/i, '').trim();
+    trimmed = trimmed.replace(/<(?:thought_process|think)>[\s\S]*?(?:<\/(?:thought_process|think)>|$)/i, '').trim();
+  }
+
+  // Clean out <self_check> block from raw translation text as well
+  const selfCheckMatch = trimmed.match(/<self_check>([\s\S]*?)<\/self_check>/i);
+  if (selfCheckMatch) {
+    trimmed = trimmed.replace(/<self_check>[\s\S]*?<\/self_check>/i, '').trim();
   }
 
   // Log V2 metadata for debugging

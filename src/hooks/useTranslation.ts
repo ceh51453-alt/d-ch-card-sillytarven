@@ -22,6 +22,74 @@ import type { FieldGroup, FieldGroupConfig, TranslationField } from '../types/ca
  * completed field's `original` becomes its modded value (translated cleared).
  * This ensures subsequent mod operations scan the updated card as the base.
  */
+/**
+ * Sort fields to enforce Multi-Pass Covariant Translation.
+ * Precedence: Phase 1 (Technical: Schema/Initvars) -> Phase 2 (Interaction: Regex/Keys) -> Phase 3 (Narrative & Prose)
+ */
+function sortFieldsForCovariance(fields: TranslationField[], enableMvuSync: boolean) {
+  if (enableMvuSync) {
+    const getFieldPhase = (f: TranslationField): number => {
+      // Phase 1: Technical Infrastructure (Zod schema & initvars)
+      if (f.group === 'tavern_helper' || f.entryType === 'initvar') {
+        return 1;
+      }
+      // Phase 2: Interaction Logic (Regex & Lorebook Keys)
+      if (f.group === 'regex' || f.group === 'lorebook_keys') {
+        return 2;
+      }
+      // Phase 3: Narrative, Greetings & Prose
+      return 3;
+    };
+
+    const MVU_GROUP_ORDER: Record<string, number> = {
+      tavern_helper: 0,
+      lorebook: 1,
+      lorebook_keys: 2,
+      regex: 3,
+      core: 4,
+      messages: 5,
+      system: 6,
+      depth_prompt: 7,
+      creator: 8
+    };
+
+    const TYPE_ORDER: Record<string, number> = {
+      initvar: 0,
+      controller: 1,
+      mvu_logic: 2,
+      rules: 3,
+      narrative: 4,
+      other: 5
+    };
+
+    fields.sort((a, b) => {
+      const phaseA = getFieldPhase(a);
+      const phaseB = getFieldPhase(b);
+      if (phaseA !== phaseB) return phaseA - phaseB;
+
+      const orderA = MVU_GROUP_ORDER[a.group] ?? 99;
+      const orderB = MVU_GROUP_ORDER[b.group] ?? 99;
+      if (orderA !== orderB) return orderA - orderB;
+
+      if (a.group === 'lorebook' || a.group === 'lorebook_keys') {
+        const tA = TYPE_ORDER[a.entryType || 'other'] ?? 99;
+        const tB = TYPE_ORDER[b.entryType || 'other'] ?? 99;
+        if (tA !== tB) return tA - tB;
+      }
+      return 0;
+    });
+  } else {
+    // Non-MVU sort: move findRegex fields before narrative/system fields
+    const hasFindRegex = fields.some(f => f.path.includes('findRegex'));
+    if (hasFindRegex) {
+      const findRegexFields = fields.filter(f => f.path.includes('findRegex'));
+      const otherFields = fields.filter(f => !f.path.includes('findRegex'));
+      fields.length = 0;
+      fields.push(...findRegexFields, ...otherFields);
+    }
+  }
+}
+
 function bakeModdedFieldsIntoCard() {
   const state = useStore.getState();
   const currentFields = state.fields;
@@ -104,44 +172,7 @@ export function useTranslation() {
       }
     }
 
-    if (store.translationConfig.enableMvuSync) {
-      const MVU_GROUP_ORDER: Record<string, number> = {
-        core: 0,
-        messages: 1,
-        system: 2,
-        lorebook: 3,
-        lorebook_keys: 4,
-        depth_prompt: 5,
-        regex: 6,
-        creator: 7,
-        tavern_helper: 8,
-      };
-      
-      const TYPE_ORDER: Record<string, number> = {
-        initvar: 0,
-        controller: 1,
-        mvu_logic: 2,
-        rules: 3,
-        narrative: 4,
-        other: 5
-      };
-
-      mergedFields.sort((a, b) => {
-        const orderA = MVU_GROUP_ORDER[a.group] ?? 99;
-        const orderB = MVU_GROUP_ORDER[b.group] ?? 99;
-        
-        if (orderA !== orderB) return orderA - orderB;
-        
-        // If both are lorebook or lorebook_keys, sort by entryType so initvar is at the top
-        if (a.group === 'lorebook' || a.group === 'lorebook_keys') {
-          const tA = TYPE_ORDER[a.entryType || 'other'] ?? 99;
-          const tB = TYPE_ORDER[b.entryType || 'other'] ?? 99;
-          if (tA !== tB) return tA - tB;
-        }
-        
-        return 0; // maintain relative order
-      });
-    }
+    sortFieldsForCovariance(mergedFields, Boolean(store.translationConfig.enableMvuSync));
 
     store.setFields(mergedFields);
     return mergedFields;
@@ -299,7 +330,9 @@ export function useTranslation() {
           field.original,
           effectiveProxy,
           store.translationConfig.targetLanguage,
-          abortRef.current?.signal
+          abortRef.current?.signal,
+          store.translationConfig.glossary,
+          currentMvuDict
         );
         translated = sResult.translated;
         
@@ -1031,51 +1064,13 @@ export function useTranslation() {
 
 
 
-    // ═══ Reorder fields for Strategy B (MVU-optimized) ═══
-    // (Already sorted in prepareFields, but we ensure consistency here)
+    sortFieldsForCovariance(fields, Boolean(store.translationConfig.enableMvuSync));
     if (store.translationConfig.enableMvuSync) {
-      const MVU_GROUP_ORDER: Record<string, number> = {
-        core: 0,
-        messages: 1,
-        system: 2,
-        lorebook: 3,
-        lorebook_keys: 4,
-        depth_prompt: 5,
-        regex: 6,
-        creator: 7,
-        tavern_helper: 8,
-      };
-      const TYPE_ORDER: Record<string, number> = {
-        initvar: 0,
-        controller: 1,
-        mvu_logic: 2,
-        rules: 3,
-        narrative: 4,
-        other: 5
-      };
-      fields.sort((a, b) => {
-        const orderA = MVU_GROUP_ORDER[a.group] ?? 99;
-        const orderB = MVU_GROUP_ORDER[b.group] ?? 99;
-        if (orderA !== orderB) return orderA - orderB;
-        if (a.group === 'lorebook' || a.group === 'lorebook_keys') {
-          const tA = TYPE_ORDER[a.entryType || 'other'] ?? 99;
-          const tB = TYPE_ORDER[b.entryType || 'other'] ?? 99;
-          if (tA !== tB) return tA - tB;
-        }
-        return 0;
-      });
-      store.addLog('info', '📋 Strategy B: Reordered fields → core → messages → system → lorebook → regex → TavernHelper');
+      store.addLog('info', '📋 Multi-Pass Covariant Sorting applied: Phase 1 (Schema & Initvars) → Phase 2 (Regex & Keys) → Phase 3 (Narrative & Prompts)');
     } else {
-      // B1 FIX: Even without MVU, move findRegex fields BEFORE narrative/system fields.
-      // This ensures regex trigger patterns are translated first, so the regex trigger
-      // dictionary is available when translating system prompts and narrative content.
       const hasFindRegex = fields.some(f => f.path.includes('findRegex'));
       if (hasFindRegex) {
-        const findRegexFields = fields.filter(f => f.path.includes('findRegex'));
-        const otherFields = fields.filter(f => !f.path.includes('findRegex'));
-        fields.length = 0;
-        fields.push(...findRegexFields, ...otherFields);
-        store.addLog('info', `📋 findRegex fields moved to front (${findRegexFields.length} patterns → translate before narrative)`);
+        store.addLog('info', `📋 findRegex fields moved to front (translate before narrative)`);
       }
     }
 
