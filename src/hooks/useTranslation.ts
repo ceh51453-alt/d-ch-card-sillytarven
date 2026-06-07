@@ -27,67 +27,56 @@ import type { FieldGroup, FieldGroupConfig, TranslationField } from '../types/ca
  * Precedence: Phase 1 (Technical: Schema/Initvars) -> Phase 2 (Interaction: Regex/Keys) -> Phase 3 (Narrative & Prose)
  */
 function sortFieldsForCovariance(fields: TranslationField[], enableMvuSync: boolean) {
-  if (enableMvuSync) {
-    const getFieldPhase = (f: TranslationField): number => {
-      // Phase 1: Technical Infrastructure (Zod schema & initvars)
-      if (f.group === 'tavern_helper' || f.entryType === 'initvar') {
-        return 1;
-      }
-      // Phase 2: Interaction Logic (Regex & Lorebook Keys)
-      if (f.group === 'regex' || f.group === 'lorebook_keys') {
-        return 2;
-      }
-      // Phase 3: Narrative, Greetings & Prose
-      return 3;
-    };
-
-    const MVU_GROUP_ORDER: Record<string, number> = {
-      tavern_helper: 0,
-      lorebook: 1,
-      lorebook_keys: 2,
-      regex: 3,
-      core: 4,
-      messages: 5,
-      system: 6,
-      depth_prompt: 7,
-      creator: 8
-    };
-
-    const TYPE_ORDER: Record<string, number> = {
-      initvar: 0,
-      controller: 1,
-      mvu_logic: 2,
-      rules: 3,
-      narrative: 4,
-      other: 5
-    };
-
-    fields.sort((a, b) => {
-      const phaseA = getFieldPhase(a);
-      const phaseB = getFieldPhase(b);
-      if (phaseA !== phaseB) return phaseA - phaseB;
-
-      const orderA = MVU_GROUP_ORDER[a.group] ?? 99;
-      const orderB = MVU_GROUP_ORDER[b.group] ?? 99;
-      if (orderA !== orderB) return orderA - orderB;
-
-      if (a.group === 'lorebook' || a.group === 'lorebook_keys') {
-        const tA = TYPE_ORDER[a.entryType || 'other'] ?? 99;
-        const tB = TYPE_ORDER[b.entryType || 'other'] ?? 99;
-        if (tA !== tB) return tA - tB;
-      }
-      return 0;
-    });
-  } else {
-    // Non-MVU sort: move findRegex fields before narrative/system fields
-    const hasFindRegex = fields.some(f => f.path.includes('findRegex'));
-    if (hasFindRegex) {
-      const findRegexFields = fields.filter(f => f.path.includes('findRegex'));
-      const otherFields = fields.filter(f => !f.path.includes('findRegex'));
-      fields.length = 0;
-      fields.push(...findRegexFields, ...otherFields);
+  const getFieldPhase = (f: TranslationField): number => {
+    // Phase 1: Technical Infrastructure (Zod schema & initvars)
+    if (f.group === 'tavern_helper' || f.entryType === 'initvar') {
+      return 1;
     }
-  }
+    // Phase 2: Interaction Logic (Regex & Lorebook Keys)
+    if (f.group === 'regex' || f.group === 'lorebook_keys') {
+      return 2;
+    }
+    // Phase 3: Narrative, Greetings & Prose
+    return 3;
+  };
+
+  const MVU_GROUP_ORDER: Record<string, number> = {
+    tavern_helper: 0,
+    lorebook: 1,
+    lorebook_keys: 2,
+    regex: 3,
+    core: 4,
+    messages: 5,
+    system: 6,
+    depth_prompt: 7,
+    creator: 8
+  };
+
+  const TYPE_ORDER: Record<string, number> = {
+    initvar: 0,
+    controller: 1,
+    mvu_logic: 2,
+    rules: 3,
+    narrative: 4,
+    other: 5
+  };
+
+  fields.sort((a, b) => {
+    const phaseA = getFieldPhase(a);
+    const phaseB = getFieldPhase(b);
+    if (phaseA !== phaseB) return phaseA - phaseB;
+
+    const orderA = MVU_GROUP_ORDER[a.group] ?? 99;
+    const orderB = MVU_GROUP_ORDER[b.group] ?? 99;
+    if (orderA !== orderB) return orderA - orderB;
+
+    if (a.group === 'lorebook' || a.group === 'lorebook_keys') {
+      const tA = TYPE_ORDER[a.entryType || 'other'] ?? 99;
+      const tB = TYPE_ORDER[b.entryType || 'other'] ?? 99;
+      if (tA !== tB) return tA - tB;
+    }
+    return 0;
+  });
 }
 
 function bakeModdedFieldsIntoCard() {
@@ -200,7 +189,7 @@ export function useTranslation() {
     // vì AI output limit không đủ cho 100K chars code 1:1
     const isRegexOrCodeField = field.group === 'regex' || field.group === 'tavern_helper';
     let CHUNK_THRESHOLD: number;
-    if (currentChunkSize && currentChunkSize > 0) {
+    if (currentChunkSize && currentChunkSize >= 100) {
       CHUNK_THRESHOLD = currentChunkSize;
     } else if (isRegexOrCodeField) {
       // Regex/TavernHelper: chunk nhỏ hơn vì nội dung code-heavy
@@ -2062,7 +2051,7 @@ export function useTranslation() {
           // Check if chunking is expected
           const currentMaxTokens = store.proxy.maxTokens;
           const currentChunkSize = store.translationConfig.chunkSize;
-          const CHUNK_THRESHOLD = currentChunkSize && currentChunkSize > 0
+          const CHUNK_THRESHOLD = currentChunkSize && currentChunkSize >= 100
             ? currentChunkSize
             : (currentMaxTokens && currentMaxTokens > 0 ? Math.min(Math.floor(currentMaxTokens * 3.5), 200000) : 100000);
           const isChunked = field.original.length > CHUNK_THRESHOLD;

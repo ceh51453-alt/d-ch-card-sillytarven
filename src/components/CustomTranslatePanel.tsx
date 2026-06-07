@@ -72,7 +72,7 @@ export default function CustomTranslatePanel() {
       // fallback 40K chars mặc định — an toàn cho mọi model.
       // Chunk quá lớn (>60K) dễ khiến AI chạm giới hạn max output tokens → mất đuôi.
       const currentChunkSize = translationConfig.chunkSize;
-      const CHUNK_THRESHOLD = currentChunkSize && currentChunkSize > 0
+      const CHUNK_THRESHOLD = currentChunkSize && currentChunkSize >= 100
         ? currentChunkSize
         : (proxy.maxTokens && proxy.maxTokens > 0 ? Math.min(Math.floor(proxy.maxTokens * 3.5), 200000) : 100000);
 

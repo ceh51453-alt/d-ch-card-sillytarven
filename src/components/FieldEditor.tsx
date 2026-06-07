@@ -193,7 +193,7 @@ function ChunkStatusAndResume({
 
   const currentMaxTokens = proxy.maxTokens;
   const currentChunkSize = translationConfig.chunkSize;
-  const CHUNK_THRESHOLD = currentChunkSize && currentChunkSize > 0
+  const CHUNK_THRESHOLD = currentChunkSize && currentChunkSize >= 100
     ? currentChunkSize
     : (currentMaxTokens && currentMaxTokens > 0 ? Math.min(Math.floor(currentMaxTokens * 3.5), 200000) : 100000);
 

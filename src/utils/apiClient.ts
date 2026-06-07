@@ -2894,7 +2894,7 @@ export async function translateText(
   const isCodeHeavy = fieldName.toLowerCase().includes('regex') || fieldName.toLowerCase().includes('code') || fieldName.toLowerCase().includes('script') || fieldName.toLowerCase().includes('helper');
   // Adaptive chunk size: code-heavy content cần chunk nhỏ hơn
   // vì AI output limit không đủ cho 100K chars code 1:1
-  let effectiveChunkSize = chunkSize && chunkSize > 0 ? chunkSize : undefined;
+  let effectiveChunkSize = chunkSize && chunkSize >= 100 ? chunkSize : undefined;
   if (!effectiveChunkSize && isCodeHeavy) {
     effectiveChunkSize = 30000; // ~10K tokens output — an toàn cho mọi model
   }
