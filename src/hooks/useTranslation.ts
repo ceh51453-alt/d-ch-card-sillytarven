@@ -219,10 +219,11 @@ export function useTranslation() {
 
     try {
       // Contextual keyword translation: for lorebook keys, find the already-translated content
+      // IMPORTANT: Read from store (not stale `fields` snapshot) to get fresh translated content
       let contextHint: string | undefined;
       if (field.group === 'lorebook_keys') {
         const contentPath = field.path.replace('.keys', '.content').replace('.secondary_keys', '.content');
-        const contentField = fields.find(f => f.path === contentPath);
+        const contentField = useStore.getState().fields.find(f => f.path === contentPath);
         if (contentField) {
           // Use translated content if available, else original (truncated to save tokens)
           const ctx = contentField.translated || contentField.original || '';
@@ -232,7 +233,10 @@ export function useTranslation() {
 
       // ═══ Centralized prompt building (single source of truth) ═══
       // Build entry name dictionary from already-translated lorebook name fields
-      const entryNameDict = { ...buildEntryNameDictionary(fields), ...buildRegexTriggerDictionary(fields) };
+      // IMPORTANT: Read fresh fields from store (not stale `fields` snapshot which only has pending/error)
+      // so we can see tavern_helper/lorebook fields that have already been translated to status='done'.
+      const freshFields = useStore.getState().fields;
+      const entryNameDict = { ...buildEntryNameDictionary(freshFields), ...buildRegexTriggerDictionary(freshFields) };
 
       // ═══ Collect translated schema content for fields that need variable covariance ═══
       // When translating regex, tavern_helper, or lorebook logic entries,
@@ -244,7 +248,9 @@ export function useTranslation() {
         || field.group === 'regex'
         || field.group === 'tavern_helper';
       if (needsSchema && store.translationConfig.enableMvuSync) {
-        const schemaFields = fields.filter(f =>
+        // IMPORTANT: Use fresh store fields (not stale `fields` snapshot) to find
+        // already-translated schema content — the snapshot only has pending/error fields.
+        const schemaFields = freshFields.filter(f =>
           f.group === 'tavern_helper' && f.status === 'done' && f.translated && f.translated.trim()
         );
         if (schemaFields.length > 0) {
@@ -261,7 +267,7 @@ export function useTranslation() {
         enableMvuSync: store.translationConfig.enableMvuSync,
         enableRAGContext: store.translationConfig.enableRAGContext,
         field,
-        allFields: fields,
+        allFields: freshFields,
         mvuDictionary: useStore.getState().translationConfig.mvuDictionary,
         glossary: store.translationConfig.glossary,
         customSchema: store.translationConfig.customSchema,
@@ -673,7 +679,9 @@ export function useTranslation() {
       
       // ═══ Centralized prompt building (single source of truth) ═══
       // Build entry name dictionary from already-translated lorebook name fields
-      const batchEntryNameDict = { ...buildEntryNameDictionary(store.fields), ...buildRegexTriggerDictionary(store.fields) };
+      // IMPORTANT: Read fresh fields from store (not stale closure) for covariance
+      const batchFreshFields = useStore.getState().fields;
+      const batchEntryNameDict = { ...buildEntryNameDictionary(batchFreshFields), ...buildRegexTriggerDictionary(batchFreshFields) };
 
       // ═══ Collect translated schema content for fields that need variable covariance ═══
       let batchSchemaContent: string | undefined;
@@ -683,7 +691,9 @@ export function useTranslation() {
         || f.group === 'tavern_helper'
       );
       if (batchNeedsSchema && store.translationConfig.enableMvuSync) {
-        const schemaFields = store.fields.filter(f =>
+        // IMPORTANT: Use fresh store fields (not stale closure) to find
+        // already-translated schema content for initvar covariance
+        const schemaFields = batchFreshFields.filter(f =>
           f.group === 'tavern_helper' && f.status === 'done' && f.translated && f.translated.trim()
         );
         if (schemaFields.length > 0) {
@@ -700,7 +710,7 @@ export function useTranslation() {
         enableMvuSync: store.translationConfig.enableMvuSync,
         enableRAGContext: store.translationConfig.enableRAGContext,
         field: batchFields[0],
-        allFields: store.fields,
+        allFields: batchFreshFields,
         batchFields,
         mvuDictionary: useStore.getState().translationConfig.mvuDictionary,
         glossary: store.translationConfig.glossary,
@@ -1725,10 +1735,12 @@ export function useTranslation() {
 
     try {
       // Contextual keyword translation for retranslate
+      // IMPORTANT: Read fresh fields from store for up-to-date translated content
+      const retranslateFreshFields = useStore.getState().fields;
       let contextHint: string | undefined;
       if (field.group === 'lorebook_keys') {
         const contentPath = field.path.replace('.keys', '.content').replace('.secondary_keys', '.content');
-        const contentField = store.fields.find(f => f.path === contentPath);
+        const contentField = retranslateFreshFields.find(f => f.path === contentPath);
         if (contentField) {
           contextHint = (contentField.translated || contentField.original || '').slice(0, 1500);
         }
@@ -1736,7 +1748,24 @@ export function useTranslation() {
 
       // ═══ Centralized prompt building (single source of truth) ═══
       // Build entry name dictionary from already-translated lorebook name fields
-      const retranslateEntryNameDict = { ...buildEntryNameDictionary(store.fields), ...buildRegexTriggerDictionary(store.fields) };
+      const retranslateEntryNameDict = { ...buildEntryNameDictionary(retranslateFreshFields), ...buildRegexTriggerDictionary(retranslateFreshFields) };
+
+      // ═══ Collect translated schema content for covariance ═══
+      let retranslateSchemaContent: string | undefined;
+      const needsSchema = 
+        field.entryType === 'initvar' || field.entryType === 'controller' || field.entryType === 'mvu_logic'
+        || field.group === 'regex'
+        || field.group === 'tavern_helper';
+      if (needsSchema && store.translationConfig.enableMvuSync) {
+        const schemaFields = retranslateFreshFields.filter(f =>
+          f.group === 'tavern_helper' && f.status === 'done' && f.translated && f.translated.trim()
+        );
+        if (schemaFields.length > 0) {
+          retranslateSchemaContent = schemaFields
+            .map(f => `// ─── ${f.label} ───\n${f.translated}`)
+            .join('\n\n');
+        }
+      }
 
       const targetModel = store.translationConfig.enableModelRouting
         ? (store.translationConfig.entryModelRouting[field.path] || store.translationConfig.groupModelRouting[field.group] || store.proxy.model)
@@ -1750,7 +1779,7 @@ export function useTranslation() {
         enableMvuSync: store.translationConfig.enableMvuSync,
         enableRAGContext: store.translationConfig.enableRAGContext,
         field,
-        allFields: store.fields,
+        allFields: retranslateFreshFields,
         mvuDictionary: useStore.getState().translationConfig.mvuDictionary,
         glossary: store.translationConfig.glossary,
         customSchema: store.translationConfig.customSchema,
@@ -1768,6 +1797,7 @@ export function useTranslation() {
         ejsEntryNameDict: useStore.getState().translationConfig.ejsEntryNameDict,
         ejsKeywordDict: useStore.getState().translationConfig.ejsKeywordDict,
         ejsDecoratorPreserve: store.translationConfig.ejsDecoratorPreserve,
+        translatedSchemaContent: retranslateSchemaContent,
       });
 
       const resolvedFieldType = fieldGroupToFieldType(field.group, field.entryType);
@@ -2206,10 +2236,11 @@ export function useTranslation() {
       }
 
       // Contextual keyword translation for lorebook_keys
+      // IMPORTANT: Read fresh fields from store for up-to-date translated content
       let contextHint: string | undefined;
       if (field.group === 'lorebook_keys') {
         const contentPath = field.path.replace('.keys', '.content').replace('.secondary_keys', '.content');
-        const contentField = store.fields.find(f => f.path === contentPath);
+        const contentField = useStore.getState().fields.find(f => f.path === contentPath);
         if (contentField) {
           contextHint = (contentField.translated || contentField.original || '').slice(0, 1500);
         }
@@ -2267,6 +2298,7 @@ export function useTranslation() {
         ejsEntryNameDict: useStore.getState().translationConfig.ejsEntryNameDict,
         ejsKeywordDict: useStore.getState().translationConfig.ejsKeywordDict,
         ejsDecoratorPreserve: store.translationConfig.ejsDecoratorPreserve,
+        translatedSchemaContent: effectiveCustomSchema || undefined,
       });
 
       const resolvedFieldType = fieldGroupToFieldType(field.group, field.entryType);
@@ -2339,6 +2371,7 @@ export function useTranslation() {
         ejsEntryNameDict: useStore.getState().translationConfig.ejsEntryNameDict,
         ejsKeywordDict: useStore.getState().translationConfig.ejsKeywordDict,
         ejsDecoratorPreserve: store.translationConfig.ejsDecoratorPreserve,
+        translatedSchemaContent: effectiveCustomSchema || undefined,
       });
             result = await translateText(
               inputContent, field.label, effectiveProxy, effectiveLang, effectiveLang,
@@ -2676,6 +2709,7 @@ export function useTranslation() {
         ejsEntryNameDict: useStore.getState().translationConfig.ejsEntryNameDict,
         ejsKeywordDict: useStore.getState().translationConfig.ejsKeywordDict,
         ejsDecoratorPreserve: store.translationConfig.ejsDecoratorPreserve,
+        translatedSchemaContent: effectiveCustomSchema || undefined,
       });
 
         const resolvedFieldType = fieldGroupToFieldType(field.group, field.entryType);
@@ -2750,6 +2784,7 @@ export function useTranslation() {
         ejsEntryNameDict: useStore.getState().translationConfig.ejsEntryNameDict,
         ejsKeywordDict: useStore.getState().translationConfig.ejsKeywordDict,
         ejsDecoratorPreserve: store.translationConfig.ejsDecoratorPreserve,
+        translatedSchemaContent: effectiveCustomSchema || undefined,
       });
               result = await translateText(
                 inputContent, field.label, store.proxy, effectiveLang, effectiveLang,
