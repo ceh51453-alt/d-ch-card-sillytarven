@@ -626,61 +626,63 @@ function FieldsTab({
                     </span>
                   )}
                 </div>
-                {/* Per-field retranslate button */}
-                <button
-                  onClick={async () => {
-                    setRetranslatingPaths(prev => new Set(prev).add(row.path));
-                    try {
-                      await retranslateField(row.path);
-                    } catch (err) {
-                      console.error(`Retranslate failed for ${row.path}:`, err);
-                    } finally {
-                      setRetranslatingPaths(prev => { const next = new Set(prev); next.delete(row.path); return next; });
-                    }
-                  }}
-                  disabled={isTranslating || retranslatingPaths.has(row.path)}
-                  title="Dịch lại trường này"
-                  style={{
-                    background: 'none',
-                    border: '1px solid var(--border-subtle)',
-                    borderRadius: 'var(--radius-sm)',
-                    color: retranslatingPaths.has(row.path) ? 'var(--accent-primary)' : 'var(--text-muted)',
-                    cursor: isTranslating || retranslatingPaths.has(row.path) ? 'not-allowed' : 'pointer',
-                    padding: '3px 8px',
-                    fontSize: '0.65rem',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '4px',
-                    transition: 'all 0.15s',
-                    opacity: isTranslating ? 0.4 : 1,
-                  }}
-                  onMouseEnter={e => { if (!isTranslating) { e.currentTarget.style.borderColor = 'var(--accent-primary)'; e.currentTarget.style.color = 'var(--accent-primary)'; } }}
-                  onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border-subtle)'; e.currentTarget.style.color = 'var(--text-muted)'; }}
-                >
-                  {retranslatingPaths.has(row.path) ? (
-                    <><Loader2 size={10} className="animate-spin" /> Đang dịch...</>
-                  ) : row.status === 'translating' ? (
-                    <button
-                      onClick={cancelTranslation}
-                      style={{
-                        background: 'none',
-                        border: '1px solid rgba(239, 68, 68, 0.4)',
-                        borderRadius: 'var(--radius-sm)',
-                        color: 'var(--accent-danger)',
-                        cursor: 'pointer',
-                        padding: '3px 8px',
-                        fontSize: '0.65rem',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '4px',
-                      }}
-                    >
-                      <StopCircle size={10} /> Dừng
-                    </button>
-                  ) : (
-                    <><RefreshCw size={10} /> Dịch lại</>
-                  )}
-                </button>
+                {row.status === 'translating' && !retranslatingPaths.has(row.path) ? (
+                  <button
+                    onClick={cancelTranslation}
+                    title="Dừng dịch"
+                    style={{
+                      background: 'none',
+                      border: '1px solid rgba(239, 68, 68, 0.4)',
+                      borderRadius: 'var(--radius-sm)',
+                      color: 'var(--accent-danger)',
+                      cursor: 'pointer',
+                      padding: '3px 8px',
+                      fontSize: '0.65rem',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                    }}
+                  >
+                    <StopCircle size={10} /> Dừng
+                  </button>
+                ) : (
+                  <button
+                    onClick={async () => {
+                      setRetranslatingPaths(prev => new Set(prev).add(row.path));
+                      try {
+                        await retranslateField(row.path);
+                      } catch (err) {
+                        console.error(`Retranslate failed for ${row.path}:`, err);
+                      } finally {
+                        setRetranslatingPaths(prev => { const next = new Set(prev); next.delete(row.path); return next; });
+                      }
+                    }}
+                    disabled={isTranslating || retranslatingPaths.has(row.path)}
+                    title="Dịch lại trường này"
+                    style={{
+                      background: 'none',
+                      border: '1px solid var(--border-subtle)',
+                      borderRadius: 'var(--radius-sm)',
+                      color: retranslatingPaths.has(row.path) ? 'var(--accent-primary)' : 'var(--text-muted)',
+                      cursor: isTranslating || retranslatingPaths.has(row.path) ? 'not-allowed' : 'pointer',
+                      padding: '3px 8px',
+                      fontSize: '0.65rem',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      transition: 'all 0.15s',
+                      opacity: isTranslating ? 0.4 : 1,
+                    }}
+                    onMouseEnter={e => { if (!isTranslating) { e.currentTarget.style.borderColor = 'var(--accent-primary)'; e.currentTarget.style.color = 'var(--accent-primary)'; } }}
+                    onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border-subtle)'; e.currentTarget.style.color = 'var(--text-muted)'; }}
+                  >
+                    {retranslatingPaths.has(row.path) ? (
+                      <><Loader2 size={10} className="animate-spin" /> Đang dịch...</>
+                    ) : (
+                      <><RefreshCw size={10} /> Dịch lại</>
+                    )}
+                  </button>
+                )}
               </div>
 
               {/* Original */}
