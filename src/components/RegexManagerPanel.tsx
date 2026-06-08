@@ -2,7 +2,7 @@ import React, { useState, useMemo, useCallback } from 'react';
 import { useStore } from '../store';
 import { useTranslation } from '../hooks/useTranslation';
 import { useT } from '../i18n/useLocale';
-import { X, Regex, Languages, Save, Check, Loader2, Sparkles, RefreshCw, Copy, Trash2, StopCircle } from 'lucide-react';
+import { X, Regex, Languages, Save, Check, Loader2, Sparkles, RefreshCw, Copy, Trash2, StopCircle, CircleStop } from 'lucide-react';
 import type { RegexScript } from '../types/card';
 import AiCompanionPanel from './AiCompanionPanel';
 
@@ -158,7 +158,7 @@ interface RegexFieldRow {
 export default function RegexManagerPanel({ onClose, isFullscreen }: { onClose: () => void; isFullscreen?: boolean }) {
   const t = useT();
   const { card, updateCard, addToast, fields, updateField, phase, deleteCurrentCardCache } = useStore();
-  const { retranslateField, cancelTranslation } = useTranslation();
+  const { retranslateField, cancelTranslation, cancelFieldTranslation, cancelAllFieldTranslations } = useTranslation();
 
   // ─── Regex scripts from card ───
   const scripts: RegexScript[] = useMemo(
@@ -273,6 +273,15 @@ export default function RegexManagerPanel({ onClose, isFullscreen }: { onClose: 
   const handleCancel = () => {
     cancelTranslation();
   };
+
+  // ─── Cancel all in-flight regex translations ───
+  const handleCancelAll = () => {
+    cancelAllFieldTranslations();
+    addToast('info', 'Đã dừng tất cả các bản dịch đang chạy');
+  };
+
+  // ─── Check if any regex fields are currently translating ───
+  const anyTranslating = fieldRows.some(r => r.status === 'translating');
 
   // ─── Clear all regex cache ───
   const handleClearCache = async () => {
@@ -454,6 +463,21 @@ export default function RegexManagerPanel({ onClose, isFullscreen }: { onClose: 
                   <Languages size={12} /> Dịch tất cả
                 </button>
               )}
+              {anyTranslating && !isTranslating && (
+                <button
+                  className="btn btn-danger btn-sm"
+                  onClick={handleCancelAll}
+                  title="Dừng tất cả các bản dịch đang chạy"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    animation: 'pulse 2s ease-in-out infinite',
+                  }}
+                >
+                  <CircleStop size={12} /> Dừng tất cả
+                </button>
+              )}
               {doneCount > 0 && !isTranslating && (
                 <button className="btn btn-secondary btn-sm" onClick={handleRetranslateAll}
                   title="Dịch lại tất cả regex fields (kể cả đã dịch xong)"
@@ -512,7 +536,7 @@ export default function RegexManagerPanel({ onClose, isFullscreen }: { onClose: 
               updateField={updateField}
               isTranslating={isTranslating}
               retranslateField={retranslateField}
-              cancelTranslation={handleCancel}
+              cancelFieldTranslation={cancelFieldTranslation}
             />
           </div>
         {showAiChat && (
@@ -534,7 +558,7 @@ function FieldsTab({
   updateField,
   isTranslating,
   retranslateField,
-  cancelTranslation,
+  cancelFieldTranslation,
 }: {
   scripts: RegexScript[];
   selectedScriptIdx: number;
@@ -542,7 +566,7 @@ function FieldsTab({
   updateField: (path: string, update: any) => void;
   isTranslating: boolean;
   retranslateField: (path: string) => Promise<void>;
-  cancelTranslation: () => void;
+  cancelFieldTranslation: (path: string) => void;
 }) {
   const [retranslatingPaths, setRetranslatingPaths] = useState<Set<string>>(new Set());
   const selectedScript = scripts[selectedScriptIdx];
@@ -626,10 +650,10 @@ function FieldsTab({
                     </span>
                   )}
                 </div>
-                {row.status === 'translating' && !retranslatingPaths.has(row.path) ? (
+                {row.status === 'translating' ? (
                   <button
-                    onClick={cancelTranslation}
-                    title="Dừng dịch"
+                    onClick={() => cancelFieldTranslation(row.path)}
+                    title="Dừng dịch trường này"
                     style={{
                       background: 'none',
                       border: '1px solid rgba(239, 68, 68, 0.4)',
@@ -641,6 +665,7 @@ function FieldsTab({
                       display: 'flex',
                       alignItems: 'center',
                       gap: '4px',
+                      animation: 'pulse 2s ease-in-out infinite',
                     }}
                   >
                     <StopCircle size={10} /> Dừng
@@ -657,14 +682,14 @@ function FieldsTab({
                         setRetranslatingPaths(prev => { const next = new Set(prev); next.delete(row.path); return next; });
                       }
                     }}
-                    disabled={isTranslating || retranslatingPaths.has(row.path)}
+                    disabled={isTranslating}
                     title="Dịch lại trường này"
                     style={{
                       background: 'none',
                       border: '1px solid var(--border-subtle)',
                       borderRadius: 'var(--radius-sm)',
-                      color: retranslatingPaths.has(row.path) ? 'var(--accent-primary)' : 'var(--text-muted)',
-                      cursor: isTranslating || retranslatingPaths.has(row.path) ? 'not-allowed' : 'pointer',
+                      color: 'var(--text-muted)',
+                      cursor: isTranslating ? 'not-allowed' : 'pointer',
                       padding: '3px 8px',
                       fontSize: '0.65rem',
                       display: 'flex',
@@ -676,11 +701,7 @@ function FieldsTab({
                     onMouseEnter={e => { if (!isTranslating) { e.currentTarget.style.borderColor = 'var(--accent-primary)'; e.currentTarget.style.color = 'var(--accent-primary)'; } }}
                     onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border-subtle)'; e.currentTarget.style.color = 'var(--text-muted)'; }}
                   >
-                    {retranslatingPaths.has(row.path) ? (
-                      <><Loader2 size={10} className="animate-spin" /> Đang dịch...</>
-                    ) : (
-                      <><RefreshCw size={10} /> Dịch lại</>
-                    )}
+                    <RefreshCw size={10} /> Dịch lại
                   </button>
                 )}
               </div>

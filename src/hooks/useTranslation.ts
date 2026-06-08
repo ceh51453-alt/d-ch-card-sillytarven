@@ -1713,6 +1713,38 @@ export function useTranslation() {
     store.setPhase('cancelled');
   }, [store]);
 
+  const cancelFieldTranslation = useCallback((path: string) => {
+    const ctrl = fieldAbortMap.current.get(path);
+    if (ctrl) {
+      ctrl.abort();
+      fieldAbortMap.current.delete(path);
+    }
+    // Reset field status from 'translating' back to its previous state
+    const field = useStore.getState().fields.find(f => f.path === path);
+    if (field && field.status === 'translating') {
+      store.updateField(path, { status: field.translated ? 'done' : 'pending' });
+    }
+    store.addLog('info', `⏹ Cancelled translation for field: ${path}`);
+  }, [store]);
+
+  const cancelAllFieldTranslations = useCallback(() => {
+    // Cancel global abort
+    abortRef.current?.abort();
+    // Cancel all per-field in-flight translations
+    for (const [, ctrl] of fieldAbortMap.current) {
+      ctrl.abort();
+    }
+    fieldAbortMap.current.clear();
+    pauseRef.current = false;
+    runningRef.current = false;
+    // Reset any fields stuck in 'translating' status
+    const stuckFields = useStore.getState().fields.filter(f => f.status === 'translating');
+    for (const f of stuckFields) {
+      store.updateField(f.path, { status: f.translated ? 'done' : 'pending' });
+    }
+    store.addLog('info', `⏹ Cancelled all in-flight translations (${stuckFields.length} fields reset)`);
+  }, [store]);
+
   const retranslateField = useCallback(async (path: string, resume = false) => {
     const field = store.fields.find((f) => f.path === path);
     if (!field) return;
@@ -3362,6 +3394,8 @@ export function useTranslation() {
     pauseTranslation,
     resumeTranslation,
     cancelTranslation,
+    cancelFieldTranslation,
+    cancelAllFieldTranslations,
     retranslateField,
     retryAllErrors,
     getExportCard,

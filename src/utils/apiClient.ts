@@ -1878,7 +1878,11 @@ export function detectStructuralTruncation(original: string, translation: string
   // NOTE: Only check backtick balance (code-critical). Skip single/double quotes
   // because translation legitimately changes quote parity (Vietnamese contractions,
   // different quoting conventions, etc.) — these are NOT reliable truncation signals.
-  if (origQuotes.backtick % 2 === 0 && transQuotes.backtick % 2 !== 0) {
+  //
+  // IMPORTANT: If the ORIGINAL chunk itself has odd backticks (due to chunking splitting
+  // a template literal), then the translation having odd backticks is EXPECTED, not truncation.
+  // Only flag if original has even backticks but translation has odd (= LLM dropped one).
+  if (origQuotes.backtick % 2 === 0 && transQuotes.backtick % 2 !== 0 && transQuotes.backtick !== origQuotes.backtick) {
     return { isTruncated: true, reason: 'Odd number of backticks (unclosed template literal)' };
   }
 
@@ -2036,6 +2040,12 @@ async function translateChunk(
           const responseRatio = result.length / chunk.length;
           
           if (responseRatio >= CONT_THRESHOLD) {
+            // If response is already >= 100% of original, it's very unlikely to be truncated.
+            // Structural mismatches at this point are typically false positives (LLM changed
+            // backtick/quote parity during translation, which is legitimate).
+            if (responseRatio >= 1.0) {
+              break;
+            }
             const structuralCheck = detectStructuralTruncation(chunk, result);
             if (!structuralCheck.isTruncated) {
               break;
