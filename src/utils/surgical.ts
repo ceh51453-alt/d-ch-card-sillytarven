@@ -77,31 +77,32 @@ export function reinsertTranslations(original: string, tokens: CJKToken[]): stri
  * Treats fullwidth and halfwidth variants as equivalent (e.g. （ = (, ） = )).
  */
 export function verifySurgicalResult(original: string, translated: string): boolean {
-  const countChar = (str: string, char: string) => (str.match(new RegExp(`\\${char}`, 'g')) || []).length;
+  // Simple char counting — no regex needed, avoids escaping issues
+  const countChar = (str: string, ch: string): number => {
+    let c = 0;
+    for (let i = 0; i < str.length; i++) if (str[i] === ch) c++;
+    return c;
+  };
+  
+  // Count char + its fullwidth equivalent together
+  const countPair = (str: string, half: string, full: string): number => {
+    return countChar(str, half) + countChar(str, full);
+  };
   
   // Backticks must match exactly
   if (countChar(original, '`') !== countChar(translated, '`')) return false;
   
-  // For braces, brackets, angle brackets: count both fullwidth and halfwidth as equivalent
-  const countEquiv = (str: string, halfwidth: string, fullwidth: string) => {
-    return countChar(str, halfwidth) + countChar(str, fullwidth);
-  };
+  // Braces
+  if (countPair(original, '{', '\uff5b') !== countPair(translated, '{', '\uff5b')) return false;
+  if (countPair(original, '}', '\uff5d') !== countPair(translated, '}', '\uff5d')) return false;
   
-  // Braces: { ＋ ｛ and } ＋ ｝
-  if (countEquiv(original, '{', '\uff5b') !== countEquiv(translated, '{', '\uff5b')) return false;
-  if (countEquiv(original, '}', '\uff5d') !== countEquiv(translated, '}', '\uff5d')) return false;
+  // Angle brackets
+  if (countPair(original, '<', '\uff1c') !== countPair(translated, '<', '\uff1c')) return false;
+  if (countPair(original, '>', '\uff1e') !== countPair(translated, '>', '\uff1e')) return false;
   
-  // Angle brackets: < ＋ ＜ and > ＋ ＞
-  if (countEquiv(original, '<', '\uff1c') !== countEquiv(translated, '<', '\uff1c')) return false;
-  if (countEquiv(original, '>', '\uff1e') !== countEquiv(translated, '>', '\uff1e')) return false;
-  
-  // Parentheses: ( ＋ （ and ) ＋ ）
-  const origParenOpen = countEquiv(original, '\\(', '\uff08');
-  const origParenClose = countEquiv(original, '\\)', '\uff09');
-  const transParenOpen = countEquiv(translated, '\\(', '\uff08');
-  const transParenClose = countEquiv(translated, '\\)', '\uff09');
-  if (origParenOpen !== transParenOpen) return false;
-  if (origParenClose !== transParenClose) return false;
+  // Parentheses
+  if (countPair(original, '(', '\uff08') !== countPair(translated, '(', '\uff08')) return false;
+  if (countPair(original, ')', '\uff09') !== countPair(translated, ')', '\uff09')) return false;
   
   return true;
 }
@@ -272,18 +273,29 @@ export async function surgicalTranslate(
     return { translated: reinserted, success: true, fallbackTriggered: false };
   }
 
-  // Strategy: try ALL tokens in a single batch first (most LLMs handle 3000+ items fine with 65K output).
-  // If match rate < 50% (LLM truncated), automatically fall back to parallel smaller batches.
+  // Strategy: try all tokens in a single batch if count is small enough.
+  // For large sets (>1500), go directly to parallel smaller batches to avoid API timeout.
+  const MEGA_BATCH_MAX = 1500;
   const FALLBACK_BATCH_SIZE = 500;
   const MAX_RETRIES = 2;
   const PARALLEL_CONCURRENCY = 3;
 
-  // Start with a single mega-batch containing all tokens
-  let tokenBatches: CJKToken[][] = [uniquePendingTokens];
-  let usedMegaBatch = true;
+  let tokenBatches: CJKToken[][] = [];
+  let usedMegaBatch = false;
 
-  console.log(`[surgicalTranslate] Extracted ${tokens.length} tokens (${uniquePendingTokens.length} unique pending, ${tokens.length - pendingTokens.length} local-resolved). Trying single mega-batch first...`);
-  writeDebugLog(`[surgicalTranslate] Unique pending tokens: ${uniquePendingTokens.length}. Strategy: mega-batch → fallback ${FALLBACK_BATCH_SIZE} × ${PARALLEL_CONCURRENCY} parallel`);
+  if (uniquePendingTokens.length <= MEGA_BATCH_MAX) {
+    // Small enough → try single mega-batch
+    tokenBatches = [uniquePendingTokens];
+    usedMegaBatch = true;
+    console.log(`[surgicalTranslate] ${uniquePendingTokens.length} tokens (≤${MEGA_BATCH_MAX}). Trying single mega-batch...`);
+  } else {
+    // Too many → split into parallel batches immediately
+    for (let i = 0; i < uniquePendingTokens.length; i += FALLBACK_BATCH_SIZE) {
+      tokenBatches.push(uniquePendingTokens.slice(i, i + FALLBACK_BATCH_SIZE));
+    }
+    console.log(`[surgicalTranslate] ${uniquePendingTokens.length} tokens (>${MEGA_BATCH_MAX}). Using ${tokenBatches.length} × ${FALLBACK_BATCH_SIZE} batches, ${PARALLEL_CONCURRENCY} parallel.`);
+  }
+  writeDebugLog(`[surgicalTranslate] Unique: ${uniquePendingTokens.length}, megaBatch: ${usedMegaBatch}, batches: ${tokenBatches.length}`);
   
   let glossaryPrompt = '';
   if (glossary && glossary.length > 0) {
@@ -369,38 +381,36 @@ ${langRules}${glossaryPrompt}${mvuPrompt}`;
       }
     };
 
-    // ── Phase 1: Try mega-batch (all tokens in 1 API call) ──
-    await processBatch(tokenBatches[0], `Mega-batch (${uniquePendingTokens.length} tokens)`);
-    
-    // Check mega-batch success rate
-    const megaMatched = uniquePendingTokens.filter(t => t.translated && t.translated.trim() !== '').length;
-    const megaMatchRate = megaMatched / uniquePendingTokens.length;
-    
-    if (megaMatchRate < 0.5 && usedMegaBatch) {
-      // ── Phase 2: Mega-batch failed (LLM truncated) → split into parallel smaller batches ──
-      console.warn(`[surgicalTranslate] Mega-batch only matched ${megaMatched}/${uniquePendingTokens.length} (${(megaMatchRate * 100).toFixed(0)}%). Falling back to parallel ${FALLBACK_BATCH_SIZE}-token batches...`);
-      writeDebugLog(`[surgicalTranslate] Mega-batch fallback triggered. Match rate: ${(megaMatchRate * 100).toFixed(0)}%`);
+    if (usedMegaBatch) {
+      // ── Path A: Mega-batch (≤1500 tokens → 1 API call) ──
+      await processBatch(tokenBatches[0], `Mega-batch (${tokenBatches[0].length} tokens)`);
       
-      // Collect tokens that still need translation
-      const stillPending = uniquePendingTokens.filter(t => !t.translated || t.translated.trim() === '');
-      tokenBatches = [];
-      for (let i = 0; i < stillPending.length; i += FALLBACK_BATCH_SIZE) {
-        tokenBatches.push(stillPending.slice(i, i + FALLBACK_BATCH_SIZE));
-      }
+      const megaMatched = uniquePendingTokens.filter(t => t.translated && t.translated.trim() !== '').length;
+      const megaMatchRate = megaMatched / uniquePendingTokens.length;
       
-      // Process fallback batches in parallel waves
-      for (let waveStart = 0; waveStart < tokenBatches.length; waveStart += PARALLEL_CONCURRENCY) {
-        const waveEnd = Math.min(waveStart + PARALLEL_CONCURRENCY, tokenBatches.length);
-        const wave = tokenBatches.slice(waveStart, waveEnd);
-        
-        console.log(`[surgicalTranslate] Fallback wave ${Math.floor(waveStart / PARALLEL_CONCURRENCY) + 1}/${Math.ceil(tokenBatches.length / PARALLEL_CONCURRENCY)}: batches ${waveStart + 1}-${waveEnd}/${tokenBatches.length} in parallel...`);
-        
-        await Promise.all(wave.map((batch, i) => 
-          processBatch(batch, `Fallback batch ${waveStart + i + 1}/${tokenBatches.length}`)
-        ));
+      if (megaMatchRate < 0.5) {
+        // Mega-batch failed → fallback to parallel smaller batches for remaining
+        console.warn(`[surgicalTranslate] Mega-batch only matched ${megaMatched}/${uniquePendingTokens.length} (${(megaMatchRate * 100).toFixed(0)}%). Falling back to parallel batches...`);
+        const stillPending = uniquePendingTokens.filter(t => !t.translated || t.translated.trim() === '');
+        const fallbackBatches: CJKToken[][] = [];
+        for (let i = 0; i < stillPending.length; i += FALLBACK_BATCH_SIZE) {
+          fallbackBatches.push(stillPending.slice(i, i + FALLBACK_BATCH_SIZE));
+        }
+        for (let ws = 0; ws < fallbackBatches.length; ws += PARALLEL_CONCURRENCY) {
+          const wave = fallbackBatches.slice(ws, ws + PARALLEL_CONCURRENCY);
+          await Promise.all(wave.map((b, i) => processBatch(b, `Fallback ${ws + i + 1}/${fallbackBatches.length}`)));
+        }
+      } else {
+        console.log(`[surgicalTranslate] Mega-batch success: ${megaMatched}/${uniquePendingTokens.length} (${(megaMatchRate * 100).toFixed(0)}%)`);
       }
     } else {
-      console.log(`[surgicalTranslate] Mega-batch success: ${megaMatched}/${uniquePendingTokens.length} matched (${(megaMatchRate * 100).toFixed(0)}%)`);
+      // ── Path B: Parallel batches (>1500 tokens → N batches × 3 parallel) ──
+      for (let ws = 0; ws < tokenBatches.length; ws += PARALLEL_CONCURRENCY) {
+        const we = Math.min(ws + PARALLEL_CONCURRENCY, tokenBatches.length);
+        const wave = tokenBatches.slice(ws, we);
+        console.log(`[surgicalTranslate] Wave ${Math.floor(ws / PARALLEL_CONCURRENCY) + 1}/${Math.ceil(tokenBatches.length / PARALLEL_CONCURRENCY)}: batches ${ws + 1}-${we}/${tokenBatches.length} in parallel...`);
+        await Promise.all(wave.map((b, i) => processBatch(b, `Batch ${ws + i + 1}/${tokenBatches.length}`)));
+      }
     }
     
     // ── Phase 3: Sub-batch recovery for any remaining untranslated tokens ──
