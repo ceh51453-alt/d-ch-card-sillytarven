@@ -211,16 +211,22 @@ Some culturally specific terms have no Vietnamese equivalent and should be kept 
 function buildRegexRules(): string {
   return `
 CODE PRESERVATION RULES (REGEX SCRIPTS):
-RULE C1 — Regex Patterns Are Sacred:
+RULE C1 — Regex Patterns Are Sacred (With Exception for CJK Strings):
   The \`findRegex\` field contains actual Regular Expressions.
-  NEVER translate the contents of a regex pattern. Output it byte-for-byte identical.
-  FORBIDDEN ACTIONS ON REGEX:
+  PRESERVE all regex syntax byte-for-byte identical.
+  FORBIDDEN ACTIONS ON REGEX SYNTAX:
     - Translating capture groups: $1, $2, (?<name>).
     - Translating character classes: [a-z], \\w, \\d.
     - Changing flags: /gmi → /gmi.
     - Removing leading/trailing slashes.
-    - Translating actual words inside the regex logic.
-  If the input is: /\\b([Hh]ello)\\b/g, the output MUST be: /\\b([Hh]ello)\\b/g.
+  EXCEPTION FOR CJK TEXT: You MUST translate literal CJK characters (words) inside the regex so they match the translated narrative.
+  
+  RULE C1.0 — REGEX NUMBER-UNIT SPACING (CRITICAL FOR VIETNAMESE):
+  CJK languages have no space between numbers and units (e.g., 500金). Vietnamese DOES (e.g., 500 Kim).
+  When translating literal units in \`findRegex\`, you MUST ADD optional spacing to match the narrative format.
+  - Before: /(\\d+)(金)/
+  - After:  /(\\d+)\\s*(Kim)/  (ADDED \\s* so it matches "500 Kim" in text)
+  Failure to add \\s* means the regex will break.
 
 RULE C1.1 — replaceString Handling:
   The \`replaceString\` field is an HTML template injected back into the chat.
@@ -589,7 +595,14 @@ RULE C13 — Grammar and Word Order of Placeholders/Macros (Vietnamese Specific)
   - Với cấu trúc sở hữu (A的B, ví dụ {{user}}的茶会肉便器 / 承受{{user}}的侵犯 / 夹紧{{user}}的肉棒): A là placeholder ({{user}}) thì phải dịch theo đúng trật tự tiếng Việt "B của A" (B của {{user}}).
   - Ví dụ sai chủ-vị/thiếu liên kết: "{{user}}Đồ nội thất bằng thịt của tiệc trà" ➔ Sửa đúng: "tiệc trà đồ nội thất bằng thịt của {{user}}"
   - Ví dụ sai vị trí placeholder / thừa dấu gạch ngang: "...chịu đựng sự xâm phạm của - , vừa hát khúc hát ru cho cậu.{{user}}" ➔ Sửa đúng: "...chịu đựng sự xâm phạm của {{user}}, vừa hát khúc hát ru cho cậu"
-  - Ví dụ sai trật tự từ: "...đôi chân đang kẹp chặt - gậy thịt của cô sẽ run rẩy không thể kiềm chế.{{user}}" ➔ Sửa đúng: "...đôi chân đang kẹp chặt gậy thịt của {{user}} - cô sẽ run rẩy không thể kiềm chế."`;
+  - Ví dụ sai trật tự từ: "...đôi chân đang kẹp chặt - gậy thịt của cô sẽ run rẩy không thể kiềm chế.{{user}}" ➔ Sửa đúng: "...đôi chân đang kẹp chặt gậy thịt của {{user}} - cô sẽ run rẩy không thể kiềm chế."
+
+RULE C14 — Spacing Between Numbers and Units in Code Contexts (Vietnamese Specific):
+  Trong tiếng Trung/Nhật/Hàn, số và đơn vị thường viết liền (ví dụ: 500金). Tuy nhiên trong tiếng Việt, cần có khoảng trắng (ví dụ: 500 Kim).
+  LỖI NGHIÊM TRỌNG THƯỜNG GẶP: Khi dịch các đoạn Regex (findRegex/replaceString) hoặc Template Literals (\`\${v}金\`), AI thường bỏ quên khoảng trắng này, tạo ra sự bất nhất với văn bản tường thuật (nơi thường có khoảng trắng).
+  QUY TẮC BẮT BUỘC ĐỂ ĐỒNG BỘ:
+  - Trong Template Literals / Chuỗi JS: NẾU có số/biến số đứng liền trước đơn vị, BẮT BUỘC phải thêm 1 khoảng trắng. VD: \`\${v}金\` ➔ \`\${v} Kim\` (KHÔNG PHẢI \`\${v}Kim\`).
+  - Phải tuyệt đối đồng nhất khoảng trắng giữa Regex, EJS Template và Văn bản thường.`;
   }
 
   return rules;
@@ -612,16 +625,17 @@ function buildFailureModes(fieldType: TranslationFieldType): string {
     residual_chinese: `  [CRITICAL] Residual Chinese: Leaving ANY Chinese characters (汉字) untranslated in the output. This is the #1 most common failure. You MUST translate ALL Chinese text — including section headers, YAML keys, parenthetical annotations, labels, and category names. Scan your output before returning it. If you see any 汉字, translate them.`,
     space_in_key_dot_notation: `  [FATAL] Space-In-Key Dot Notation: Using dot notation (obj.Hệ Thống) for translated keys that contain spaces. JavaScript does NOT allow spaces in dot notation — obj.Hệ Thống is a SYNTAX ERROR. MUST use bracket notation: obj['Hệ Thống']. Also applies to nested access: data['Trang Phục Chi Tiết']['Áo Khoác'] NOT data.Trang Phục Chi Tiết.Áo Khoác. And for lodash _.get() — use array path or direct bracket access instead of dot-delimited strings.`,
     space_in_html_id: `  [FATAL] Space-In-HTML-ID: Using spaces or diacritics in HTML id attributes (id="tab-Nhà Ở"). HTML id CANNOT contain spaces — querySelector and getElementById will fail silently. Use ASCII-only ids (id="tab-NhaO") and put the readable name in visible text only. The same ASCII id must appear in matching data-target attributes and CSS selectors.`,
+    missing_unit_spacing: `  [FATAL] Missing Unit Spacing: Translating regex /(\\d+)(金)/ to /(\\d+)(Kim)/ without space, while narrative is "500 Kim". For regex, you MUST add \\s* (e.g. /(\\d+)\\s*(Kim)/) or a space to match the translated text. For template literals (\`\${v}金\`), add a space: \`\${v} Kim\`.`,
   };
 
   const fieldFailureMap: Record<TranslationFieldType, string[]> = {
     narrative: ['macro_translation', 'truncation', 'markdown_fences', 'residual_chinese'],
-    regex: ['regex_modification', 'html_attr_translation', 'macro_translation', 'space_in_key_dot_notation'],
+    regex: ['regex_modification', 'html_attr_translation', 'macro_translation', 'space_in_key_dot_notation', 'missing_unit_spacing'],
     lorebook: ['residual_chinese', 'json_key_inconsistency', 'ejs_desync', 'macro_translation', 'space_in_key_dot_notation', 'space_in_html_id'],
     ejs_code: ['js_keyword_translation', 'ejs_desync', 'macro_translation', 'html_attr_translation', 'space_in_key_dot_notation', 'space_in_html_id'],
     json_state: ['json_key_inconsistency', 'ejs_desync', 'markdown_fences', 'space_in_key_dot_notation'],
     json_patch: ['json_key_inconsistency', 'ejs_desync', 'markdown_fences'],
-    mixed: ['residual_chinese', 'macro_translation', 'ejs_desync', 'truncation', 'js_keyword_translation', 'json_key_inconsistency', 'space_in_key_dot_notation', 'space_in_html_id'],
+    mixed: ['residual_chinese', 'macro_translation', 'ejs_desync', 'truncation', 'js_keyword_translation', 'json_key_inconsistency', 'space_in_key_dot_notation', 'space_in_html_id', 'missing_unit_spacing'],
   };
 
   const relevantKeys = fieldFailureMap[fieldType] || fieldFailureMap.mixed;

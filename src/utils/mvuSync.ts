@@ -1,4 +1,5 @@
 import type { CharacterCard, ProxySettings, TranslationField } from '../types/card';
+import type { ZodFieldDef } from '../types/mvuZodTypes';
 import { extractPatchFieldNames } from './jsonPatchValidator';
 import { callProvider } from './apiClient';
 import { extractZodObjectBlocks, parseZodFields, extractOrderedStringPairs } from './zodSchemaEngine';
@@ -343,10 +344,10 @@ export function enforceInitvarCovariance(
     return { text: translatedText, fixes: [] };
   }
 
-  let result = translatedText;
+  let result = cleanYamlQuotes(translatedText);
 
   // ─── Pass 1: YAML key covariance (existing logic) ───
-  const lines = translatedText.split('\n');
+  const lines = result.split('\n');
   for (const line of lines) {
     const yamlMatch = line.match(/^(\s*)(?:["']([^"':\n]+)["']|([^"':\s\n][^"':\n]*[^"':\s\n]|[^"':\s\n]))\s*:/);
     if (!yamlMatch) continue;
@@ -2269,4 +2270,155 @@ export function extractMappingFromTranslatedSchemas(
   }
 
   return mapping;
+}
+
+/**
+ * Normalize and clean up double-single quotes (''KEY'':) in YAML text.
+ */
+export function cleanYamlQuotes(text: string): string {
+  if (!text || typeof text !== 'string') return text;
+  let result = text;
+  // Fix double single quotes around keys: ''KEY'': -> 'KEY':
+  result = result.replace(/^(\s*)''([^'\n]+)''(\s*:)/gm, "$1'$2'$3");
+  // Fix double single quotes around values: : ''VALUE'' -> : 'VALUE'
+  result = result.replace(/(:\s*)''([^'\n]+)''(\s*)$/gm, "$1'$2'$3");
+  return result;
+}
+
+/**
+ * Helper to extract keys from Zod schema text.
+ */
+function extractKeysFromSchema(schemaText: string): string[] {
+  const keys: string[] = [];
+  try {
+    const cleanSchema = fixZodSyntaxErrors(schemaText);
+    const blocks = extractZodObjectBlocks(cleanSchema);
+    const collectKeys = (fields: ZodFieldDef[]) => {
+      for (const field of fields) {
+        if (field.name) {
+          keys.push(field.name);
+        }
+        if (field.children) {
+          collectKeys(field.children);
+        }
+      }
+    };
+    for (const block of blocks) {
+      const fields = parseZodFields(block);
+      collectKeys(fields);
+    }
+  } catch (e) {
+    console.error('Error extracting keys from schema:', e);
+  }
+  return Array.from(new Set(keys));
+}
+
+/**
+ * Fix common Zod syntax errors in AI-generated schema scripts.
+ */
+export function fixZodSyntaxErrors(scriptContent: string): string {
+  if (!scriptContent || typeof scriptContent !== 'string') {
+    return scriptContent;
+  }
+
+  let fixed = scriptContent;
+
+  // 1. Fix missing () for z.string, z.number, z.boolean
+  fixed = fixed.replace(/\bz\.(string|number|boolean)(?!\s*\()/g, 'z.$1()');
+
+  // 2. Fix missing () for safeString
+  fixed = fixed.replace(/\bsafeString(?!\s*[\(=])/g, 'safeString()');
+
+  // 3. Fix missing () for .prefault and .default
+  // Case A: .prefault 'value' or .prefault "value" -> .prefault('value')
+  fixed = fixed.replace(/\.(prefault|default)\s*(['"`])(.*?)\2/g, '.$1($2$3$2)');
+
+  // Case B: .prefault 123 or .prefault true -> .prefault(123)
+  fixed = fixed.replace(/\.(prefault|default)\s*(\d+|true|false)\b/g, '.$1($2)');
+
+  // Case C: Any leftover .prefault or .default without () -> .prefault()
+  fixed = fixed.replace(/\.(prefault|default)(?!\s*\()/g, '.$1()');
+
+  return fixed;
+}
+
+/**
+ * Force initvar YAML keys to match exactly the keys in the translated Zod schema.
+ */
+export function enforceSchemaAuthoritative(
+  initvarText: string,
+  translatedSchemaContent: string
+): string {
+  if (!initvarText || !translatedSchemaContent) return initvarText;
+
+  const schemaKeys = extractKeysFromSchema(translatedSchemaContent);
+  if (schemaKeys.length === 0) return initvarText;
+
+  // Normalization helper for matching
+  const normalize = (s: string) => s.toLowerCase().replace(/[\s_-]+/g, '').trim();
+  const schemaKeysLower = schemaKeys.map(k => normalize(k));
+
+  let result = cleanYamlQuotes(initvarText);
+  const lines = result.split('\n');
+
+  for (const line of lines) {
+    const yamlMatch = line.match(/^(\s*)(?:["']+|['"]{2,})?([^"':\n]+?)(?:["']+|['"]{2,})?\s*:/);
+    if (!yamlMatch) continue;
+
+    const yamlKey = yamlMatch[2]?.trim();
+    if (!yamlKey) continue;
+
+    // Check if the key exists exactly in schemaKeys
+    if (schemaKeys.includes(yamlKey)) continue;
+
+    // Try to find the closest match in schemaKeys
+    const normalizedKey = normalize(yamlKey);
+    let bestMatch: string | null = null;
+    
+    // Pass 1: exact match after normalization
+    const exactIndex = schemaKeysLower.indexOf(normalizedKey);
+    if (exactIndex !== -1) {
+      bestMatch = schemaKeys[exactIndex];
+    }
+
+    // Pass 2: Substring matching
+    if (!bestMatch) {
+      for (const sk of schemaKeys) {
+        const normalizedSk = normalize(sk);
+        if (normalizedKey.includes(normalizedSk) || normalizedSk.includes(normalizedKey)) {
+          const ratio = Math.min(normalizedKey.length, normalizedSk.length) /
+                        Math.max(normalizedKey.length, normalizedSk.length);
+          if (ratio > 0.6) {
+            bestMatch = sk;
+            break;
+          }
+        }
+      }
+    }
+
+    // Pass 3: Levenshtein distance fallback
+    if (!bestMatch) {
+      let bestDist = Infinity;
+      for (const sk of schemaKeys) {
+        const dist = levenshteinDistance(normalizedKey, normalize(sk));
+        if (dist <= 2 && dist < bestDist) {
+          bestDist = dist;
+          bestMatch = sk;
+        }
+      }
+    }
+
+    // If we found a best match, replace the key in the YAML content
+    if (bestMatch && bestMatch !== yamlKey) {
+      const escaped = yamlKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const keyRegex = new RegExp(
+        `^(\\s*)(["']+|['"]{2,})?${escaped}(["']+|['"]{2,})?(\\s*:)`,
+        'gm'
+      );
+      const safeReplacement = bestMatch.replace(/\$/g, '$$$$');
+      result = result.replace(keyRegex, `$1$2${safeReplacement}$3$4`);
+    }
+  }
+
+  return result;
 }

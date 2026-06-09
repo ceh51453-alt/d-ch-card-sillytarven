@@ -2,7 +2,7 @@ import { useCallback, useRef } from 'react';
 import { useStore } from '../store';
 import { translateText, translateBatch, fieldGroupToFieldType, generateLorebookEntries, ChunkError } from '../utils/apiClient';
 import { extractTranslatableFields, applyTranslationsToCard, autoTranslateLorebookTriggerKeys, injectNewLorebookEntries } from '../utils/cardFields';
-import { syncMvuVariables, postProcessRegexHtml, extractPotentialMvuKeyStrings, aiTranslateMvuKeys, aiRenameMvuKeys, extractZodDescriptions, extractSchemaContextFromCard, extractMappingFromTranslatedSchemas, enforceInitvarCovariance, extractMappingFromTranslatedInitvar, enforceExactConsistency, enforceVariableCasing } from '../utils/mvuSync';
+import { syncMvuVariables, postProcessRegexHtml, extractPotentialMvuKeyStrings, aiTranslateMvuKeys, aiRenameMvuKeys, extractZodDescriptions, extractSchemaContextFromCard, extractMappingFromTranslatedSchemas, enforceInitvarCovariance, extractMappingFromTranslatedInitvar, enforceExactConsistency, enforceVariableCasing, fixZodSyntaxErrors, enforceSchemaAuthoritative } from '../utils/mvuSync';
 import { shouldSkipTranslation, detectLanguage } from '../utils/langDetect';
 import { clearRAGCache } from '../utils/ragContext';
 import { storeTranslation, lookupTranslationMemory } from '../utils/translationMemory';
@@ -327,7 +327,11 @@ export function useTranslation() {
           store.translationConfig.targetLanguage,
           abortRef.current?.signal,
           store.translationConfig.glossary,
-          currentMvuDict
+          currentMvuDict,
+          true,
+          undefined,
+          'preserve',
+          store.translationConfig.customSchema
         );
         translated = sResult.translated;
         
@@ -401,6 +405,14 @@ export function useTranslation() {
         );
       }
 
+      if (translated && field.group === 'tavern_helper') {
+        const fixed = fixZodSyntaxErrors(translated);
+        if (fixed !== translated) {
+          translated = fixed;
+          store.addLog('info', `🔧 Fixed Zod syntax errors in ${field.label}`);
+        }
+      }
+
       // ─── Post-single MVU variable validation + auto-fix ───
       const hasMvuDict = currentMvuDict && Object.keys(currentMvuDict).length > 0;
       if (hasMvuDict && translated) {
@@ -418,6 +430,14 @@ export function useTranslation() {
         // ─── COVARIANCE FIX: Enforce covariance across initvar, controller, mvu_logic, regex, and tavern_helper fields ───
         const isCodeOrLogic = field.entryType === 'initvar' || field.entryType === 'controller' || field.entryType === 'mvu_logic' || field.group === 'regex' || field.group === 'tavern_helper';
         if (isCodeOrLogic) {
+          if (translatedSchemaContent) {
+            const authoritative = enforceSchemaAuthoritative(translated, translatedSchemaContent);
+            if (authoritative !== translated) {
+              translated = authoritative;
+              store.addLog('info', `🔗 Schema-Authoritative: aligned keys with Zod schema in ${field.label}`);
+            }
+          }
+
           const covariance = enforceInitvarCovariance(translated, currentMvuDict);
           if (covariance.fixes.length > 0) {
             translated = covariance.text;
@@ -770,6 +790,14 @@ export function useTranslation() {
           continue;
         }
 
+        if (translated && batchFields[j].group === 'tavern_helper') {
+          const fixed = fixZodSyntaxErrors(translated);
+          if (fixed !== translated) {
+            translated = fixed;
+            store.addLog('info', `🔧 Fixed Zod syntax errors in ${batchFields[j].label}`);
+          }
+        }
+
         const isTargetNonCJK = !(/chinese|中文|japanese|日本語|korean|한국어/i.test(store.translationConfig.targetLanguage));
         const f = batchFields[j];
 
@@ -813,6 +841,15 @@ export function useTranslation() {
           const bf = batchFields[j];
           const isBfCodeOrLogic = bf.entryType === 'initvar' || bf.entryType === 'controller' || bf.entryType === 'mvu_logic' || bf.group === 'regex' || bf.group === 'tavern_helper';
           if (isBfCodeOrLogic) {
+            if (batchSchemaContent) {
+              const authoritative = enforceSchemaAuthoritative(translated, batchSchemaContent);
+              if (authoritative !== translated) {
+                translated = authoritative;
+                autoFixCount++;
+                store.addLog('info', `🔗 Schema-Authoritative: aligned keys with Zod schema in ${bf.label}`);
+              }
+            }
+
             const covariance = enforceInitvarCovariance(translated, mvuDict);
             if (covariance.fixes.length > 0) {
               translated = covariance.text;

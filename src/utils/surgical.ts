@@ -14,6 +14,8 @@ export interface CJKToken {
   end: number;
   translated?: string;
   isIdentifier?: boolean;
+  isDotNotation?: boolean;
+  isObjectKey?: boolean;
 }
 
 /**
@@ -241,7 +243,8 @@ function restoreCSSFromOriginal(original: string, translated: string): string {
 export function extractCJKTokens(
   text: string,
   protectedZones?: ProtectedZone[],
-  cssCjkHandling: 'preserve' | 'translate' = 'preserve'
+  cssCjkHandling: 'preserve' | 'translate' = 'preserve',
+  mvuDictionary?: Record<string, string>
 ): CJKToken[] {
   const tokens: CJKToken[] = [];
   const regex =
@@ -273,11 +276,13 @@ export function extractCJKTokens(
     const isDotNotation = /\.\s*$/.test(contextBefore);
     const isIdentifier = isObjectKey || isDotNotation;
 
-    if (isIdentifier && cssCjkHandling === 'preserve') {
+    const isMvuVariable = mvuDictionary && mvuDictionary[match[0].trim()];
+
+    if (isIdentifier && cssCjkHandling === 'preserve' && !isMvuVariable) {
       continue;
     }
 
-    tokens.push({ id: id++, text: match[0], start: mStart, end: mEnd, isIdentifier });
+    tokens.push({ id: id++, text: match[0], start: mStart, end: mEnd, isIdentifier, isDotNotation, isObjectKey });
   }
   return tokens;
 }
@@ -293,10 +298,32 @@ export function reinsertTranslations(original: string, tokens: CJKToken[]): stri
   for (const token of sorted) {
     if (token.translated) {
       let finalTranslation = token.translated;
-      if (token.isIdentifier) {
-        finalTranslation = finalTranslation.replace(/\s+/g, '_');
+      let replaceStart = token.start;
+      const replaceEnd = token.end;
+
+      if (token.isDotNotation && finalTranslation.includes(' ')) {
+        const dotIndex = original.lastIndexOf('.', replaceStart);
+        if (dotIndex !== -1 && !original.substring(dotIndex + 1, replaceStart).includes('\n')) {
+          replaceStart = dotIndex;
+          finalTranslation = `['${finalTranslation}']`;
+        }
+      } else if (token.isObjectKey && (finalTranslation.includes(' ') || /[À-ỹ]/.test(finalTranslation))) {
+        finalTranslation = `'${finalTranslation}'`;
+      } else if (token.isIdentifier) {
+        if (finalTranslation.includes(' ') && !finalTranslation.startsWith('[')) {
+          finalTranslation = finalTranslation.replace(/\s+/g, '_');
+        }
       }
-      result = result.slice(0, token.start) + finalTranslation + result.slice(token.end);
+      
+      // AUTO-SPACE FIX FOR VIETNAMESE CJK UNITS
+      if (finalTranslation && /^[a-zA-ZÀ-ỹ]/.test(finalTranslation) && !finalTranslation.startsWith('[')) {
+        const prevChar = original.charAt(replaceStart - 1);
+        if (prevChar && /[\d\}\)\]>]/.test(prevChar)) {
+          finalTranslation = ' ' + finalTranslation;
+        }
+      }
+
+      result = result.slice(0, replaceStart) + finalTranslation + result.slice(replaceEnd);
     }
   }
   return result;
@@ -521,13 +548,14 @@ export async function surgicalTranslate(
   mvuDictionary?: Record<string, string>,
   strictVerification: boolean = true,
   onProgress?: TranslationProgressCallback,
-  cssCjkHandling: 'preserve' | 'translate' = 'preserve'
+  cssCjkHandling: 'preserve' | 'translate' = 'preserve',
+  customSchema?: string
 ): Promise<{ translated: string; success: boolean; fallbackTriggered: boolean }> {
   const { callProvider } = await import('./apiClient');
 
   // ── Step 1: Extract CSS protected zones, then CJK tokens ──────────────────
   const cssZones = extractCSSPropertyZones(text);
-  const tokens   = extractCJKTokens(text, cssZones, cssCjkHandling);
+  const tokens   = extractCJKTokens(text, cssZones, cssCjkHandling, mvuDictionary);
 
   writeDebugLog(
     `[surgicalTranslate] Start — strict=${strictVerification}, cssZones=${cssZones.length}, tokens=${tokens.length}`
@@ -622,7 +650,9 @@ CRITICAL RULES:
 7. Translate 无/無/没有 as the correct "none/nothing/empty" word in ${targetLang} (e.g. "Không" or "Không có" in Vietnamese). NEVER translate it as a date, month, or number.
 8. CSS property names (gap, flex, display, margin, padding, border, color, width, height, font, background, grid, position, opacity, overflow, transform, transition, cursor, etc.) MUST NEVER appear in your translations — they are code, not prose.
 9. If a [context: ...] hint is present, use it to understand meaning but do NOT include it in output.
-${langRules}${glossaryPrompt}${mvuPrompt}`;
+${langRules}${glossaryPrompt}${mvuPrompt}` +
+    (customSchema ? `\n\nSCHEMA CONTEXT:\n${customSchema}` : '') +
+    `\n\nORIGINAL CODE/REGEX CONTEXT (For Reference Only):\nBelow is the full original code/regex block you are currently translating. Use it to understand the full context of the variables and text snippets:\n\`\`\`\n${text.slice(0, 10000)}\n\`\`\``;
 
   // ── Step 5: Batch configuration ────────────────────────────────────────────
   const MEGA_BATCH_MAX   = 1500;
