@@ -331,7 +331,10 @@ export function useTranslation() {
           true,
           undefined,
           'preserve',
-          store.translationConfig.customSchema
+          store.translationConfig.customSchema,
+          promptResult.effectivePrompt,
+          field.label,
+          store.translationConfig.surgicalPrompt || undefined
         );
         translated = sResult.translated;
         

@@ -133,9 +133,10 @@ export function getDefaultTranslationPrompt(sourceLang: string, targetLang: stri
 
   const vietnameseRules = targetLang.toLowerCase().includes('việt') || targetLang.toLowerCase().includes('vietnamese')
     ? `\n15. VIETNAMESE SPECIFIC RULES:
-    - Translate Chinese names (characters, places, martial arts, etc.) into Hán Việt (Sino-Vietnamese) instead of Pinyin or raw English.
-    - For Japanese proper nouns (names, places), use standard Romaji transliteration (e.g. 田中 → Tanaka, 桜 → Sakura). Do NOT apply Hán Việt to Japanese names.
-    - WESTERN/FANTASY NAMES EXCEPTION: For non-Chinese names (Western, European, Fantasy, Sci-fi) phonetically transcribed into Chinese characters (e.g., 维拉→Vera, 塞勒涅→Selene, 亚瑟→Arthur, 艾琳→Irene), restore them to their original Latin spelling. NEVER apply Hán Việt to these phonetic transcriptions (e.g., NEVER output "Vi Lạp", "Tắc Lặc Niết"). Hán Việt applies EXCLUSIVELY to native Chinese names.
+    - Translate Chinese names (characters, places) into Sino-Vietnamese reading for names only.
+    - For Japanese proper nouns (names, places), use standard Romaji transliteration (e.g. 田中 → Tanaka, 桜 → Sakura). Do NOT apply Sino-Vietnamese to Japanese names.
+    - WESTERN/FANTASY NAMES EXCEPTION: For non-Chinese names phonetically transcribed into Chinese characters (e.g., 维拉→Vera, 亚瑟→Arthur), restore to original Latin spelling.
+    - All descriptive text, traits, abilities, UI labels → translate into natural, modern Vietnamese. Do NOT use archaic Sino-Vietnamese for descriptions.
     - Use natural roleplay pronouns (e.g., tôi/bạn, anh/em, hắn/nàng/y) suitable for the context, avoiding rigid direct translation of pronouns (like 'ngươi/ta' unless it's a historical setting).
     - Ensure correct Vietnamese word order and grammar for placeholders/macros like {{user}} or {{char}}. For possessive/object constructs (e.g., A's B / A的B), translate as "B của A" (e.g., "B của {{user}}") instead of placing {{user}} at the beginning/end or displacing it.
       * Example: "{{user}}的茶会肉便器" ➔ "tiệc trà đồ nội thất bằng thịt của {{user}}" (NOT: "{{user}}Đồ nội thất bằng thịt của tiệc trà").
@@ -165,9 +166,10 @@ STRICT RULES:
    - Text inside angle brackets like <角色名>, <设定>: Keep the bracket structure, translate the content inside.
 10. Maintain consistent terminology. If you translate a term one way, use that same translation throughout.
 11. PROPER NOUN TRANSLITERATION RULES:
-    - Chinese proper nouns (names, places, titles) → Hán Việt / Sino-Vietnamese reading (e.g. 李明 → Lý Minh). Do NOT use Pinyin.
-    - Japanese proper nouns (names, places) → standard Romaji transliteration (e.g. 田中 → Tanaka, 桜 → Sakura). Do NOT apply Hán Việt to Japanese names.
-    - WESTERN/FANTASY NAMES: Non-Chinese names phonetically transcribed into CJK (e.g., 维拉→Vera, 塞勒涅→Selene, 亚瑟→Arthur) → restore to original Latin spelling. NEVER apply Hán Việt to these.
+    - Chinese proper nouns (names, places) → Sino-Vietnamese reading for names only (e.g. 李明 → Lý Minh). Do NOT use Pinyin.
+    - Japanese proper nouns (names, places) → standard Romaji transliteration (e.g. 田中 → Tanaka). Do NOT apply Sino-Vietnamese to Japanese names.
+    - WESTERN/FANTASY NAMES: Non-Chinese names phonetically transcribed into CJK (e.g., 维拉→Vera, 亚瑟→Arthur) → restore to original Latin spelling.
+    - All descriptive text → translate into natural, modern Vietnamese.
     - Keep honorifics as-is or map to Vietnamese equivalents based on context (-san, -chan, -sama).
 12. CRITICAL: The output must contain ONLY the translated text in ${targetLang}. Do NOT include source language text. Do NOT pair original text with translation. Do NOT use arrows (→) or colons (:) to show before/after.
 13. CRITICAL: You MUST translate the COMPLETE text. Do NOT stop early. Do NOT summarize or truncate. If the text is very long, translate ALL of it from start to finish.
@@ -327,10 +329,10 @@ CHUNK RULES:
 
     const isVietnamese = targetLang.toLowerCase().includes('việt') || targetLang.toLowerCase().includes('vietnamese');
     const vietnameseSafetyRule = isVietnamese 
-      ? `\n    - VIETNAMESE SPECIFIC: Translate names into Hán Việt (Sino-Vietnamese). Use natural roleplay pronouns. Ensure smooth literary flow.`
+      ? `\n    - VIETNAMESE SPECIFIC: Use Sino-Vietnamese reading for Chinese proper nouns only. Translate all descriptive text into natural modern Vietnamese. Use natural roleplay pronouns. Ensure smooth literary flow.`
       : '';
 
-    const safetyRule = `\n\nCRITICAL RULE: ABSOLUTELY NO untranslated source language characters (e.g., Chinese Hanzi, Japanese Kanji) should remain in the final output. You MUST translate every single word into ${targetLang} unless it is a specific system variable name (like {{char}}).${vietnameseSafetyRule}\n    - PROPER NOUN RULE: Chinese proper nouns → Hán Việt. Japanese proper nouns → Romaji (NOT Hán Việt). Western/Fantasy names phonetically transcribed into CJK → restore to original Latin spelling (NOT Hán Việt). Do NOT mix up these systems.`;
+    const safetyRule = `\n\nCRITICAL RULE: ABSOLUTELY NO untranslated source language characters (e.g., Chinese Hanzi, Japanese Kanji) should remain in the final output. You MUST translate every single word into ${targetLang} unless it is a specific system variable name (like {{char}}).${vietnameseSafetyRule}\n    - PROPER NOUN RULE: Chinese proper nouns → Sino-Vietnamese reading for names. Japanese proper nouns → Romaji. Western/Fantasy names transcribed into CJK → restore to original Latin spelling. Do NOT mix up these systems.`;
 
     let regexInstruction = '';
     if (fieldName.includes('findRegex') || fieldName.includes('replaceString')) {
@@ -467,7 +469,7 @@ RULES:
 1. Output the COMPLETE text with ALL Chinese replaced by ${targetLang} translations.
 2. Do NOT change anything already in ${targetLang}, English, or code.
 3. Preserve ALL formatting, HTML, code, macros, EJS, regex patterns.
-4. Translate Chinese names using Hán Việt (Sino-Vietnamese) reading. Japanese names use Romaji transliteration (NOT Hán Việt).
+4. Translate Chinese proper nouns (names, places) using Sino-Vietnamese reading. Japanese names use Romaji transliteration. All descriptive text → natural modern Vietnamese.
 5. Do NOT wrap output in markdown fences.
 6. Do NOT add explanations.
 7. Return the FULL text, not just the translated fragments.
@@ -2708,7 +2710,9 @@ async function maskCodeBlocks(
   signal?: AbortSignal,
   glossary?: GlossaryEntry[],
   mvuDictionary?: Record<string, string>,
-  cssCjkHandling?: 'preserve' | 'translate'
+  cssCjkHandling?: 'preserve' | 'translate',
+  customSchema?: string,
+  customPrompt?: string
 ): Promise<{ maskedText: string; map: CodeBlockMaskMap }> {
   const map: CodeBlockMaskMap = {};
   let maskedText = text;
@@ -2764,7 +2768,9 @@ async function maskCodeBlocks(
         mvuDictionary,
         true,
         undefined,
-        cssCjkHandling || 'preserve'
+        cssCjkHandling || 'preserve',
+        customSchema,
+        customPrompt
       );
       translatedContent = result.translated;
     } catch (err) {
@@ -2828,7 +2834,7 @@ export async function translateText(
     console.log(`[translateText] Field "${fieldName}" is a replaceString. Performing surgical translation (lenient verification)...`);
     try {
       // Use lenient verification directly — replaceString with <script> blocks will never pass strict char-count verification
-      const result = await surgicalTranslate(text, config, targetLang, signal, glossary, mvuDictionary, false, undefined, cssCjkHandling || 'preserve');
+      const result = await surgicalTranslate(text, config, targetLang, signal, glossary, mvuDictionary, false, undefined, cssCjkHandling || 'preserve', customSchema, customPrompt);
       return result.translated;
     } catch (err) {
       console.error(`[translateText] Error during surgical translation for "${fieldName}":`, err);
@@ -2845,7 +2851,9 @@ export async function translateText(
     signal,
     glossary,
     mvuDictionary,
-    cssCjkHandling
+    cssCjkHandling,
+    customSchema,
+    customPrompt
   );
   // 0.5. Mask CJK characters inside CSS values to prevent them from being translated
   // e.g. drop-shadow(商 10px ...) → drop-shadow(__CSS_CJK_0__ 10px ...)

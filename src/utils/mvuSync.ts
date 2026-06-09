@@ -1725,7 +1725,7 @@ export async function aiTranslateMvuKeys(
     ? `\n\n═══ USER MOD INSTRUCTIONS (HIGHEST PRIORITY) ═══\nThe user has provided custom instructions for how variable names should be translated. Follow these instructions ABOVE ALL other rules:\n${modInstructions.trim()}\n═══ END MOD INSTRUCTIONS ═══`
     : '';
 
-  const systemPrompt = `Translate CJK (Chinese/Japanese/Korean) variable names to ${targetLang}. Do NOT translate English or ASCII names. Chinese proper nouns → Hán Việt. Japanese proper nouns → Romaji. Keep consistency with MVU Schema.
+  const systemPrompt = `Translate CJK (Chinese/Japanese/Korean) variable names to ${targetLang}. Do NOT translate English or ASCII names. Chinese proper nouns → Sino-Vietnamese reading. Japanese proper nouns → Romaji. Keep consistency with MVU Schema.
 
 You are a variable name translator for SillyTavern character cards.
 Your job: translate variable names from the source language to ${targetLang}.
@@ -1737,7 +1737,7 @@ STRICT RULES:
    - All emotion/feeling variables should follow the same pattern (e.g. Mức X, Độ X)
    - All stat variables should follow the same pattern
 4. If a key is already in Latin/ASCII or English, keep it AS IS. Do NOT translate English.
-5. Chinese proper nouns (character names) should use Hán Việt (Sino-Vietnamese) reading.
+5. Chinese proper nouns (character names) should use Sino-Vietnamese reading for names only.
 6. Japanese proper nouns should use Romaji transliteration (e.g. 田中 → Tanaka, 桜 → Sakura).
 7. Keep numeric suffixes and prefixes intact (e.g. "攻击力2" → "Sức Tấn Công 2").
 8. For Vietnamese specifically:
@@ -2036,7 +2036,7 @@ Your job is to read the character's background and extract proper nouns, charact
 RULES:
 1. ONLY extract important proper nouns and specific terminology. DO NOT extract common words (like "sword", "house", "run").
 2. Translate them to ${targetLang}. 
-   - For Vietnamese (${targetLang}), use proper Hán Việt (Sino-Vietnamese) for Chinese/wuxia/xianxia names (e.g. 李明 -> Lý Minh, 长安 -> Trường An).
+   - For Vietnamese (${targetLang}), use Sino-Vietnamese reading for Chinese proper nouns only (e.g. 李明 -> Lý Minh, 长安 -> Trường An). All descriptive text → natural modern Vietnamese.
 3. Keep the list concise (max 15-20 most important terms).
 4. Output EXACT JSON format: {"glossary": {"Source Term": "Translated Term"}}
 5. DO NOT wrap the JSON in markdown blocks like \`\`\`json. Just output the raw JSON string.`;

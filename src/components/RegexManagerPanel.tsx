@@ -515,6 +515,9 @@ export default function RegexManagerPanel({ onClose, isFullscreen }: { onClose: 
             </div>
           </div>
 
+          {/* ─── Surgical Prompt Instructions ─── */}
+          <SurgicalPromptSection />
+
           {/* ─── Content ─── */}
           <div className="regex-main-scroll">
             {scripts.length > 0 && fieldRows.length === 0 && (
@@ -827,5 +830,78 @@ function CopyButton({ text }: { text: string }) {
     >
       {copied ? <Check size={12} color="var(--accent-success)" /> : <Copy size={12} />}
     </button>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   Surgical Prompt Section — inline in RegexManager header
+   ════════════════════════════════════════════════════════════════════ */
+function SurgicalPromptSection() {
+  const { translationConfig, setTranslationConfig } = useStore();
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  return (
+    <div style={{
+      borderBottom: '1px solid var(--border-subtle)',
+      background: 'var(--bg-secondary)',
+    }}>
+      <button
+        onClick={() => setIsExpanded(!isExpanded)}
+        style={{
+          width: '100%',
+          padding: '8px 20px',
+          background: 'none',
+          border: 'none',
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '6px',
+          fontSize: '0.72rem',
+          fontWeight: 600,
+          color: translationConfig.surgicalPrompt ? 'var(--accent-primary)' : 'var(--text-muted)',
+          transition: 'all 0.15s',
+        }}
+      >
+        <span style={{
+          transform: isExpanded ? 'rotate(90deg)' : 'none',
+          transition: 'transform 0.15s',
+          display: 'inline-block',
+          fontSize: '0.6rem',
+        }}>▶</span>
+        ✏️ Chỉ dẫn dịch tuỳ chỉnh
+        {translationConfig.surgicalPrompt && (
+          <span style={{
+            fontSize: '0.58rem',
+            padding: '1px 6px',
+            background: 'rgba(124,106,240,0.1)',
+            borderRadius: 'var(--radius-sm)',
+            color: 'var(--accent-primary)',
+          }}>
+            Đang dùng
+          </span>
+        )}
+      </button>
+
+      {isExpanded && (
+        <div style={{ padding: '0 20px 12px' }}>
+          <textarea
+            className="input"
+            style={{
+              width: '100%',
+              minHeight: '60px',
+              fontSize: '0.75rem',
+              resize: 'vertical',
+              fontFamily: 'monospace',
+            }}
+            placeholder="VD: Dịch tiếng Việt tự nhiên, dễ hiểu. Không dùng Hán Việt. Dịch 武力 = Sức mạnh, 魅力 = Sức hút, 体能与力量 = Thể lực và sức mạnh..."
+            value={translationConfig.surgicalPrompt}
+            onChange={(e) => setTranslationConfig({ surgicalPrompt: e.target.value })}
+          />
+          <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)', marginTop: '3px', lineHeight: '1.3' }}>
+            💡 Chỉ dẫn này được thêm vào prompt dịch với ưu tiên cao nhất. Dùng để kiểm soát phong cách dịch.
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

@@ -614,7 +614,7 @@ ${contextBlock}
 RULES:
 1. [entry_name] items are lorebook entry titles used in getwi() calls. The translated name MUST be used consistently wherever this entry is referenced.
 2. [keyword] items are EJS trigger keywords, NPC/location aliases, or comparison strings. Translate naturally but consistently.
-3. Chinese proper nouns → Hán Việt (Sino-Vietnamese reading). Japanese proper nouns → Romaji.
+3. Chinese proper nouns → Sino-Vietnamese reading for names only. Japanese proper nouns → Romaji. All descriptive text → natural modern Vietnamese.
 4. Western/Fantasy names transcribed into CJK → restore to original Latin spelling.
 5. Short system/technical terms should remain concise after translation.
 6. NEVER translate technical tokens (variable names, function names, CSS selectors).

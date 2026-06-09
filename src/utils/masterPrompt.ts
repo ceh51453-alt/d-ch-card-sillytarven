@@ -138,7 +138,7 @@ A single mismatch = total system crash.`;
    Only the rules relevant to the current field type
    ════════════════════════════════════════════════════════════════════ */
 
-/** Narrative fields: Hán Việt, register, pronouns, tone */
+/** Narrative fields: proper nouns, register, pronouns, tone */
 function buildNarrativeRules(sourceLang: string, targetLang: string): string {
   const isVietnamese = targetLang.toLowerCase().includes('việt') || targetLang.toLowerCase().includes('vietnamese');
   const isChinese = sourceLang.includes('中') || sourceLang.toLowerCase().includes('chinese');
@@ -150,26 +150,27 @@ TRANSLATION PRINCIPLES (NARRATIVE):
 
   if (isChinese && isVietnamese) {
     rules += `
-P1 — Sino-Vietnamese Pronunciation (Hán Việt) for Chinese Source Text:
-When the source language is Chinese, ALL proper nouns MUST be rendered in their Sino-Vietnamese (Hán Việt) reading. This is mandatory and non-negotiable. Do NOT use Mandarin Pinyin transliterations. Apply Hán Việt to:
+P1 — Proper Noun Handling for Chinese Source Text:
+When the source language is Chinese, proper nouns (names, places, dynasties, sects) should use their Sino-Vietnamese reading. Do NOT use Mandarin Pinyin transliterations. Apply Sino-Vietnamese to:
   - Personal names:      李明 → Lý Minh  (NOT: Lǐ Míng)
   - Place names:         洛阳 → Lạc Dương (NOT: Luòyáng)
   - Cultivation ranks:   筑基期 → Trúc Cơ Kỳ
   - Martial arts sects:  少林寺 → Thiếu Lâm Tự
   - Techniques/Skills:   九阴真经 → Cửu Âm Chân Kinh
   - Official titles:     皇帝 → Hoàng Đế, 将军 → Tướng Quân
-  - Artifacts/Objects:   乾坤袋 → Càn Khôn Đại
-  - Cultivation stages:  练气 → Luyện Khí, 金丹 → Kim Đan
+
+For ALL descriptive text, traits, abilities, UI labels, and dialogue: translate into NATURAL, MODERN Vietnamese that is easy to understand. Do NOT use archaic Sino-Vietnamese for descriptions.
+  Examples: 身壮体健 → Thân thể cường tráng (NOT "Thân tráng thể kiện"), 相貌平平 → Ngoại hình bình thường (NOT "Tướng mạo bình bình"), 体能与力量 → Thể lực và sức mạnh (NOT "Thể năng và lực lượng").
 
 WESTERN/FANTASY NAMES EXCEPTION:
-For non-Chinese names (Western, European, Fantasy, Sci-fi) that are phonetically transcribed into Chinese characters (e.g., 维拉, 塞勒涅, 亚瑟, 艾琳), you MUST translate them back to their original English/Latin spelling (e.g., Vera, Selene, Arthur, Irene). ABSOLUTELY DO NOT translate these phonetic transcriptions into Hán Việt (e.g., NEVER output "Vi Lạp", "Tắc Lặc Niết", "Á Sắt", "Ngải Lâm"). The Hán Việt instruction above applies EXCLUSIVELY to native Chinese names (李明, 洛阳, 少林寺).`;
+For non-Chinese names (Western, European, Fantasy, Sci-fi) that are phonetically transcribed into Chinese characters (e.g., 维拉, 塞勒涅, 亚瑟, 艾琳), you MUST translate them back to their original English/Latin spelling (e.g., Vera, Selene, Arthur, Irene). ABSOLUTELY DO NOT translate these phonetic transcriptions into Sino-Vietnamese.`;
   }
 
   if (isJapanese && isVietnamese) {
     rules += `
 P1 — Japanese Proper Nouns (Romaji Transliteration):
 When source is Japanese, ALL proper nouns MUST be transliterated using standard Romaji. This is mandatory.
-Do NOT apply Hán Việt (Sino-Vietnamese) to Japanese names — even if they use Kanji characters that look identical to Chinese.
+Do NOT apply Sino-Vietnamese to Japanese names — even if they use Kanji characters that look identical to Chinese.
   - Personal names:  田中 → Tanaka (NOT: Điền Trung), 桜 → Sakura (NOT: Anh)
   - Place names:     東京 → Tokyo (NOT: Đông Kinh), 大阪 → Osaka (NOT: Đại Phản)
   - School names:    浦原学院 → Urahara Gakuin, 鶴見高校 → Tsurumi Koukou
@@ -183,10 +184,11 @@ Do NOT apply Hán Việt (Sino-Vietnamese) to Japanese names — even if they us
   if (isVietnamese && !isChinese && !isJapanese) {
     rules += `
 P1 — Proper Noun Transliteration (Mixed/Auto-detect Source):
-  - Chinese proper nouns (中文) → Hán Việt / Sino-Vietnamese reading. Do NOT use Pinyin.
-  - Japanese proper nouns (日本語) → standard Romaji transliteration. Do NOT apply Hán Việt to Japanese names.
+  - Chinese proper nouns (中文) → Sino-Vietnamese reading for names only. Do NOT use Pinyin.
+  - Japanese proper nouns (日本語) → standard Romaji transliteration. Do NOT apply Sino-Vietnamese to Japanese names.
   - Distinguish by context: if a character card is clearly Japanese-themed (school life, Japanese cities, -san/-chan), use Romaji for all names.
-  - WESTERN/FANTASY NAMES EXCEPTION: For non-Chinese names (Western, European, Fantasy, Sci-fi) phonetically transcribed into Chinese characters (e.g., 维拉→Vera, 塞勒涅→Selene, 亚瑟→Arthur), restore them to their original Latin spelling. NEVER apply Hán Việt to these phonetic transcriptions.`;
+  - All descriptive text → translate into natural, modern Vietnamese.
+  - WESTERN/FANTASY NAMES EXCEPTION: For non-Chinese names phonetically transcribed into CJK (e.g., 维拉→Vera, 塞勒涅→Selene, 亚瑟→Arthur), restore them to their original Latin spelling.`;
   }
 
   if (isVietnamese) {
@@ -200,8 +202,8 @@ Character card text encompasses multiple registers. Identify and match each one:
 P3 — Tone Consistency & No Anachronism:
 If the card is set in an ancient Chinese world, do not introduce modern Vietnamese slang. If it is a modern urban setting, do not use archaic register. Match the world's temporal and cultural texture.
 
-P4 — Preserve Untranslatable Cultural Terms:
-Some culturally specific terms have no Vietnamese equivalent and should be kept as Hán Việt loanwords because Vietnamese readers of this genre expect and understand them: 气 (Khí), 丹田 (Đan Điền), 道 (Đạo), 境界 (Cảnh Giới), etc. Do not attempt clumsy paraphrases.`;
+P4 — Culturally Specific Terms:
+Some culturally specific terms are commonly understood by Vietnamese readers of this genre and can be kept: 气 (Khí), 丹田 (Đan Điền), 道 (Đạo), 境界 (Cảnh Giới). However, always prioritize readability — if a simpler Vietnamese expression exists and is commonly understood, prefer that.`;
   }
 
   return rules;

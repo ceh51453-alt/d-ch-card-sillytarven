@@ -16,6 +16,8 @@ export interface CJKToken {
   isIdentifier?: boolean;
   isDotNotation?: boolean;
   isObjectKey?: boolean;
+  isCssClass?: boolean;
+  isHtmlAttr?: boolean;
 }
 
 /**
@@ -223,14 +225,19 @@ function restoreCSSFromOriginal(original: string, translated: string): string {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
- * Extracts segments of CJK text, skipping code brackets, braces, fullwidth
- * punctuation (（），。：；！？), and optionally any caller-supplied
- * ProtectedZones (e.g. CSS property-name positions).
+ * Extracts segments of CJK text as contiguous runs, using CJK punctuation
+ * (，。、！？：；…（）「」『』【】〈〉《》) as JOINERS between CJK text runs
+ * so that full sentences are captured as single tokens instead of being
+ * split at every punctuation mark.
  *
- * EXCLUDED unicode ranges:
- * - \u3000-\u303f  CJK Symbols & Punctuation  (。、「」 …)
- * - \uff00-\uff64  Fullwidth punctuation       (（），：；！？ …)
- * INCLUDED unicode ranges:
+ * CJK PUNCTUATION as JOINERS (connect CJK text on both sides):
+ * - \u3001-\u3002  、。
+ * - \u3008-\u3011  〈〉《》「」『』【】
+ * - \u3014-\u301b  〔〕〖〗〘〙〚〛
+ * - \uff01,\uff08-\uff09,\uff0c,\uff0e,\uff1a,\uff1b,\uff1f,\uff5e  ！（），．：；？～
+ * - \u2013-\u2014 –—  \u2018-\u201d ''"" \u2026 …
+ *
+ * INCLUDED unicode ranges (primary CJK text characters):
  * - \u4e00-\u9fff  CJK Unified Ideographs
  * - \u3400-\u4dbf  CJK Extension A
  * - \u3040-\u30ff  Hiragana + Katakana
@@ -247,8 +254,14 @@ export function extractCJKTokens(
   mvuDictionary?: Record<string, string>
 ): CJKToken[] {
   const tokens: CJKToken[] = [];
-  const regex =
-    /[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u30ff\uac00-\ud7af\uff65-\uffdc]+(?:[ \t0-9.\-_%]+[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u30ff\uac00-\ud7af\uff65-\uffdc]+)*/g;
+  // CJK ideograph ranges (primary text characters)
+  const CJK = '\\u4e00-\\u9fff\\u3400-\\u4dbf\\u3040-\\u30ff\\uac00-\\ud7af\\uff65-\\uffdc';
+  // CJK punctuation joiners: ，。、！？：；…—–\u2018\u2019\u201c\u201d～．（）「」『』【】〈〉《》〔〕〖〗〘〙〚〛
+  const CPUNCT = '\\u2013\\u2014\\u2018-\\u201d\\u2026\\u3001\\u3002\\u3008-\\u3011\\u3014-\\u301b\\uff01\\uff08\\uff09\\uff0c\\uff0e\\uff1a\\uff1b\\uff1f\\uff5e';
+  const regex = new RegExp(
+    `[${CJK}]+(?:[${CPUNCT} \\t0-9.\\-_%]+[${CJK}]+)*`,
+    'g'
+  );
 
   let match: RegExpExecArray | null;
   let id = 1;
@@ -266,23 +279,41 @@ export function extractCJKTokens(
     const contextBefore = text.slice(Math.max(0, mStart - 80), mStart);
     const contextAfter  = text.slice(mEnd, Math.min(text.length, mEnd + 30));
 
-    // Skip CJK inside CSS function calls: e.g. var(--中文)
-    const isCssFunc  = /[a-zA-Z-]+\s*\(\s*$/.test(contextBefore);
-    const isCssValue = isCssFunc && /^\s*[\d\s,.)px%ems]+/.test(contextAfter);
-    if (isCssValue) continue;
+    // Skip CJK used as CSS variables (e.g., var(--中文) or --中文: ...)
+    const isCssVar = /--$/.test(contextBefore);
+    if (isCssVar) continue;
 
-    // Check if it's used as a JS identifier (unquoted object key or dot notation)
-    const isObjectKey = /^\s*:/.test(contextAfter) && !/^\s*:\/\//.test(contextAfter);
-    const isDotNotation = /\.\s*$/.test(contextBefore);
-    const isIdentifier = isObjectKey || isDotNotation;
+    // 1. JS Object Key
+    // Must be preceded by {, ,, or newline/spaces, optionally followed by a quote.
+    const isObjectKey = /(?:[{,]\s*|\n\s*|^['"\s]*)['"]?$/.test(contextBefore) && 
+                        /^['"]?\s*:/.test(contextAfter) && 
+                        !/^['"]?\s*:\/\//.test(contextAfter);
+
+    // 2. JS Dot Notation vs CSS Class
+    // JS dot notation usually follows a variable name (alphanumeric, _, $, or closing bracket)
+    const isJsDotNotation = /[a-zA-Z0-9_$\])}]\s*\.\s*$/.test(contextBefore);
+
+    // CSS class usually follows whitespace, quotes, tag names, or structural combinators
+    const isCssClass = !isJsDotNotation && /(?:^|['"\s,>+~{(])[a-zA-Z0-9-]*\.\s*$/.test(contextBefore);
+
+    // 3. HTML Attributes
+    const isHtmlAttr = /(?:class|id|name|for|data-[a-zA-Z0-9_-]+)\s*=\s*(?:"[^"]*|'[^']*)$/.test(contextBefore);
+
+    const isIdentifier = isObjectKey || isJsDotNotation || isCssClass || isHtmlAttr;
 
     const isMvuVariable = mvuDictionary && mvuDictionary[match[0].trim()];
 
-    if (isIdentifier && cssCjkHandling === 'preserve' && !isMvuVariable) {
-      continue;
-    }
-
-    tokens.push({ id: id++, text: match[0], start: mStart, end: mEnd, isIdentifier, isDotNotation, isObjectKey });
+    tokens.push({
+      id: id++,
+      text: match[0],
+      start: mStart,
+      end: mEnd,
+      isIdentifier,
+      isDotNotation: isJsDotNotation,
+      isObjectKey,
+      isCssClass,
+      isHtmlAttr
+    });
   }
   return tokens;
 }
@@ -301,23 +332,49 @@ export function reinsertTranslations(original: string, tokens: CJKToken[]): stri
       let replaceStart = token.start;
       const replaceEnd = token.end;
 
+      // Check if the CJK token is ALREADY surrounded by quotes in the original text.
+      // e.g. '西晋' → regex extracted 西晋 without quotes, but the source has quotes.
+      // If we add quotes again, we get ''Tây Tấn'' which is a fatal JS SyntaxError.
+      const charBefore = original.charAt(replaceStart - 1);
+      const charAfter  = original.charAt(replaceEnd);
+      const alreadyQuoted =
+        (charBefore === "'" && charAfter === "'") ||
+        (charBefore === '"' && charAfter === '"');
+
       if (token.isDotNotation && finalTranslation.includes(' ')) {
-        const dotIndex = original.lastIndexOf('.', replaceStart);
-        if (dotIndex !== -1 && !original.substring(dotIndex + 1, replaceStart).includes('\n')) {
-          replaceStart = dotIndex;
-          finalTranslation = `['${finalTranslation}']`;
+        // JS Dot notation: rewrite to bracket notation
+        if (!alreadyQuoted) {
+          const dotIndex = original.lastIndexOf('.', replaceStart);
+          if (dotIndex !== -1 && !original.substring(dotIndex + 1, replaceStart).includes('\n')) {
+            replaceStart = dotIndex;
+            finalTranslation = `['${finalTranslation}']`;
+          }
         }
       } else if (token.isObjectKey && (finalTranslation.includes(' ') || /[À-ỹ]/.test(finalTranslation))) {
-        finalTranslation = `'${finalTranslation}'`;
-      } else if (token.isIdentifier) {
+        // JS Object Key: wrap in quotes
+        if (!alreadyQuoted) {
+          finalTranslation = `'${finalTranslation}'`;
+        }
+      } else if (token.isCssClass) {
+        // CSS Class & jQuery Selector: replace spaces with dots to act as multiple classes matching the HTML
         if (finalTranslation.includes(' ') && !finalTranslation.startsWith('[')) {
-          finalTranslation = finalTranslation.replace(/\s+/g, '_');
+          if (!alreadyQuoted) {
+            finalTranslation = finalTranslation.replace(/\s+/g, '.');
+          }
+        }
+      } else if (token.isHtmlAttr) {
+        // HTML Attributes (id, data, etc.): If it's ID, use underscore.
+        // For class, spaces are fine (they act as multiple classes which CSS will match using dots).
+        // Let's check context before for id vs class
+        const contextBefore = original.substring(Math.max(0, replaceStart - 50), replaceStart);
+        if (/id\s*=\s*['"]\s*$/.test(contextBefore)) {
+           finalTranslation = finalTranslation.replace(/\s+/g, '_');
         }
       }
       
       // AUTO-SPACE FIX FOR VIETNAMESE CJK UNITS
       if (finalTranslation && /^[a-zA-ZÀ-ỹ]/.test(finalTranslation) && !finalTranslation.startsWith('[')) {
-        const prevChar = original.charAt(replaceStart - 1);
+        const prevChar = result.charAt(replaceStart - 1);
         if (prevChar && /[\d\}\)\]>]/.test(prevChar)) {
           finalTranslation = ' ' + finalTranslation;
         }
@@ -487,6 +544,9 @@ function applyBatchTranslations(
 
   const clean = (token: CJKToken, raw: string): string => {
     let t = raw;
+    // Strip any hallucinated [context: ...] that the LLM might echo back
+    t = t.replace(/\[context:.*?\]/gi, '').trim();
+
     if (t.startsWith(token.text)) {
       t = t.substring(token.text.length).trim().replace(/^[\s:=>t()\[\]{}]+/, '').trim();
     }
@@ -494,24 +554,43 @@ function applyBatchTranslations(
     const bracket = `[${token.text}]`;
     if (t.endsWith(paren))   t = t.slice(0, -paren.length).trim();
     if (t.endsWith(bracket)) t = t.slice(0, -bracket.length).trim();
-    return sanitizeTranslatedText(t);
+    
+    t = sanitizeTranslatedText(t);
+
+    // Clean up LLM syntax reflections before performing safety checks
+    // 1. Strip leading key-value identifier prefix (e.g. desc: 'translation' -> 'translation')
+    t = t.replace(/^[a-zA-Z_$][a-zA-Z0-9_$]*\s*[:=]\s*/, '');
+    
+    // 2. Strip leading/trailing quotes, commas, semicolons, and spaces
+    t = t.replace(/^['"`\s]+|['"`\s,;]+$/g, '');
+
+    // SAFETY: Reject translations containing structural syntax characters.
+    // Short tokens (<=6 chars, likely identifiers) -> also reject quotes
+    // Long tokens (>6 chars, full sentences with punct) -> allow quotes in natural text
+    if (/[<>{}`]/.test(t)) return '';
+    if (/['"]/.test(t) && token.text.length <= 6) return '';
+    return t;
   };
 
-  if (parsedTranslations.length === batch.length) {
-    // Positional mapping (most reliable when line count matches)
-    for (let i = 0; i < batch.length; i++) {
-      const cleaned = clean(batch[i], parsedTranslations[i].text);
-      if (cleaned) { batch[i].translated = cleaned; matched++; }
-    }
-  } else {
-    // Strict ID-based mapping
+  const validIdCount = parsedTranslations.filter(p => p.id !== undefined).length;
+
+  if (validIdCount >= batch.length * 0.5) {
+    // Prefer ID-based mapping to prevent scrambled translations
     for (const p of parsedTranslations) {
       if (p.id !== undefined) {
         const token = batch.find(t => t.id === p.id);
-        if (token) {
+        if (token && !token.translated) {
           const cleaned = clean(token, p.text);
           if (cleaned) { token.translated = cleaned; matched++; }
         }
+      }
+    }
+  } else if (parsedTranslations.length === batch.length) {
+    // Fallback to positional mapping only if IDs are mostly missing
+    for (let i = 0; i < batch.length; i++) {
+      if (!batch[i].translated) {
+        const cleaned = clean(batch[i], parsedTranslations[i].text);
+        if (cleaned) { batch[i].translated = cleaned; matched++; }
       }
     }
   }
@@ -549,7 +628,10 @@ export async function surgicalTranslate(
   strictVerification: boolean = true,
   onProgress?: TranslationProgressCallback,
   cssCjkHandling: 'preserve' | 'translate' = 'preserve',
-  customSchema?: string
+  customSchema?: string,
+  customPrompt?: string,
+  fieldLabel?: string,
+  surgicalUserPrompt?: string
 ): Promise<{ translated: string; success: boolean; fallbackTriggered: boolean }> {
   const { callProvider } = await import('./apiClient');
 
@@ -593,13 +675,9 @@ export async function surgicalTranslate(
   }
 
   // ── Step 3: Deduplicate pending tokens ────────────────────────────────────
-  // Only the first occurrence of each unique string is sent to the LLM;
-  // translations are propagated to all duplicates later via cache (Step 9).
-  const uniqueMap = new Map<string, CJKToken>();
-  for (const t of pendingTokens) {
-    if (!uniqueMap.has(t.text)) uniqueMap.set(t.text, t);
-  }
-  const uniqueTokens = Array.from(uniqueMap.values());
+  // User explicitly requested to NOT deduplicate ("không sợ tốn token... 1 dịch lại")
+  // so that repeated words get translated differently based on their unique contexts.
+  const uniqueTokens = pendingTokens;
 
   // ── Step 4: Build LLM prompt ───────────────────────────────────────────────
   const glossaryPrompt = glossary?.length
@@ -626,16 +704,19 @@ export async function surgicalTranslate(
   const langRules = isVietnamese
     ? `
 VIETNAMESE-SPECIFIC RULES:
-- Chinese proper nouns (人名, 地名, 国名, 官职) → MUST use Hán Việt (Sino-Vietnamese reading).
-  Examples: 清河 → Thanh Hà, 慕容冲 → Mộ Dung Xung, 洛阳 → Lạc Dương, 东晋 → Đông Tấn, 前秦 → Tiền Tần.
-- Dynasty/era names → Hán Việt. Examples: 永嘉 → Vĩnh Gia, 太元 → Thái Nguyên, 建元 → Kiến Nguyên.
-- Titles/positions → Hán Việt. Examples: 太守 → Thái thú, 刺史 → Thứ sử, 将军 → Tướng quân.
+- Translate into NATURAL, MODERN Vietnamese that is easy to understand. Do NOT use archaic Hán Việt (Sino-Vietnamese) for descriptive text.
+- Chinese proper nouns (人名, 地名, 国名) → Use Hán Việt reading ONLY for names. Examples: 清河 → Thanh Hà, 慕容冲 → Mộ Dung Xung, 洛阳 → Lạc Dương.
+- Dynasty/era names → Hán Việt. Examples: 东晋 → Đông Tấn, 前秦 → Tiền Tần, 永嘉 → Vĩnh Gia.
+- All OTHER text (descriptions, traits, abilities, UI labels, dialogue) → Translate into plain, natural Vietnamese. 
+  Examples: 身壮体健 → Thân thể cường tráng (NOT "Thân tráng thể kiện"), 相貌平平 → Ngoại hình bình thường (NOT "Tướng mạo bình bình"), 弱不胜衣 → Yếu đuối không chịu nổi áo (NOT "Nhược bất thắng y"), 体能与力量 → Thể lực và sức mạnh (NOT "Thể năng và lực lượng"), 容貌与气度 → Dung mạo và phong thái.
 - Use natural Vietnamese roleplay pronouns (ta, ngươi, hắn, nàng).
-- Maintain literary/classical Vietnamese tone for historical content.`
+- Keep the tone fitting for historical content but always prioritize readability over literary style.`
     : '';
 
   const systemPrompt =
     `You are a professional CJK-to-${targetLang} translation engine for game/roleplay character cards.
+${fieldLabel ? `You are currently translating the field: "${fieldLabel}". Use this to understand which part of the character card these text snippets belong to.
+` : ''}
 
 INPUT FORMAT:  Lines formatted as "#{{id}}\t{{CJK text}}" or "#{{id}}\t{{CJK text}}\t[context: ...]"
 OUTPUT FORMAT: Return ONLY "#{{id}}\t{{translated text}}" for EACH input line, one per item.
@@ -649,17 +730,18 @@ CRITICAL RULES:
 6. Keep ALL English text exactly as-is (CSS properties, variable names, HTML tags, etc.).
 7. Translate 无/無/没有 as the correct "none/nothing/empty" word in ${targetLang} (e.g. "Không" or "Không có" in Vietnamese). NEVER translate it as a date, month, or number.
 8. CSS property names (gap, flex, display, margin, padding, border, color, width, height, font, background, grid, position, opacity, overflow, transform, transition, cursor, etc.) MUST NEVER appear in your translations — they are code, not prose.
-9. If a [context: ...] hint is present, use it to understand meaning but do NOT include it in output.
-${langRules}${glossaryPrompt}${mvuPrompt}` +
+9. [CRITICAL CONTEXT RULE]: The [context: ...] provides surrounding text ONLY for you to understand the situation. DO NOT translate the context! DO NOT output the context! Your output MUST strictly be the translation of the exact CJK text alone. If you output the context or any HTML tags, the system will crash!
+${langRules}${surgicalUserPrompt ? `\n\nUSER SURGICAL INSTRUCTIONS (HIGHEST PRIORITY — override any conflicting rules above):\n${surgicalUserPrompt}` : ''}${glossaryPrompt}${mvuPrompt}` +
+    (customPrompt ? `\n\nUSER DIRECTIVES & RAG CONTEXT:\n${customPrompt}` : '') +
     (customSchema ? `\n\nSCHEMA CONTEXT:\n${customSchema}` : '') +
-    `\n\nORIGINAL CODE/REGEX CONTEXT (For Reference Only):\nBelow is the full original code/regex block you are currently translating. Use it to understand the full context of the variables and text snippets:\n\`\`\`\n${text.slice(0, 10000)}\n\`\`\``;
+    `\n\nORIGINAL CODE/REGEX CONTEXT (For Reference Only):\nBelow is the full original code/regex block you are currently translating. Use it to understand the full context of the variables and text snippets:\n\`\`\`\n${text.slice(0, 50000)}\n\`\`\``;
 
   // ── Step 5: Batch configuration ────────────────────────────────────────────
   const MEGA_BATCH_MAX   = 1500;
   const FALLBACK_BATCH   = 500;
   const MICRO_BATCH      = 50;
   const MAX_RETRIES      = 2;
-  const PARALLEL_CONCUR  = 2;
+  const PARALLEL_CONCUR  = 4;
   const STAGGER_MS       = 2000;
   const BATCH_TIMEOUT_MS = 500_000; // 500s per batch
 
@@ -696,14 +778,12 @@ ${langRules}${glossaryPrompt}${mvuPrompt}` +
 
     const payload = batch
       .map(t => {
-        // For short tokens add surrounding context so the LLM grasps meaning
-        if (t.text.length <= 2) {
-          const ctxStart = Math.max(0, t.start - 30);
-          const ctxEnd   = Math.min(text.length, t.end + 30);
-          const ctx      = text.slice(ctxStart, ctxEnd).replace(/[\n\r]+/g, ' ').trim();
-          return `#${t.id}\t${t.text}\t[context: ${ctx}]`;
-        }
-        return `#${t.id}\t${t.text}`;
+        // Provide surrounding context for EVERY token so the LLM grasps meaning in long paragraphs
+        // Gemini 3.1 Pro has massive context — use ±200 chars to capture field labels/section headers
+        const ctxStart = Math.max(0, t.start - 200);
+        const ctxEnd   = Math.min(text.length, t.end + 200);
+        const ctx      = text.slice(ctxStart, ctxEnd).replace(/[\n\r]+/g, ' ').trim();
+        return `#${t.id}\t${t.text}\t[context: ${ctx}]`;
       })
       .join('\n');
 
@@ -848,16 +928,12 @@ ${langRules}${glossaryPrompt}${mvuPrompt}` +
       }
     }
 
-    // ── Step 9: Propagate translations to all duplicate tokens ────────────────
-    const cache: Record<string, string> = {};
-    for (const t of tokens) {
-      if (t.translated && t.translated !== t.text && t.translated.trim()) {
-        cache[t.text] = t.translated;
-      }
-    }
+    // ── Step 9: Fill untranslated tokens with original text (no dedup propagation) ──
+    // Each token keeps its own individual translation. If a token was not
+    // translated by the LLM (missed in the response), fall back to original text.
     for (const t of tokens) {
       if (!t.translated?.trim()) {
-        t.translated = cache[t.text] ?? t.text; // keep original if still untranslated
+        t.translated = t.text; // keep original CJK if LLM missed it
       }
     }
 
