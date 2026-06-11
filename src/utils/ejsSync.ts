@@ -587,6 +587,7 @@ export async function aiTranslateEjsEntries(
   proxy: ProxySettings,
   signal?: AbortSignal,
   cardContext?: string,
+  customPrompt?: string,
 ): Promise<{ entryTranslations: Record<string, string>; keywordTranslations: Record<string, string> }> {
   const allItems = [
     ...entryNames.map(n => ({ text: n, type: 'entry_name' })),
@@ -604,6 +605,10 @@ export async function aiTranslateEjsEntries(
     contextBlock = `\n\nCONTEXT (EJS code from the card for reference):\n${cardContext.slice(0, 3000)}`;
   }
 
+  const customPromptBlock = customPrompt?.trim()
+    ? `\n\n═══ USER CUSTOM TRANSLATION RULES (HIGHEST PRIORITY) ═══\n${customPrompt.trim()}\n═══ END CUSTOM RULES ═══`
+    : '';
+
   const systemPrompt = `You are a specialized translator for SillyTavern EJS character cards.
 You must translate the following items from their original language into ${targetLang}.
 
@@ -614,10 +619,10 @@ ${contextBlock}
 RULES:
 1. [entry_name] items are lorebook entry titles used in getwi() calls. The translated name MUST be used consistently wherever this entry is referenced.
 2. [keyword] items are EJS trigger keywords, NPC/location aliases, or comparison strings. Translate naturally but consistently.
-3. Chinese proper nouns → Sino-Vietnamese reading for names only. Japanese proper nouns → Romaji. All descriptive text → natural modern Vietnamese.
+3. Chinese proper nouns (character names, places) → Sino-Vietnamese (Hán Việt) reading. Japanese proper nouns → Romaji. Do NOT translate English. Follow user custom rules if provided.
 4. Western/Fantasy names transcribed into CJK → restore to original Latin spelling.
 5. Short system/technical terms should remain concise after translation.
-6. NEVER translate technical tokens (variable names, function names, CSS selectors).
+6. NEVER translate technical tokens (variable names, function names, CSS selectors).${customPromptBlock}
 
 OUTPUT FORMAT — STRICT JSON object mapping original → translated:
 {
@@ -848,6 +853,151 @@ EXAMPLE (After - CORRECT):
   setvar('skill_path', { 'Loại': 'Võ công', 'Mô Tả': '...' });`;
 
   return block;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   POST-TRANSLATION AUTO-FIX — Enforce EJS dictionary in translated output
+   ═══════════════════════════════════════════════════════════════════ */
+
+/**
+ * Auto-fix EJS entry names in getwi() / activewi() calls.
+ * Scans translated text for original (untranslated) entry names in API calls
+ * and replaces them with the translated version from the dictionary.
+ *
+ * This is the EJS equivalent of MVU's autoFixMvuVariables().
+ */
+export function autoFixEjsEntryNames(
+  translated: string,
+  ejsEntryNameDict: Record<string, string>,
+): { text: string; fixes: { found: string; replaced: string }[] } {
+  const fixes: { found: string; replaced: string }[] = [];
+  let text = translated;
+
+  const entries = Object.entries(ejsEntryNameDict).filter(([k, v]) => k && v && k !== v);
+  if (entries.length === 0) return { text, fixes };
+
+  for (const [original, translatedName] of entries) {
+    // Pattern: getwi(null, 'Original Name') or getWorldInfo(null, "Original Name")
+    // Also: activewi(null, 'Original Name', true/false) and activateWorldInfo(...)
+    // Handles: null, '', "", variable as first arg
+    const escapedOriginal = escapeRegex(original);
+
+    const patterns = [
+      // getwi / getWorldInfo
+      new RegExp(
+        `((?:getwi|getWorldInfo)\\s*\\(\\s*(?:null|''|""|[\\w.]+)\\s*,\\s*)(['"\`])${escapedOriginal}\\2`,
+        'g',
+      ),
+      // activewi / activateWorldInfo
+      new RegExp(
+        `((?:activewi|activateWorldInfo)\\s*\\(\\s*(?:null|''|""|[\\w.]+)\\s*,\\s*)(['"\`])${escapedOriginal}\\2`,
+        'g',
+      ),
+      // getWorldInfoData / getWorldInfoActivatedData
+      new RegExp(
+        `((?:getWorldInfoData|getWorldInfoActivatedData)\\s*\\(\\s*(?:null|''|""|[\\w.]+)\\s*,\\s*)(['"\`])${escapedOriginal}\\2`,
+        'g',
+      ),
+    ];
+
+    for (const pattern of patterns) {
+      const before = text;
+      text = text.replace(pattern, `$1$2${translatedName}$2`);
+      if (text !== before) {
+        fixes.push({ found: original, replaced: translatedName });
+      }
+    }
+  }
+
+  return { text, fixes };
+}
+
+/**
+ * Auto-fix EJS keywords inside <% %> code blocks.
+ * Only modifies content INSIDE EJS blocks to avoid breaking narrative text.
+ * Replaces original CJK keywords with translated versions in:
+ *   - String comparisons (===, ==, !==, !=)
+ *   - .includes(), .indexOf(), .startsWith(), .endsWith()
+ *   - switch/case values
+ *   - String literals (single/double/backtick quoted)
+ *
+ * This is the EJS equivalent of MVU's enforceVariableCasing().
+ */
+export function autoFixEjsKeywords(
+  translated: string,
+  ejsKeywordDict: Record<string, string>,
+): { text: string; fixes: { found: string; replaced: string }[] } {
+  const fixes: { found: string; replaced: string }[] = [];
+
+  const entries = Object.entries(ejsKeywordDict).filter(([k, v]) => k && v && k !== v);
+  if (entries.length === 0) return { text: translated, fixes };
+
+  // Extract EJS blocks, fix keywords inside, reassemble
+  const ejsBlockRegex = /<%[\s\S]*?%>/g;
+  let text = translated;
+  const ejsBlocks: { start: number; end: number; content: string }[] = [];
+
+  let m: RegExpExecArray | null;
+  while ((m = ejsBlockRegex.exec(translated)) !== null) {
+    ejsBlocks.push({ start: m.index, end: m.index + m[0].length, content: m[0] });
+  }
+
+  // Process blocks in reverse order (to preserve indices)
+  for (let i = ejsBlocks.length - 1; i >= 0; i--) {
+    const block = ejsBlocks[i];
+    let fixedBlock = block.content;
+
+    for (const [original, translatedKw] of entries) {
+      // Only replace inside string literals within the EJS block
+      // Pattern: quoted strings containing the original keyword
+      const escapedOriginal = escapeRegex(original);
+
+      // Match the keyword inside any quoted string context
+      const quotedPatterns = [
+        // 'keyword' or "keyword" — exact or as substring
+        new RegExp(`(['"\`])([^'"\`]*?)${escapedOriginal}([^'"\`]*?)\\1`, 'g'),
+      ];
+
+      for (const pattern of quotedPatterns) {
+        const before = fixedBlock;
+        fixedBlock = fixedBlock.replace(pattern, (match, q, pre, post) => {
+          return `${q}${pre}${translatedKw}${post}${q}`;
+        });
+        if (fixedBlock !== before) {
+          // Deduplicate: only add if not already recorded
+          if (!fixes.some(f => f.found === original && f.replaced === translatedKw)) {
+            fixes.push({ found: original, replaced: translatedKw });
+          }
+        }
+      }
+    }
+
+    if (fixedBlock !== block.content) {
+      text = text.slice(0, block.start) + fixedBlock + text.slice(block.end);
+    }
+  }
+
+  return { text, fixes };
+}
+
+/**
+ * Force lorebook entry name/comment to match the EJS entry name dictionary.
+ * When a lorebook name or comment field is translated, ensure it matches
+ * exactly what the EJS dictionary specifies — overriding any AI translation.
+ */
+export function enforceEjsEntryName(
+  original: string,
+  translated: string,
+  ejsEntryNameDict: Record<string, string>,
+): { text: string; forced: boolean } {
+  const trimmedOriginal = original.trim();
+  if (trimmedOriginal in ejsEntryNameDict) {
+    const dictValue = ejsEntryNameDict[trimmedOriginal];
+    if (dictValue && dictValue !== trimmedOriginal && dictValue.trim() !== translated.trim()) {
+      return { text: dictValue, forced: true };
+    }
+  }
+  return { text: translated, forced: false };
 }
 
 /* ═══════════════════════════════════════════════════════════════════

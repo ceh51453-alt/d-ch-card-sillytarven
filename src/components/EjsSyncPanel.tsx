@@ -109,6 +109,7 @@ export default function EjsSyncPanel() {
         proxy,
         undefined,
         ejsContext,
+        translationConfig.ejsTranslationPrompt,
       );
 
       const mergedEntries = { ...ejsEntryNameDict, ...entryTranslations };
@@ -311,6 +312,48 @@ export default function EjsSyncPanel() {
             <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>
               {isVi ? '(1-5, mỗi pass chỉ dịch biến mới)' : '(1-5, each pass translates new vars only)'}
             </span>
+          </div>
+
+          {/* ─── Custom Translation Prompt ─── */}
+          <div style={{
+            marginBottom: 12,
+            borderRadius: 8,
+            border: '1px solid var(--border-subtle)',
+            background: 'var(--bg-primary)',
+            overflow: 'hidden',
+          }}>
+            <div style={{
+              padding: '6px 10px',
+              fontSize: 12,
+              fontWeight: 600,
+              color: 'var(--text-secondary)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+            }}>
+              📝 {isVi ? 'Custom Prompt (tuỳ chỉnh cách dịch entry/keyword)' : 'Custom Prompt (entry/keyword translation rules)'}
+            </div>
+            <textarea
+              value={translationConfig.ejsTranslationPrompt || ''}
+              onChange={(e) => setTranslationConfig({ ejsTranslationPrompt: e.target.value })}
+              placeholder={isVi
+                ? 'Ví dụ: Không dùng Hán Việt, dịch tên nhân vật tự nhiên. Tên Nhật → Romaji...'
+                : 'Example: Do not use Sino-Vietnamese. Translate names naturally. Japanese → Romaji...'}
+              style={{
+                width: '100%',
+                minHeight: 48,
+                maxHeight: 120,
+                padding: '6px 10px',
+                fontSize: 12,
+                fontFamily: 'inherit',
+                background: 'transparent',
+                border: 'none',
+                borderTop: '1px solid var(--border-subtle)',
+                color: 'var(--text-primary)',
+                resize: 'vertical' as const,
+                outline: 'none',
+              }}
+            />
           </div>
 
           {/* ─── Decorator Preserve Toggle ─── */}

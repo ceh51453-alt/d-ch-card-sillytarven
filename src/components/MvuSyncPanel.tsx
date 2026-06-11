@@ -271,7 +271,10 @@ export default function MvuSyncPanel() {
         proxy,
         undefined,
         schemaContext,
-        keyDescriptions
+        keyDescriptions,
+        undefined,
+        undefined,
+        translationConfig.mvuTranslationPrompt,
       );
 
       pushDictionaryHistory(currentDict);
@@ -816,6 +819,51 @@ export default function MvuSyncPanel() {
             <span style={{ color: 'var(--text-muted)', fontSize: '0.65rem' }}>
               {isVi ? '(1-5, mỗi pass chỉ dịch biến mới)' : '(1-5, each pass translates new vars only)'}
             </span>
+          </div>
+
+          {/* ─── Custom Translation Prompt ─── */}
+          <div style={{
+            marginBottom: '12px',
+            borderRadius: 'var(--radius-sm)',
+            border: '1px solid var(--border-subtle)',
+            background: 'var(--bg-primary)',
+            overflow: 'hidden',
+          }}>
+            <div
+              style={{
+                padding: '6px 10px',
+                fontSize: '0.72rem',
+                fontWeight: 600,
+                color: 'var(--text-secondary)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                cursor: 'default',
+              }}
+            >
+              📝 {isVi ? 'Custom Prompt (tuỳ chỉnh cách dịch biến)' : 'Custom Prompt (variable translation rules)'}
+            </div>
+            <textarea
+              value={translationConfig.mvuTranslationPrompt || ''}
+              onChange={(e) => setTranslationConfig({ mvuTranslationPrompt: e.target.value })}
+              placeholder={isVi
+                ? 'Ví dụ: Không dùng Hán Việt, dịch tên nhân vật sang tiếng Việt tự nhiên. Tên Nhật → Romaji...'
+                : 'Example: Do not use Sino-Vietnamese. Translate character names naturally. Japanese names → Romaji...'}
+              style={{
+                width: '100%',
+                minHeight: '52px',
+                maxHeight: '120px',
+                padding: '6px 10px',
+                fontSize: '0.72rem',
+                fontFamily: 'inherit',
+                background: 'transparent',
+                border: 'none',
+                borderTop: '1px solid var(--border-subtle)',
+                color: 'var(--text-primary)',
+                resize: 'vertical',
+                outline: 'none',
+              }}
+            />
           </div>
 
           <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>

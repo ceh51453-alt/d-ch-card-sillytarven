@@ -66,6 +66,10 @@ export default function CustomTranslatePanel() {
         modInstructions: translationConfig.modInstructions,
         enableModThinking: translationConfig.enableModThinking,
         modPreset: translationConfig.modPreset,
+        enableEjsSync: translationConfig.enableEjsSync,
+        ejsEntryNameDict: translationConfig.ejsEntryNameDict,
+        ejsKeywordDict: translationConfig.ejsKeywordDict,
+        ejsDecoratorPreserve: translationConfig.ejsDecoratorPreserve,
       });
 
       // Chunk size: ưu tiên cấu hình người dùng (translationConfig.chunkSize),

@@ -259,6 +259,8 @@ export interface TranslationConfig {
   enableTranslationMemory: boolean;    // Enable Translation Memory (persistent cross-session term/translation cache)
   mvuScanPasses: number;               // Số lần quét biến MVU (Strategy B), mỗi pass chỉ dịch biến mới
   ejsScanPasses: number;               // Số lần quét biến EJS (Strategy C), mỗi pass chỉ dịch biến mới
+  mvuTranslationPrompt: string;        // Custom prompt for Strategy B variable name translation (replaces hardcoded rules)
+  ejsTranslationPrompt: string;        // Custom prompt for Strategy C entry/keyword name translation (replaces hardcoded rules)
   cssCjkHandling: 'preserve' | 'translate'; // How to handle CJK chars found inside CSS values
 }
 

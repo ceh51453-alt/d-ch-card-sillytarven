@@ -1766,7 +1766,8 @@ export async function aiTranslateMvuKeys(
   schemaContext?: string,
   keyDescriptions?: Record<string, string>,
   modInstructions?: string,
-  existingMappings?: Record<string, string>
+  existingMappings?: Record<string, string>,
+  customPrompt?: string,
 ): Promise<Record<string, string>> {
   if (keys.length === 0) return {};
 
@@ -1788,7 +1789,12 @@ export async function aiTranslateMvuKeys(
     ? `\n\n═══ USER MOD INSTRUCTIONS (HIGHEST PRIORITY) ═══\nThe user has provided custom instructions for how variable names should be translated. Follow these instructions ABOVE ALL other rules:\n${modInstructions.trim()}\n═══ END MOD INSTRUCTIONS ═══`
     : '';
 
-  const systemPrompt = `Translate CJK (Chinese/Japanese/Korean) variable names to ${targetLang}. Do NOT translate English or ASCII names. Chinese proper nouns → Sino-Vietnamese reading. Japanese proper nouns → Romaji. Keep consistency with MVU Schema.
+  // Build custom prompt block (user-defined rules for variable name translation)
+  const customPromptBlock = customPrompt?.trim()
+    ? `\n\n═══ USER CUSTOM TRANSLATION RULES (HIGHEST PRIORITY) ═══\nThe user has provided custom instructions for how variable names should be translated. Follow these instructions ABOVE ALL other rules:\n${customPrompt.trim()}\n═══ END CUSTOM RULES ═══`
+    : '';
+
+  const systemPrompt = `Translate CJK (Chinese/Japanese/Korean) variable names to ${targetLang}. Do NOT translate English or ASCII names. Chinese proper nouns (names, places) → Sino-Vietnamese (Hán Việt). Japanese proper nouns → Romaji. Do NOT translate English. Keep consistency with MVU Schema.
 
 You are a variable name translator for SillyTavern character cards.
 Your job: translate variable names from the source language to ${targetLang}.
@@ -1800,25 +1806,24 @@ STRICT RULES:
    - All emotion/feeling variables should follow the same pattern (e.g. Mức X, Độ X)
    - All stat variables should follow the same pattern
 4. If a key is already in Latin/ASCII or English, keep it AS IS. Do NOT translate English.
-5. Chinese proper nouns (character names) should use Sino-Vietnamese reading for names only.
-6. Japanese proper nouns should use Romaji transliteration (e.g. 田中 → Tanaka, 桜 → Sakura).
-7. Keep numeric suffixes and prefixes intact (e.g. "攻击力2" → "Sức Tấn Công 2").
-8. For Vietnamese specifically:
+5. Chinese proper nouns (character names, places, dynasties) → Sino-Vietnamese (Hán Việt) reading. Examples: 清河→Thanh Hà, 慕容冲→Mộ Dung Xung, 洛阳→Lạc Dương.
+6. Japanese proper nouns → Romaji transliteration (e.g. 田中→Tanaka, 桜→Sakura). Do NOT apply Sino-Vietnamese to Japanese names.
+7. Western/Fantasy names transcribed into CJK (e.g. 维拉→Vera, 塞勒涅→Selene) → restore original Latin spelling.
+   Follow user custom rules if provided (custom prompt overrides these defaults).
+8. Keep numeric suffixes and prefixes intact (e.g. \"攻击力2\" → \"Sức Tấn Công 2\").
+9. For Vietnamese specifically:
    - Use Title Case with diacritics: Hảo Cảm, Thể Lực, Trí Tuệ
    - Each word should be properly capitalized
-   - Common patterns: 好感 → Hảo Cảm, 体力 → Thể Lực, 攻击 → Tấn Công
    - Translate based on MEANING, not character-by-character. Examples:
      武力 = Võ Lực (martial force), 魅力 = Sức Hút (charm/charisma), 体力 = Thể Lực (stamina)
      描述 = Mô Tả (description), 说明 = Giải Thích (explanation)
-9. The translated names must be covariant with the Zod Schema — matching the field structure and semantics.
-10. COMPOUND ENUM VALUES: Some keys are compound enum values with structure like "Phase N_Name" (e.g. "阶段 1_静谧", "阶段 2_心动"). Translate the ENTIRE compound value as one unit: "阶段 1_静谧" → "Giai đoạn 1_Tĩnh lặng". Keep the separator character (underscore) and numbering intact. These values appear in z.enum([...]), .prefault('...'), .default('...'), and YAML values — they MUST all be the same translated string.
-11. ██ UNIQUE TRANSLATIONS — ABSOLUTELY CRITICAL ██
+10. The translated names must be covariant with the Zod Schema — matching the field structure and semantics.
+11. COMPOUND ENUM VALUES: Some keys are compound enum values with structure like "Phase N_Name" (e.g. "阶段 1_静谧", "阶段 2_心动"). Translate the ENTIRE compound value as one unit: "阶段 1_静谧" → "Giai đoạn 1_Tĩnh lặng". Keep the separator character (underscore) and numbering intact. These values appear in z.enum([...]), .prefault('...'), .default('...'), and YAML values — they MUST all be the same translated string.
+12. ██ UNIQUE TRANSLATIONS — ABSOLUTELY CRITICAL ██
    Every DIFFERENT source key MUST produce a DIFFERENT translated name. If two source keys have different Chinese characters, their translations MUST be different strings.
    FORBIDDEN: 武力 → "Võ Lực" AND 魅力 → "Võ Lực" (WRONG! Same translation for different keys!)
    CORRECT:   武力 → "Võ Lực" AND 魅力 → "Sức Hút" (Different translations for different keys)
-   FORBIDDEN: 描述 → "Mô Tả" AND 说明 → "Mô Tả" (WRONG!)
-   CORRECT:   描述 → "Mô Tả" AND 说明 → "Giải Thích" (Different!)
-   If you produce duplicate translations for different source keys, the card's variable system will CRASH because two different variables will share the same name.${modBlock}
+   If you produce duplicate translations for different source keys, the card's variable system will CRASH because two different variables will share the same name.${modBlock}${customPromptBlock}
 
 RESPOND in EXACT JSON format (no markdown): {"translations": {"original_key": "Translated Key", ...}}`;
 
@@ -2097,7 +2102,7 @@ export async function aiResolveMvuConflicts(
     })
     .join('\n');
 
-  const systemPrompt = `Translate CJK (Chinese/Japanese/Korean) variable names to ${targetLang}. Do NOT translate English or ASCII names. Chinese proper nouns → Sino-Vietnamese reading. Japanese proper nouns → Romaji. Keep consistency with MVU Schema.
+  const systemPrompt = `Translate CJK (Chinese/Japanese/Korean) variable names to ${targetLang}. Do NOT translate English or ASCII names. Chinese proper nouns → Sino-Vietnamese (Hán Việt). Japanese proper nouns → Romaji. Keep consistency with MVU Schema.
 
 You are a variable name translator for SillyTavern character cards.
 Your job: translate variable names from the source language to ${targetLang}.
@@ -2106,10 +2111,9 @@ STRICT RULES:
 1. Use natural, readable formatting with diacritics (e.g. Vietnamese: Độ Hảo Cảm, Sức Tấn Công). CONSISTENCY is the only formatting rule.
 2. Keep the names SHORT but meaningful (2-4 words max).
 3. If a key is already in Latin/ASCII or English, keep it AS IS.
-4. Chinese proper nouns should use Sino-Vietnamese reading for names only.
-5. Japanese proper nouns should use Romaji.
-6. Every DIFFERENT source key MUST produce a DIFFERENT translated name.
-7. Do NOT repeat the same translation. If you produce duplicate translations for different source keys, the system will crash.
+4. Chinese proper nouns (names, places) → Sino-Vietnamese (Hán Việt). Japanese proper nouns → Romaji. Western/Fantasy names in CJK → restore original Latin spelling.
+5. Every DIFFERENT source key MUST produce a DIFFERENT translated name.
+6. Do NOT repeat the same translation. If you produce duplicate translations for different source keys, the system will crash.
 
 RESPOND in EXACT JSON format: {"translations": {"original_key": "Translated Key", ...}}`;
 

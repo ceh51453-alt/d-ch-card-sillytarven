@@ -12,7 +12,7 @@ import { buildEffectivePrompt } from '../utils/promptBuilder';
 import { surgicalTranslate } from '../utils/surgical';
 import { parsePatchOutput, applyPatches, validatePatchResult } from '../utils/patchEngine';
 import { injectMvuZodSystem } from '../utils/mvuGenerator';
-import { detectEjsCard, extractEjsEntryNames, extractEjsKeywords, aiTranslateEjsEntries, validateEjsSync } from '../utils/ejsSync';
+import { detectEjsCard, extractEjsEntryNames, extractEjsKeywords, aiTranslateEjsEntries, validateEjsSync, autoFixEjsEntryNames, autoFixEjsKeywords, enforceEjsEntryName } from '../utils/ejsSync';
 import type { FieldGroup, FieldGroupConfig, TranslationField } from '../types/card';
 
 
@@ -407,8 +407,8 @@ export function useTranslation() {
           }
         }
 
-        // ─── COVARIANCE FIX: Enforce covariance across initvar, controller, mvu_logic, regex, and tavern_helper fields ───
-        const isCodeOrLogic = field.entryType === 'initvar' || field.entryType === 'controller' || field.entryType === 'mvu_logic' || field.group === 'regex' || field.group === 'tavern_helper';
+        // ─── COVARIANCE FIX: Enforce covariance across initvar, controller, mvu_logic, regex, tavern_helper, AND lorebook fields ───
+        const isCodeOrLogic = field.entryType === 'initvar' || field.entryType === 'controller' || field.entryType === 'mvu_logic' || field.group === 'regex' || field.group === 'tavern_helper' || field.group === 'lorebook';
         if (isCodeOrLogic) {
 
           const covariance = enforceInitvarCovariance(translated, currentMvuDict);
@@ -489,6 +489,44 @@ export function useTranslation() {
           translated = casingResult.text;
           const fixSummary = casingResult.fixes.map(f => `"${f.found}"→"${f.replaced}"`).join(', ');
           store.addLog('info', `🔠 Casing: fixed ${casingResult.fixes.length} variable(s) in ${field.label}: ${fixSummary}`);
+        }
+      }
+
+      // ─── EJS AUTO-FIX: Enforce EJS entry names & keywords (Strategy C) ───
+      if (translated && store.translationConfig.enableEjsSync) {
+        const ejsEntryDict = useStore.getState().translationConfig.ejsEntryNameDict;
+        const ejsKwDict = useStore.getState().translationConfig.ejsKeywordDict;
+
+        // Force lorebook entry name/comment to match EJS dict
+        const isLorebookNameOrComment = field.group === 'lorebook' && (
+          field.path.endsWith('.name') || field.path.endsWith('.comment')
+        ) && field.path.includes('character_book.entries[');
+        if (isLorebookNameOrComment && Object.keys(ejsEntryDict).length > 0) {
+          const enforceResult = enforceEjsEntryName(field.original, translated, ejsEntryDict);
+          if (enforceResult.forced) {
+            store.addLog('info', `🔗 EJS Sync: Forced entry name "${field.original}" → "${enforceResult.text}" (was: "${translated}")`);
+            translated = enforceResult.text;
+          }
+        }
+
+        // Auto-fix getwi()/activewi() entry names
+        if (Object.keys(ejsEntryDict).length > 0) {
+          const entryFixResult = autoFixEjsEntryNames(translated, ejsEntryDict);
+          if (entryFixResult.fixes.length > 0) {
+            translated = entryFixResult.text;
+            const fixSummary = entryFixResult.fixes.map(f => `"${f.found}"→"${f.replaced}"`).join(', ');
+            store.addLog('info', `🔗 EJS EntryName: fixed ${entryFixResult.fixes.length} getwi/activewi call(s) in ${field.label}: ${fixSummary}`);
+          }
+        }
+
+        // Auto-fix keywords inside <% %> EJS blocks
+        if (Object.keys(ejsKwDict).length > 0) {
+          const kwFixResult = autoFixEjsKeywords(translated, ejsKwDict);
+          if (kwFixResult.fixes.length > 0) {
+            translated = kwFixResult.text;
+            const fixSummary = kwFixResult.fixes.map(f => `"${f.found}"→"${f.replaced}"`).join(', ');
+            store.addLog('info', `🔗 EJS Keyword: fixed ${kwFixResult.fixes.length} keyword(s) in ${field.label}: ${fixSummary}`);
+          }
         }
       }
 
@@ -802,9 +840,9 @@ export function useTranslation() {
             }
           }
 
-          // ─── COVARIANCE FIX: Enforce covariance across initvar, controller, mvu_logic, regex, and tavern_helper fields ───
+          // ─── COVARIANCE FIX: Enforce covariance across initvar, controller, mvu_logic, regex, tavern_helper, AND lorebook fields ───
           const bf = batchFields[j];
-          const isBfCodeOrLogic = bf.entryType === 'initvar' || bf.entryType === 'controller' || bf.entryType === 'mvu_logic' || bf.group === 'regex' || bf.group === 'tavern_helper';
+          const isBfCodeOrLogic = bf.entryType === 'initvar' || bf.entryType === 'controller' || bf.entryType === 'mvu_logic' || bf.group === 'regex' || bf.group === 'tavern_helper' || bf.group === 'lorebook';
           if (isBfCodeOrLogic) {
 
             const covariance = enforceInitvarCovariance(translated, mvuDict);
@@ -860,6 +898,44 @@ export function useTranslation() {
               autoFixCount += casingResult.fixes.length;
               const fixSummary = casingResult.fixes.map(f => `"${f.found}"→"${f.replaced}"`).join(', ');
               store.addLog('info', `🔠 Casing: fixed ${casingResult.fixes.length} var(s) in ${batchFields[j].label}: ${fixSummary}`);
+            }
+          }
+
+          // ─── EJS AUTO-FIX (batch): Enforce EJS entry names & keywords ───
+          if (translated && store.translationConfig.enableEjsSync) {
+            const ejsEntryDict = useStore.getState().translationConfig.ejsEntryNameDict;
+            const ejsKwDict = useStore.getState().translationConfig.ejsKeywordDict;
+
+            // Force lorebook entry name/comment to match EJS dict
+            const isLorebookNameOrComment = batchFields[j].group === 'lorebook' && (
+              batchFields[j].path.endsWith('.name') || batchFields[j].path.endsWith('.comment')
+            ) && batchFields[j].path.includes('character_book.entries[');
+            if (isLorebookNameOrComment && Object.keys(ejsEntryDict).length > 0) {
+              const enforceResult = enforceEjsEntryName(batchFields[j].original, translated, ejsEntryDict);
+              if (enforceResult.forced) {
+                store.addLog('info', `🔗 EJS Sync: Forced entry name "${batchFields[j].original}" → "${enforceResult.text}" (was: "${translated}")`);
+                translated = enforceResult.text;
+              }
+            }
+
+            // Auto-fix getwi()/activewi() entry names
+            if (Object.keys(ejsEntryDict).length > 0) {
+              const entryFixResult = autoFixEjsEntryNames(translated, ejsEntryDict);
+              if (entryFixResult.fixes.length > 0) {
+                translated = entryFixResult.text;
+                autoFixCount += entryFixResult.fixes.length;
+                store.addLog('info', `🔗 EJS EntryName: fixed ${entryFixResult.fixes.length} call(s) in ${batchFields[j].label}`);
+              }
+            }
+
+            // Auto-fix keywords inside EJS blocks
+            if (Object.keys(ejsKwDict).length > 0) {
+              const kwFixResult = autoFixEjsKeywords(translated, ejsKwDict);
+              if (kwFixResult.fixes.length > 0) {
+                translated = kwFixResult.text;
+                autoFixCount += kwFixResult.fixes.length;
+                store.addLog('info', `🔗 EJS Keyword: fixed ${kwFixResult.fixes.length} keyword(s) in ${batchFields[j].label}`);
+              }
             }
           }
 
@@ -1146,7 +1222,8 @@ export function useTranslation() {
               schemaContext,
               keyDescriptions,
               undefined,
-              undefined
+              undefined,
+              store.translationConfig.mvuTranslationPrompt,
             );
             
             const mergedDict = { ...existingDict };
@@ -1300,6 +1377,7 @@ export function useTranslation() {
             store.proxy,
             abortRef.current?.signal,
             ejsContext,
+            store.translationConfig.ejsTranslationPrompt,
           );
 
           const mergedEntryDict = { ...existingEntryDict, ...entryTranslations };

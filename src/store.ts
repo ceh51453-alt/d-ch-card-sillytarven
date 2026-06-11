@@ -404,6 +404,8 @@ export const useStore = create<AppState>((set) => ({
     enableTranslationMemory: LS.get('st-translator-tm-enabled', true),
     mvuScanPasses: LS.get('st-translator-mvu-scan-passes', 1),
     ejsScanPasses: LS.get('st-translator-ejs-scan-passes', 1),
+    mvuTranslationPrompt: LS.get('st-translator-mvu-translation-prompt', ''),
+    ejsTranslationPrompt: LS.get('st-translator-ejs-translation-prompt', ''),
     cssCjkHandling: LS.get('st-translator-css-cjk-handling', 'preserve') as 'preserve' | 'translate',
   },
   setTranslationConfig: (partial) =>
@@ -523,6 +525,12 @@ export const useStore = create<AppState>((set) => ({
       if ('ejsScanPasses' in partial) {
         LS.set('st-translator-ejs-scan-passes', next.ejsScanPasses);
       }
+      if ('mvuTranslationPrompt' in partial) {
+        LS.set('st-translator-mvu-translation-prompt', next.mvuTranslationPrompt);
+      }
+      if ('ejsTranslationPrompt' in partial) {
+        LS.set('st-translator-ejs-translation-prompt', next.ejsTranslationPrompt);
+      }
       if ('cssCjkHandling' in partial) {
         LS.set('st-translator-css-cjk-handling', next.cssCjkHandling);
       }
@@ -619,6 +627,8 @@ export const useStore = create<AppState>((set) => ({
       enableTranslationMemory: true,
       mvuScanPasses: 1,
       ejsScanPasses: 1,
+      mvuTranslationPrompt: '',
+      ejsTranslationPrompt: '',
       cssCjkHandling: 'preserve' as const,
     };
 
@@ -667,6 +677,8 @@ export const useStore = create<AppState>((set) => ({
     LS.set('st-translator-tm-enabled', defaultTranslationConfig.enableTranslationMemory);
     LS.set('st-translator-mvu-scan-passes', defaultTranslationConfig.mvuScanPasses);
     LS.set('st-translator-ejs-scan-passes', defaultTranslationConfig.ejsScanPasses);
+    LS.set('st-translator-mvu-translation-prompt', defaultTranslationConfig.mvuTranslationPrompt);
+    LS.set('st-translator-ejs-translation-prompt', defaultTranslationConfig.ejsTranslationPrompt);
     LS.set('st-translator-css-cjk-handling', defaultTranslationConfig.cssCjkHandling);
 
     set((s) => {
