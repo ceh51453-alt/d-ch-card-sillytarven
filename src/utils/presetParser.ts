@@ -51,10 +51,30 @@ export function getEnabledPrompts(preset: STPreset): PresetPromptEntry[] {
     return prompts.filter(p => p.enabled !== false);
   }
 
-  // Build a set of enabled identifiers from prompt_order
+  // SillyTavern prompt_order can be:
+  // 1) Flat: [{ identifier, enabled }, ...]
+  // 2) Nested: [{ character_id, order: [{ identifier, enabled }, ...] }, ...]
+  // Flatten both formats into a single list of { identifier, enabled } entries
+  const flatEntries: Array<{ identifier: string; enabled?: boolean }> = [];
+  for (const item of preset.prompt_order) {
+    if (!item || typeof item !== 'object') continue;
+    if (Array.isArray((item as any).order)) {
+      // Nested format: { character_id, order: [...] }
+      for (const entry of (item as any).order) {
+        if (entry && typeof entry === 'object' && entry.identifier) {
+          flatEntries.push(entry);
+        }
+      }
+    } else if ((item as any).identifier) {
+      // Flat format: { identifier, enabled }
+      flatEntries.push(item as any);
+    }
+  }
+
+  // Build a set of enabled identifiers
   const orderMap = new Map<string, number>();
-  preset.prompt_order.forEach((entry, idx) => {
-    if (entry && typeof entry === 'object' && entry.enabled !== false) {
+  flatEntries.forEach((entry, idx) => {
+    if (entry.enabled !== false) {
       orderMap.set(entry.identifier, idx);
     }
   });
@@ -129,4 +149,16 @@ export function getPresetSummary(preset: STPreset): PresetSummary {
     params,
     hasPromptOrder: Array.isArray(preset.prompt_order) && preset.prompt_order.length > 0,
   };
+}
+
+/**
+ * Build the combined content of all enabled prompts from an active preset.
+ * Returns undefined if no content to inject (no preset, no enabled prompts, or all empty).
+ */
+export function getActivePresetPromptContent(preset: STPreset | undefined | null): string | undefined {
+  if (!preset) return undefined;
+  const enabled = getEnabledPrompts(preset);
+  if (enabled.length === 0) return undefined;
+  const content = buildInjectionContent(enabled);
+  return content.trim() || undefined;
 }

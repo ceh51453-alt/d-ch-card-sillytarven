@@ -634,6 +634,8 @@ export interface PromptBuildOptions {
   ejsDecoratorPreserve?: boolean;
   /** Translation Memory hits (from IDB lookup, optional) */
   translationMemoryHits?: TranslationMemoryHit[];
+  /** Auto-injected content from active preset's enabled prompts */
+  presetPromptContent?: string;
 }
 
 export interface PromptBuildResult {
@@ -970,6 +972,11 @@ ${glossaryList}`;
 
 
 
+    // ─── Inject active preset prompts ───
+    if (options.presetPromptContent) {
+      modPrompt += `\n\n[PRESET PROMPT CHAIN — TỰ ĐỘNG TỪ PRESET ĐANG BẬT]\n${options.presetPromptContent}\n`;
+    }
+
     return {
       effectivePrompt: modPrompt,
       schemaForApi,
@@ -1091,6 +1098,11 @@ ${modInstructionsBlock}`;
       options.ejsKeywordDict || {},
       options.ejsDecoratorPreserve ?? true,
     );
+  }
+
+  // ─── 6. Inject active preset prompts ───
+  if (options.presetPromptContent) {
+    prompt = (prompt || '') + `\n\n[PRESET PROMPT CHAIN — TỰ ĐỘNG TỪ PRESET ĐANG BẬT]\n${options.presetPromptContent}\n`;
   }
 
   return {

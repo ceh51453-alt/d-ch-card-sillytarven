@@ -1,9 +1,10 @@
-import { useState, useMemo } from 'react';
-import { X, Search, Check, Square, CheckSquare, Zap } from 'lucide-react';
+import { useState, useMemo, useCallback } from 'react';
+import { X, Search, Check, ToggleLeft, ToggleRight, Save, Edit3 } from 'lucide-react';
 import { useStore } from '../store';
 import { useT } from '../i18n/useLocale';
 import type { PresetPromptEntry } from '../types/card';
-import { getAllPrompts, buildInjectionContent } from '../utils/presetParser';
+import { getAllPrompts } from '../utils/presetParser';
+import { savePresetToLibrary } from '../utils/presetLibrary';
 
 interface Props {
   onClose: () => void;
@@ -17,11 +18,14 @@ const ROLE_COLORS: Record<string, string> = {
 
 export default function PresetPromptViewer({ onClose }: Props) {
   const t = useT();
-  const { activePreset, card, updateCard, addToast } = useStore();
+  const { activePreset, setActivePreset, addToast } = useStore();
   const [searchQuery, setSearchQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState<string>('all');
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editContent, setEditContent] = useState('');
+  const [editName, setEditName] = useState('');
+  const [dirty, setDirty] = useState(false);
 
   const allPrompts = useMemo(() => {
     if (!activePreset) return [];
@@ -33,60 +37,75 @@ export default function PresetPromptViewer({ onClose }: Props) {
       if (roleFilter !== 'all' && p.role !== roleFilter) return false;
       if (searchQuery) {
         const q = searchQuery.toLowerCase();
-        return p.name.toLowerCase().includes(q) || p.content.toLowerCase().includes(q);
+        return (p.name || '').toLowerCase().includes(q) || (p.content || '').toLowerCase().includes(q);
       }
       return true;
     });
   }, [allPrompts, roleFilter, searchQuery]);
 
-  const toggleSelect = (id: string) => {
-    setSelectedIds(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
+  const enabledCount = allPrompts.filter(p => p.enabled !== false).length;
 
-  const selectAll = () => {
-    setSelectedIds(new Set(filteredPrompts.map(p => p.identifier)));
-  };
-
-  const deselectAll = () => {
-    setSelectedIds(new Set());
-  };
-
-  const handleInject = () => {
-    if (!card || selectedIds.size === 0) return;
-
-    const selected = allPrompts.filter(p => selectedIds.has(p.identifier));
-    const systemPrompts = selected.filter(p => p.system_prompt);
-    const otherPrompts = selected.filter(p => !p.system_prompt);
-
-    const updatedCard = JSON.parse(JSON.stringify(card));
-    if (!updatedCard.data) updatedCard.data = {};
-
-    // Inject system_prompt flagged prompts into card.data.system_prompt
-    if (systemPrompts.length > 0) {
-      const content = buildInjectionContent(systemPrompts);
-      const existing = updatedCard.data.system_prompt || '';
-      updatedCard.data.system_prompt = existing
-        ? `${existing}\n\n<!-- ═══ Injected from Preset ═══ -->\n${content}`
-        : content;
+  // ─── Edit functions ───
+  const togglePromptEnabled = useCallback((identifier: string) => {
+    if (!activePreset) return;
+    const updated = JSON.parse(JSON.stringify(activePreset));
+    const prompt = updated.preset.prompts?.find((p: PresetPromptEntry) => p.identifier === identifier);
+    if (prompt) {
+      prompt.enabled = !prompt.enabled;
     }
-
-    // Inject other prompts into card.data.post_history_instructions
-    if (otherPrompts.length > 0) {
-      const content = buildInjectionContent(otherPrompts);
-      const existing = updatedCard.data.post_history_instructions || '';
-      updatedCard.data.post_history_instructions = existing
-        ? `${existing}\n\n<!-- ═══ Injected from Preset ═══ -->\n${content}`
-        : content;
+    // Also update prompt_order if it exists
+    if (Array.isArray(updated.preset.prompt_order)) {
+      for (const item of updated.preset.prompt_order) {
+        if (item && typeof item === 'object') {
+          if (Array.isArray(item.order)) {
+            const entry = item.order.find((e: any) => e.identifier === identifier);
+            if (entry) entry.enabled = prompt?.enabled ?? !entry.enabled;
+          } else if (item.identifier === identifier) {
+            item.enabled = prompt?.enabled ?? !item.enabled;
+          }
+        }
+      }
     }
+    setActivePreset(updated);
+    setDirty(true);
+  }, [activePreset, setActivePreset]);
 
-    updateCard(updatedCard);
-    addToast('success', t.presetInjectSuccess.replace('{count}', String(selected.length)));
-  };
+  const startEditing = useCallback((prompt: PresetPromptEntry) => {
+    setEditingId(prompt.identifier);
+    setEditContent(prompt.content || '');
+    setEditName(prompt.name || '');
+    setExpandedId(prompt.identifier);
+  }, []);
+
+  const saveEdit = useCallback(() => {
+    if (!activePreset || !editingId) return;
+    const updated = JSON.parse(JSON.stringify(activePreset));
+    const prompt = updated.preset.prompts?.find((p: PresetPromptEntry) => p.identifier === editingId);
+    if (prompt) {
+      prompt.content = editContent;
+      prompt.name = editName;
+    }
+    setActivePreset(updated);
+    setEditingId(null);
+    setDirty(true);
+  }, [activePreset, editingId, editContent, editName, setActivePreset]);
+
+  const cancelEdit = useCallback(() => {
+    setEditingId(null);
+    setEditContent('');
+    setEditName('');
+  }, []);
+
+  const saveToLibrary = useCallback(async () => {
+    if (!activePreset) return;
+    try {
+      await savePresetToLibrary(activePreset);
+      setDirty(false);
+      addToast('success', t.presetSaved || 'Preset saved!');
+    } catch {
+      addToast('error', 'Failed to save preset');
+    }
+  }, [activePreset, addToast, t]);
 
   if (!activePreset) return null;
 
@@ -128,24 +147,50 @@ export default function PresetPromptViewer({ onClose }: Props) {
             </h2>
             <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '2px' }}>
               {t.presetSummary
-                .replace('{enabled}', String(allPrompts.filter(p => p.enabled).length))
+                .replace('{enabled}', String(enabledCount))
                 .replace('{total}', String(allPrompts.length))}
+              <span style={{ color: '#22c55e', marginLeft: '8px', fontSize: '0.6rem' }}>
+                ● Bật = tự động áp dụng khi dịch
+              </span>
+              {dirty && <span style={{ color: 'var(--accent-warning)', marginLeft: '8px', fontWeight: 600 }}>● Chưa lưu</span>}
             </div>
           </div>
-          <button
-            onClick={onClose}
-            style={{
-              background: 'var(--bg-elevated)',
-              border: '1px solid var(--border-default)',
-              borderRadius: 'var(--radius-sm)',
-              padding: '6px',
-              cursor: 'pointer',
-              color: 'var(--text-muted)',
-              transition: 'all 0.15s',
-            }}
-          >
-            <X size={16} />
-          </button>
+          <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+            {dirty && (
+              <button
+                onClick={saveToLibrary}
+                style={{
+                  background: 'var(--accent-primary)',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: 'var(--radius-sm)',
+                  padding: '6px 12px',
+                  cursor: 'pointer',
+                  fontSize: '0.7rem',
+                  fontWeight: 600,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                }}
+              >
+                <Save size={13} /> {t.presetSaveChanges || 'Lưu'}
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              style={{
+                background: 'var(--bg-elevated)',
+                border: '1px solid var(--border-default)',
+                borderRadius: 'var(--radius-sm)',
+                padding: '6px',
+                cursor: 'pointer',
+                color: 'var(--text-muted)',
+                transition: 'all 0.15s',
+              }}
+            >
+              <X size={16} />
+            </button>
+          </div>
         </div>
 
         {/* Toolbar */}
@@ -196,12 +241,6 @@ export default function PresetPromptViewer({ onClose }: Props) {
             <option value="user">User</option>
             <option value="assistant">Assistant</option>
           </select>
-          <button onClick={selectAll} style={toolBtnStyle} title={t.presetSelectAll}>
-            <CheckSquare size={13} /> {t.presetSelectAll}
-          </button>
-          <button onClick={deselectAll} style={toolBtnStyle} title={t.presetDeselectAll}>
-            <Square size={13} /> {t.presetDeselectAll}
-          </button>
         </div>
 
         {/* Prompt List */}
@@ -217,98 +256,72 @@ export default function PresetPromptViewer({ onClose }: Props) {
                   key={prompt.identifier}
                   prompt={prompt}
                   index={idx}
-                  isSelected={selectedIds.has(prompt.identifier)}
                   isExpanded={expandedId === prompt.identifier}
-                  onToggleSelect={() => toggleSelect(prompt.identifier)}
+                  isEditing={editingId === prompt.identifier}
+                  editContent={editingId === prompt.identifier ? editContent : ''}
+                  editName={editingId === prompt.identifier ? editName : ''}
                   onToggleExpand={() => setExpandedId(
                     expandedId === prompt.identifier ? null : prompt.identifier
                   )}
+                  onToggleEnabled={() => togglePromptEnabled(prompt.identifier)}
+                  onStartEdit={() => startEditing(prompt)}
+                  onSaveEdit={saveEdit}
+                  onCancelEdit={cancelEdit}
+                  onEditContentChange={setEditContent}
+                  onEditNameChange={setEditName}
                   t={t}
                 />
               ))}
             </div>
           )}
         </div>
-
-        {/* Footer */}
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '12px 20px',
-          borderTop: '1px solid var(--border-subtle)',
-          background: 'var(--bg-secondary)',
-        }}>
-          <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-            {selectedIds.size} selected
-          </div>
-          <button
-            onClick={handleInject}
-            disabled={!card || selectedIds.size === 0}
-            style={{
-              padding: '8px 16px',
-              background: card && selectedIds.size > 0 ? '#22c55e' : 'var(--bg-elevated)',
-              color: card && selectedIds.size > 0 ? 'white' : 'var(--text-muted)',
-              border: 'none',
-              borderRadius: 'var(--radius-sm)',
-              cursor: card && selectedIds.size > 0 ? 'pointer' : 'not-allowed',
-              fontSize: '0.75rem',
-              fontWeight: 600,
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              transition: 'opacity 0.15s',
-            }}
-          >
-            <Zap size={14} />
-            {card ? t.presetInjectSelected : t.presetNoCard}
-          </button>
-        </div>
       </div>
     </div>
   );
 }
 
-const toolBtnStyle: React.CSSProperties = {
-  padding: '5px 8px',
-  background: 'var(--bg-elevated)',
-  border: '1px solid var(--border-default)',
-  borderRadius: 'var(--radius-sm)',
-  color: 'var(--text-secondary)',
-  cursor: 'pointer',
-  fontSize: '0.65rem',
-  fontWeight: 500,
-  display: 'flex',
-  alignItems: 'center',
-  gap: '4px',
-};
-
 function PromptCard({
   prompt,
   index,
-  isSelected,
   isExpanded,
-  onToggleSelect,
+  isEditing,
+  editContent,
+  editName,
   onToggleExpand,
+  onToggleEnabled,
+  onStartEdit,
+  onSaveEdit,
+  onCancelEdit,
+  onEditContentChange,
+  onEditNameChange,
   t,
 }: {
   prompt: PresetPromptEntry;
   index: number;
-  isSelected: boolean;
   isExpanded: boolean;
-  onToggleSelect: () => void;
+  isEditing: boolean;
+  editContent: string;
+  editName: string;
   onToggleExpand: () => void;
+  onToggleEnabled: () => void;
+  onStartEdit: () => void;
+  onSaveEdit: () => void;
+  onCancelEdit: () => void;
+  onEditContentChange: (v: string) => void;
+  onEditNameChange: (v: string) => void;
   t: ReturnType<typeof useT>;
 }) {
   const roleColor = ROLE_COLORS[prompt.role] || '#888';
-  const previewText = prompt.content.slice(0, 120).replace(/\n/g, ' ');
+  const previewText = (prompt.content || '').slice(0, 120).replace(/\n/g, ' ');
+  const isEnabled = prompt.enabled !== false;
 
   return (
     <div style={{
-      border: `1px solid ${isSelected ? 'var(--accent-primary)' : 'var(--border-subtle)'}`,
+      border: `1px solid ${isEnabled ? 'rgba(34, 197, 94, 0.2)' : 'var(--border-subtle)'}`,
       borderRadius: 'var(--radius-md)',
       overflow: 'hidden',
-      background: isSelected ? 'rgba(99, 102, 241, 0.03)' : 'var(--bg-elevated)',
+      background: isEnabled ? 'rgba(34, 197, 94, 0.02)' : 'var(--bg-elevated)',
+      opacity: isEnabled ? 1 : 0.45,
       transition: 'all 0.15s',
     }}>
       {/* Header row */}
@@ -322,21 +335,6 @@ function PromptCard({
         }}
         onClick={onToggleExpand}
       >
-        {/* Checkbox */}
-        <button
-          onClick={e => { e.stopPropagation(); onToggleSelect(); }}
-          style={{
-            background: 'none',
-            border: 'none',
-            cursor: 'pointer',
-            padding: '2px',
-            color: isSelected ? 'var(--accent-primary)' : 'var(--text-muted)',
-            flexShrink: 0,
-          }}
-        >
-          {isSelected ? <CheckSquare size={15} /> : <Square size={15} />}
-        </button>
-
         {/* Index */}
         <span style={{
           fontSize: '0.6rem',
@@ -349,18 +347,23 @@ function PromptCard({
           #{index + 1}
         </span>
 
-        {/* Enabled badge */}
-        <span style={{
-          fontSize: '0.55rem',
-          padding: '1px 5px',
-          borderRadius: '9999px',
-          fontWeight: 600,
-          background: prompt.enabled ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-          color: prompt.enabled ? '#22c55e' : '#ef4444',
-          flexShrink: 0,
-        }}>
-          {prompt.enabled ? '✓' : '✗'}
-        </span>
+        {/* Enable/Disable toggle */}
+        <button
+          onClick={e => { e.stopPropagation(); onToggleEnabled(); }}
+          style={{
+            background: 'none',
+            border: 'none',
+            cursor: 'pointer',
+            padding: '1px',
+            color: isEnabled ? '#22c55e' : '#ef4444',
+            flexShrink: 0,
+            display: 'flex',
+            alignItems: 'center',
+          }}
+          title={isEnabled ? 'Tắt prompt (sẽ không áp dụng khi dịch)' : 'Bật prompt (sẽ áp dụng khi dịch)'}
+        >
+          {isEnabled ? <ToggleRight size={16} /> : <ToggleLeft size={16} />}
+        </button>
 
         {/* Role badge */}
         <span style={{
@@ -415,6 +418,22 @@ function PromptCard({
           </span>
         )}
 
+        {/* Edit button */}
+        <button
+          onClick={e => { e.stopPropagation(); onStartEdit(); }}
+          style={{
+            background: 'none',
+            border: 'none',
+            cursor: 'pointer',
+            padding: '2px',
+            color: 'var(--text-muted)',
+            flexShrink: 0,
+          }}
+          title="Chỉnh sửa"
+        >
+          <Edit3 size={12} />
+        </button>
+
         <Check size={12} style={{
           color: 'var(--text-muted)',
           transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
@@ -423,10 +442,10 @@ function PromptCard({
         }} />
       </div>
 
-      {/* Preview (always visible) */}
-      {!isExpanded && (
+      {/* Preview */}
+      {!isExpanded && !isEditing && (
         <div style={{
-          padding: '0 12px 8px 52px',
+          padding: '0 12px 8px 44px',
           fontSize: '0.65rem',
           color: 'var(--text-muted)',
           overflow: 'hidden',
@@ -438,28 +457,109 @@ function PromptCard({
       )}
 
       {/* Expanded content */}
-      {isExpanded && (
+      {(isExpanded || isEditing) && (
         <div style={{
           borderTop: '1px solid var(--border-subtle)',
           padding: '12px',
-          maxHeight: '400px',
+          maxHeight: '500px',
           overflowY: 'auto',
         }}>
-          <pre style={{
-            margin: 0,
-            whiteSpace: 'pre-wrap',
-            wordBreak: 'break-word',
-            fontSize: '0.7rem',
-            lineHeight: 1.5,
-            color: 'var(--text-secondary)',
-            fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace',
-            background: 'var(--bg-primary)',
-            padding: '10px',
-            borderRadius: 'var(--radius-sm)',
-            border: '1px solid var(--border-subtle)',
-          }}>
-            {prompt.content}
-          </pre>
+          {isEditing ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <div>
+                <label style={{ fontSize: '0.6rem', color: 'var(--text-muted)', fontWeight: 600, marginBottom: '2px', display: 'block' }}>
+                  Tên prompt
+                </label>
+                <input
+                  value={editName}
+                  onChange={e => onEditNameChange(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '6px 8px',
+                    background: 'var(--bg-primary)',
+                    border: '1px solid var(--accent-primary)',
+                    borderRadius: 'var(--radius-sm)',
+                    color: 'var(--text-primary)',
+                    fontSize: '0.75rem',
+                    outline: 'none',
+                  }}
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: '0.6rem', color: 'var(--text-muted)', fontWeight: 600, marginBottom: '2px', display: 'block' }}>
+                  Nội dung ({(editContent || '').length} ký tự)
+                </label>
+                <textarea
+                  value={editContent}
+                  onChange={e => onEditContentChange(e.target.value)}
+                  rows={12}
+                  style={{
+                    width: '100%',
+                    padding: '8px',
+                    background: 'var(--bg-primary)',
+                    border: '1px solid var(--accent-primary)',
+                    borderRadius: 'var(--radius-sm)',
+                    color: 'var(--text-primary)',
+                    fontSize: '0.7rem',
+                    lineHeight: 1.5,
+                    fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace',
+                    outline: 'none',
+                    resize: 'vertical',
+                  }}
+                />
+              </div>
+              <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
+                <button
+                  onClick={onCancelEdit}
+                  style={{
+                    padding: '5px 12px',
+                    background: 'var(--bg-secondary)',
+                    border: '1px solid var(--border-default)',
+                    borderRadius: 'var(--radius-sm)',
+                    color: 'var(--text-secondary)',
+                    fontSize: '0.7rem',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Hủy
+                </button>
+                <button
+                  onClick={onSaveEdit}
+                  style={{
+                    padding: '5px 12px',
+                    background: 'var(--accent-primary)',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: 'var(--radius-sm)',
+                    fontSize: '0.7rem',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                  }}
+                >
+                  <Save size={12} /> Áp dụng
+                </button>
+              </div>
+            </div>
+          ) : (
+            <pre style={{
+              margin: 0,
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+              fontSize: '0.7rem',
+              lineHeight: 1.5,
+              color: 'var(--text-secondary)',
+              fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace',
+              background: 'var(--bg-primary)',
+              padding: '10px',
+              borderRadius: 'var(--radius-sm)',
+              border: '1px solid var(--border-subtle)',
+            }}>
+              {prompt.content || '(empty)'}
+            </pre>
+          )}
         </div>
       )}
     </div>

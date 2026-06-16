@@ -331,6 +331,8 @@ const en = {
   presetNoPrompts: 'No prompts in this preset',
   presetRename: 'Rename',
   presetSummary: '{enabled}/{total} prompts enabled',
+  presetSaved: 'Preset saved!',
+  presetSaveChanges: 'Save',
   // AI Parameters (new)
   topP: 'Top P',
   topK: 'Top K',
@@ -670,6 +672,8 @@ const vi: TranslationKeys = {
   presetNoPrompts: 'Preset này không có prompt',
   presetRename: 'Đổi tên',
   presetSummary: '{enabled}/{total} prompt đang bật',
+  presetSaved: 'Đã lưu preset!',
+  presetSaveChanges: 'Lưu',
   // AI Parameters (new)
   topP: 'Top P',
   topK: 'Top K',

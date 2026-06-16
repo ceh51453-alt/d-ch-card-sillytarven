@@ -13,6 +13,7 @@ import { surgicalTranslate } from '../utils/surgical';
 import { parsePatchOutput, applyPatches, validatePatchResult } from '../utils/patchEngine';
 import { injectMvuZodSystem } from '../utils/mvuGenerator';
 import { detectEjsCard, extractEjsEntryNames, extractEjsKeywords, aiTranslateEjsEntries, validateEjsSync, autoFixEjsEntryNames, autoFixEjsKeywords, enforceEjsEntryName, enforceEjsCovariance, enforceEjsKeywordCasing, autoFixEjsKeywordsExtended } from '../utils/ejsSync';
+import { getActivePresetPromptContent } from '../utils/presetParser';
 import type { FieldGroup, FieldGroupConfig, TranslationField } from '../types/card';
 
 /**
@@ -286,6 +287,7 @@ export function useTranslation() {
         translationMemoryHits: store.translationConfig.enableTranslationMemory
           ? await lookupTranslationMemory(field).catch(() => [])
           : undefined,
+        presetPromptContent: getActivePresetPromptContent(store.activePreset?.preset),
       });
 
       // ═══ Determine field type for Master Prompt (expert mode) ═══
@@ -854,6 +856,7 @@ export function useTranslation() {
         translationMemoryHits: store.translationConfig.enableTranslationMemory
           ? await lookupTranslationMemory(batchFields[0]).catch(() => [])
           : undefined,
+        presetPromptContent: getActivePresetPromptContent(store.activePreset?.preset),
       });
 
       const results = await translateBatch(
@@ -1837,6 +1840,7 @@ export function useTranslation() {
               ejsEntryNameDict: useStore.getState().translationConfig.ejsEntryNameDict,
               ejsKeywordDict: useStore.getState().translationConfig.ejsKeywordDict,
               ejsDecoratorPreserve: store.translationConfig.ejsDecoratorPreserve,
+              presetPromptContent: getActivePresetPromptContent(store.activePreset?.preset),
             });
 
             const regexFieldType = fieldGroupToFieldType(rf.group, rf.entryType);
@@ -2427,6 +2431,7 @@ export function useTranslation() {
         ejsEntryNameDict: useStore.getState().translationConfig.ejsEntryNameDict,
         ejsKeywordDict: useStore.getState().translationConfig.ejsKeywordDict,
         ejsDecoratorPreserve: store.translationConfig.ejsDecoratorPreserve,
+        presetPromptContent: getActivePresetPromptContent(store.activePreset?.preset),
       });
 
       const resolvedFieldType = fieldGroupToFieldType(field.group, field.entryType);
@@ -2931,6 +2936,7 @@ export function useTranslation() {
         ejsEntryNameDict: useStore.getState().translationConfig.ejsEntryNameDict,
         ejsKeywordDict: useStore.getState().translationConfig.ejsKeywordDict,
         ejsDecoratorPreserve: store.translationConfig.ejsDecoratorPreserve,
+        presetPromptContent: getActivePresetPromptContent(store.activePreset?.preset),
       });
 
       const resolvedFieldType = fieldGroupToFieldType(field.group, field.entryType);
@@ -3009,6 +3015,7 @@ export function useTranslation() {
         ejsEntryNameDict: useStore.getState().translationConfig.ejsEntryNameDict,
         ejsKeywordDict: useStore.getState().translationConfig.ejsKeywordDict,
         ejsDecoratorPreserve: store.translationConfig.ejsDecoratorPreserve,
+        presetPromptContent: getActivePresetPromptContent(store.activePreset?.preset),
       });
             result = await translateText(
               inputContent, field.label, effectiveProxy, effectiveLang, effectiveLang,
@@ -3348,6 +3355,7 @@ export function useTranslation() {
         ejsEntryNameDict: useStore.getState().translationConfig.ejsEntryNameDict,
         ejsKeywordDict: useStore.getState().translationConfig.ejsKeywordDict,
         ejsDecoratorPreserve: store.translationConfig.ejsDecoratorPreserve,
+        presetPromptContent: getActivePresetPromptContent(store.activePreset?.preset),
       });
 
         const resolvedFieldType = fieldGroupToFieldType(field.group, field.entryType);
@@ -3422,6 +3430,7 @@ export function useTranslation() {
         ejsEntryNameDict: useStore.getState().translationConfig.ejsEntryNameDict,
         ejsKeywordDict: useStore.getState().translationConfig.ejsKeywordDict,
         ejsDecoratorPreserve: store.translationConfig.ejsDecoratorPreserve,
+        presetPromptContent: getActivePresetPromptContent(store.activePreset?.preset),
       });
               result = await translateText(
                 inputContent, field.label, store.proxy, effectiveLang, effectiveLang,

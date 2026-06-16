@@ -327,31 +327,6 @@ export default function PresetImportPanel({ onOpenPromptViewer }: Props) {
                   <Eye size={12} /> {t.presetViewPrompts}
                 </button>
 
-                {card && summary.enabledPrompts > 0 && (
-                  <button
-                    onClick={onOpenPromptViewer}
-                    style={{
-                      width: '100%',
-                      padding: '6px 10px',
-                      background: 'rgba(34, 197, 94, 0.08)',
-                      color: '#22c55e',
-                      border: '1px solid rgba(34, 197, 94, 0.3)',
-                      borderRadius: 'var(--radius-sm)',
-                      cursor: 'pointer',
-                      fontSize: '0.7rem',
-                      fontWeight: 600,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: '4px',
-                      transition: 'border-color 0.15s',
-                    }}
-                    onMouseOver={e => e.currentTarget.style.borderColor = '#22c55e'}
-                    onMouseOut={e => e.currentTarget.style.borderColor = 'rgba(34, 197, 94, 0.3)'}
-                  >
-                    💉 {t.presetInjectToCard}
-                  </button>
-                )}
               </div>
             </div>
           )}
